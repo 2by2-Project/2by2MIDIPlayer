@@ -32,13 +32,18 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 
+import com.un4seen.bass.BASS
+import com.un4seen.bass.BASSMIDI
+
 import dev.atsushieno.ktmidi.*
 import dev.atsushieno.ktmidi.read
 import android.content.Context
+import android.widget.Toast
 
 import jp.project2by2.musicplayer.ui.theme._2by2MusicPlayerTheme
 
 import kotlinx.coroutines.delay
+import java.io.File
 
 // 音楽をループさせる用
 data class LoopPoint(val startMs: Long = -1L, val endMs: Long = -1L)
@@ -78,87 +83,115 @@ class MainActivity : ComponentActivity() {
 fun MusicPlayerMainScreen(modifier: Modifier = Modifier) {
     val context = LocalContext.current
 
-    // MediaPlayer
-    val mediaPlayer = remember { MediaPlayer() }
-    var selectedFileUri by remember { mutableStateOf<Uri?>(null) }
+    // Current uri and handles
+    var handles by remember { mutableStateOf<MidiHandles?>(null) }
+    var selectedMidiFileUri by remember { mutableStateOf<Uri?>(null) }
+    var selectedSoundFontUri by remember { mutableStateOf<Uri?>(null) }
+
+    // Positions
     var currentPositionMs by remember { mutableStateOf(0L) }
     var loopStartMs: Long by remember { mutableStateOf(0L) }
     var loopEndMs: Long by remember { mutableStateOf(0L) }
 
-    // 再生位置取得用
-    LaunchedEffect(mediaPlayer, selectedFileUri) {
-        while (true) {
-            if (mediaPlayer.isPlaying) {
-                currentPositionMs = mediaPlayer.currentPosition.toLong()
+    // Init BASSMIDI
+    LaunchedEffect(Unit) {
+        val ok = bassInit()
+        if (!ok) {
+            Toast.makeText(context, "BASS_Init failed", Toast.LENGTH_SHORT).show()
+        }
+    }
 
-                // ループ処理
-                if (loopEndMs != -1L && currentPositionMs >= loopEndMs) {
-                    if (loopStartMs != -1L) {
-                        // ループポイントがあれば飛ぶ（-50msぐらい前）
-                        mediaPlayer.seekTo(loopStartMs.toInt() - 50)
-                    } else {
-                        // ループポイントがなければ最初へ
-                        mediaPlayer.seekTo(0)
-                    }
-                }
+    // Terminate BASSMIDI
+    DisposableEffect(Unit) {
+        onDispose {
+            handles?.let { bassRelease(it) }
+            bassTerminate()
+        }
+    }
+
+    // 再生位置取得用
+    LaunchedEffect(selectedMidiFileUri) {
+        while (handles != null) {
+            // Convert bytes to seconds
+            val bytes = BASS.BASS_ChannelGetPosition(handles!!.stream, BASS.BASS_POS_BYTE)
+            val secs = BASS.BASS_ChannelBytes2Seconds(handles!!.stream, bytes)
+            if (isBassPlaying(handles!!.stream) == BASS.BASS_ACTIVE_PLAYING) {
+                currentPositionMs = (secs * 1000.0).toLong()
             }
 
             delay(50L) // 50ミリ秒ごとに更新
         }
     }
 
-    // アプリが閉じられたとき
-    DisposableEffect(Unit) {
-        onDispose {
-            mediaPlayer.release()
-        }
-    }
-
-    // File picker
-    val launcher = rememberLauncherForActivityResult(
+    // MIDI file picker
+    val MidiFilePicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
         uri?.let {
-            selectedFileUri = it
+            if (selectedSoundFontUri == null) {
+                Toast.makeText(context, "SoundFont is not selected!", Toast.LENGTH_SHORT).show()
+                return@let
+            }
+            selectedMidiFileUri = it
             try {
-                mediaPlayer.reset()
-                mediaPlayer.setDataSource(context, it)
-                mediaPlayer.prepareAsync()
+                // Load MIDI file
+                val cacheMidiFile = File(context.cacheDir, "midi.mid")
+                context.contentResolver.openInputStream(selectedMidiFileUri!!)?.use { input ->
+                    cacheMidiFile.outputStream().use { output -> input.copyTo(output) }
+                }
+                val midiPath = cacheMidiFile.absolutePath
+
+                // Load SoundFont file
+                val cacheSoundFontFile = File(context.cacheDir, "soundfont.sf2")
+                context.contentResolver.openInputStream(selectedSoundFontUri!!)?.use { input ->
+                    cacheSoundFontFile.outputStream().use { output -> input.copyTo(output) }
+                }
+                val sfPath = cacheSoundFontFile.absolutePath
+
+                // Load MIDI file with SoundFont
+                handles?.let { bassRelease(it) }
+                handles = bassLoadMidiWithSoundFont(midiPath, sfPath)
 
                 // ループポイントを検知
-                val loopPoint = findLoopPointMs(context, selectedFileUri!!)
+                val loopPoint = findLoopPointMs(context, selectedMidiFileUri!!)
                 loopStartMs = loopPoint.startMs
                 loopEndMs = loopPoint.endMs
+                if (loopStartMs != -1L && loopEndMs != -1L) {
+                    // Set the loop flag
+                    BASS.BASS_ChannelFlags(handles!!.stream, BASS.BASS_SAMPLE_LOOP, BASS.BASS_SAMPLE_LOOP)
 
-                // 再生が完了したとき
-                /* mediaPlayer.setOnCompletionListener { mp ->
-                    // ループポイントが検出されればそこまで戻る
-                    if (loopPointMs < 0L) {
-                        currentPositionMs = loopPointMs
-                    } else {
-                        currentPositionMs = 0L  // ループポイントがなければ最初に戻る
-                    }
-
-                    try {
-                        mp.stop()
-                        mp.prepareAsync()
-                    } catch (e: IllegalStateException) {
-                        e.printStackTrace()
-                    }
-                } */
+                    // Convert seconds to bytes
+                    val startSecs = BASS.BASS_ChannelSeconds2Bytes(handles!!.stream, (loopStartMs.toDouble() - 50) / 1000)
+                    BASS.BASS_ChannelSetPosition(handles!!.stream, startSecs, BASS.BASS_POS_LOOP)
+                    //val endSecs = BASS.BASS_ChannelSeconds2Bytes(handles!!.stream, loopStartMs.toDouble() / 1000)
+                    //BASS.BASS_ChannelSetPosition(handles!!.stream, endSecs, BASS.BASS_POS_END)
+                } else {
+                    // Remove the loop flag
+                    BASS.BASS_ChannelFlags(handles!!.stream, 0, BASS.BASS_SAMPLE_LOOP)
+                }
             } catch (e: Exception) {
                 // ファイル読み込み中のエラー処理
                 e.printStackTrace()
             }
         }
     }
+
+    // SoundFont picker
+    val SoundFontPicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        uri?.let {
+            selectedSoundFontUri = it  // Set soundfont uri
+        }
+    }
+
     Column(
         modifier = modifier.fillMaxSize(),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
         Text(
-            text = selectedFileUri?.lastPathSegment?.split("/")?.last() ?: "No file selected",
+            text = selectedMidiFileUri?.lastPathSegment?.split("/")?.last() ?: "No file selected",
             modifier = Modifier.padding(bottom = 8.dp)
         )
 
@@ -188,33 +221,25 @@ fun MusicPlayerMainScreen(modifier: Modifier = Modifier) {
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceEvenly
         ) {
-            ElevatedButton(onClick = { launcher.launch("audio/midi") }) {
+            ElevatedButton(onClick = { MidiFilePicker.launch("audio/midi") }) {
                 Text("Browse")
             }
             ElevatedButton(
-                onClick = {
-                    if (selectedFileUri != null && !mediaPlayer.isPlaying) {
-                        mediaPlayer.start()
-                    }
-                },
-                enabled = selectedFileUri != null
-            ) {
-                Text("Play")
-            }
+                onClick = { handles?.let { bassPlay(it.stream) } },
+                enabled = handles != null
+            ) { Text("Play") }
             ElevatedButton(
-                onClick = {
-                    if (mediaPlayer.isPlaying) {
-                        mediaPlayer.stop()
-                        try {
-                            mediaPlayer.prepareAsync()
-                        } catch (e: IllegalStateException) {
-                            e.printStackTrace()
-                        }
-                    }
-                },
-                enabled = selectedFileUri != null
-            ) {
-                Text("Stop")
+                onClick = { handles?.let { bassStop(it.stream) } },
+                enabled = handles != null
+            ) { Text("Stop") }
+        }
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceEvenly
+        ) {
+            ElevatedButton(onClick = { SoundFontPicker.launch("application/octet-stream") }) {
+                Text("Load SoundFont")
             }
         }
     }
@@ -278,4 +303,55 @@ fun findLoopPointMs(context: Context, uri: Uri): LoopPoint {
     }
 
     return LoopPoint(loopPointMs, endOfTrackMs)
+}
+
+data class MidiHandles(
+    val stream: Int,
+    val font: Int
+)
+
+fun bassInit(): Boolean {
+    return BASS.BASS_Init(-1, 44100, 0)
+}
+
+fun bassPlay(stream: Int) {
+    BASS.BASS_ChannelPlay(stream, false)
+}
+
+fun bassStop(stream: Int) {
+    BASS.BASS_ChannelStop(stream)
+    BASS.BASS_ChannelSetPosition(stream, 0, BASS.BASS_POS_BYTE)
+}
+
+fun bassRelease(handles: MidiHandles) {
+    BASS.BASS_StreamFree(handles.stream)
+    BASSMIDI.BASS_MIDI_FontFree(handles.font)
+}
+
+fun bassTerminate() {
+    BASS.BASS_Free()
+}
+
+fun isBassPlaying(stream: Int): Int {
+    return BASS.BASS_ChannelIsActive(stream)
+}
+
+fun bassLoadMidiWithSoundFont(midiPath: String, sf2Path: String): MidiHandles {
+    val soundFontHandle = BASSMIDI.BASS_MIDI_FontInit(sf2Path, 0)
+
+    // flags は必要に応じて（ループ等は別途）
+    val stream = BASSMIDI.BASS_MIDI_StreamCreateFile(midiPath, 0, 0, 0, 0)
+
+    // BASS_MIDI_FONT オブジェクトを作成します。
+    // preset と bank に -1 を指定すると、すべてのプリセットとバンクが使用されます。
+    val fonts = arrayOf(
+        BASSMIDI.BASS_MIDI_FONT().apply {
+            font = soundFontHandle
+            preset = -1  // All presets
+            bank = 0
+        }
+    )
+    BASSMIDI.BASS_MIDI_StreamSetFonts(stream, fonts, 1)
+
+    return MidiHandles(stream, soundFontHandle)
 }
