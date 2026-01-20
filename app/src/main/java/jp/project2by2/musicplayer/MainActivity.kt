@@ -141,8 +141,11 @@ fun MusicPlayerMainScreen(modifier: Modifier = Modifier) {
         contract = ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
         uri?.let {
-            if (selectedSoundFontUri == null) {
-                Toast.makeText(context, "SoundFont is not selected!", Toast.LENGTH_SHORT).show()
+            // Load cached SoundFont file
+            val cacheSoundFontFile = File(context.cacheDir, "soundfont.sf2")
+            val sfPath = cacheSoundFontFile.absolutePath
+            if (!File(sfPath).exists()) {
+                Toast.makeText(context, "SoundFont is not set!", Toast.LENGTH_SHORT).show()
                 return@let
             }
             selectedMidiFileUri = it
@@ -153,13 +156,6 @@ fun MusicPlayerMainScreen(modifier: Modifier = Modifier) {
                     cacheMidiFile.outputStream().use { output -> input.copyTo(output) }
                 }
                 val midiPath = cacheMidiFile.absolutePath
-
-                // Load SoundFont file
-                val cacheSoundFontFile = File(context.cacheDir, "soundfont.sf2")
-                context.contentResolver.openInputStream(selectedSoundFontUri!!)?.use { input ->
-                    cacheSoundFontFile.outputStream().use { output -> input.copyTo(output) }
-                }
-                val sfPath = cacheSoundFontFile.absolutePath
 
                 // Load MIDI file with SoundFont
                 handles?.let { bassRelease(it) }
@@ -216,6 +212,12 @@ fun MusicPlayerMainScreen(modifier: Modifier = Modifier) {
     ) { uri: Uri? ->
         uri?.let {
             selectedSoundFontUri = it  // Set soundfont uri
+
+            // Cache SoundFont file
+            val cacheSoundFontFile = File(context.cacheDir, "soundfont.sf2")
+            context.contentResolver.openInputStream(selectedSoundFontUri!!)?.use { input ->
+                cacheSoundFontFile.outputStream().use { output -> input.copyTo(output) }
+            }
         }
     }
 
