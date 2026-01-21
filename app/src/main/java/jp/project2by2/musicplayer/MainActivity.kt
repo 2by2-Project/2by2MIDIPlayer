@@ -114,6 +114,12 @@ fun MusicPlayerMainScreen(modifier: Modifier = Modifier) {
 
     LaunchedEffect(playbackService) {
         val service = playbackService ?: return@LaunchedEffect
+
+        service.getCurrentUriString()?.let { uriString ->
+            selectedMidiFileUri = Uri.parse(uriString)
+            isPlaying = service.isPlaying()
+        }
+
         while (true) {
             currentPositionMs = service.getCurrentPositionMs()
             loopStartMs = service.getLoopPoint()?.startMs ?: 0L
