@@ -6,10 +6,17 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
+import android.content.pm.ServiceInfo
 import android.os.Binder
 import android.os.Build
 import android.os.IBinder
+import android.os.SystemClock
+import android.support.v4.media.MediaMetadataCompat
+import android.support.v4.media.session.MediaSessionCompat
+import android.support.v4.media.session.PlaybackStateCompat
 import androidx.core.app.NotificationCompat
+import androidx.media.app.NotificationCompat.MediaStyle
+import androidx.media.session.MediaButtonReceiver
 import com.un4seen.bass.BASS
 import com.un4seen.bass.BASSMIDI
 import dev.atsushieno.ktmidi.Midi1Music
@@ -19,6 +26,9 @@ import java.io.File
 
 class PlaybackService : Service() {
     private val binder = LocalBinder()
+
+    private val handler = android.os.Handler(android.os.Looper.getMainLooper())
+
     private val notificationManager by lazy {
         getSystemService(NOTIFICATION_SERVICE) as NotificationManager
     }
@@ -29,6 +39,13 @@ class PlaybackService : Service() {
     private var syncHandle: Int = 0
     private var isForeground = false
 
+    // Media session
+    private lateinit var mediaSession: MediaSessionCompat
+
+    // Current playing
+    private var currentUriString: String? = null
+    private var currentTitle: String? = null
+
     inner class LocalBinder : Binder() {
         fun getService(): PlaybackService = this@PlaybackService
     }
@@ -37,6 +54,20 @@ class PlaybackService : Service() {
         super.onCreate()
         createNotificationChannel()
         bassInit()
+
+        mediaSession = MediaSessionCompat(this, "2by2Playback").apply {
+            setFlags(
+                MediaSessionCompat.FLAG_HANDLES_MEDIA_BUTTONS or
+                        MediaSessionCompat.FLAG_HANDLES_TRANSPORT_CONTROLS
+            )
+            setCallback(object : MediaSessionCompat.Callback() {
+                override fun onPlay() { play() }
+                override fun onPause() { pause() }
+                override fun onStop() { stop() }
+                override fun onSeekTo(pos: Long) { setCurrentPositionMs(pos) }
+            })
+            isActive = true
+        }
     }
 
     override fun onBind(intent: Intent): IBinder = binder
@@ -51,6 +82,7 @@ class PlaybackService : Service() {
     }
 
     override fun onDestroy() {
+        mediaSession.release()
         releaseHandles()
         bassTerminate()
         super.onDestroy()
@@ -58,6 +90,7 @@ class PlaybackService : Service() {
 
     fun loadMidi(uriString: String): Boolean {
         val uri = android.net.Uri.parse(uriString)
+
         val cacheSoundFontFile = File(cacheDir, SOUND_FONT_FILE)
         if (!cacheSoundFontFile.exists()) {
             return false
@@ -104,35 +137,56 @@ class PlaybackService : Service() {
             )
         }
 
-        updateNotification()
+        val title = android.net.Uri.parse(uriString).lastPathSegment?.split("/")?.last() ?: "Unknown"
+        mediaSession.setMetadata(
+            MediaMetadataCompat.Builder()
+                .putString(MediaMetadataCompat.METADATA_KEY_TITLE, title)
+                .putLong(MediaMetadataCompat.METADATA_KEY_DURATION, getDurationMs())
+                .build()
+        )
+
+        updateSessionState()
+        updateNotification(false)
+
+        // Current playing
+        currentUriString = uriString
+        currentTitle = uri.lastPathSegment?.split("/")?.last() ?: "Unknown"
+
         return true
     }
 
     fun play() {
         handles?.let {
             BASS.BASS_ChannelPlay(it.stream, false)
+            updateSessionState()
             startForegroundIfNeeded()
-            updateNotification()
+            updateNotification(forceShow = true)
         }
+        handler.removeCallbacks(stateTicker)
+        handler.post(stateTicker)
     }
 
     fun pause() {
         handles?.let {
             BASS.BASS_ChannelPause(it.stream)
-            updateNotification()
+            updateSessionState()
         }
+        updateNotification(forceShow = true)
+        handler.removeCallbacks(stateTicker)
     }
 
     fun stop() {
         handles?.let {
             BASS.BASS_ChannelStop(it.stream)
             BASS.BASS_ChannelSetPosition(it.stream, 0, BASS.BASS_POS_BYTE)
-            updateNotification()
         }
+        updateSessionState()
         if (isForeground) {
             stopForeground(STOP_FOREGROUND_REMOVE)
             isForeground = false
         }
+        updateNotification(forceShow = false)
+        handler.removeCallbacks(stateTicker)
     }
 
     fun getCurrentPositionMs(): Long {
@@ -147,7 +201,8 @@ class PlaybackService : Service() {
         val secs = ms.coerceAtLeast(0L).toDouble() / 1000.0
         val bytes = BASS.BASS_ChannelSeconds2Bytes(h.stream, secs)
         BASS.BASS_ChannelSetPosition(h.stream, bytes, BASS.BASS_POS_BYTE)
-        updateNotification()
+        updateNotification(true)
+        updateSessionState()
     }
 
     fun getDurationMs(): Long {
@@ -164,61 +219,69 @@ class PlaybackService : Service() {
         return BASS.BASS_ChannelIsActive(h.stream) == BASS.BASS_ACTIVE_PLAYING
     }
 
-    private fun updateNotification() {
-        val notification = buildNotification()
-        if (isForeground) {
-            notificationManager.notify(NOTIFICATION_ID, notification)
+    private fun updateNotification(forceShow: Boolean) {
+        val n = buildNotification()
+        if (isForeground || forceShow) {
+            notificationManager.notify(NOTIFICATION_ID, n)
         }
     }
 
     private fun startForegroundIfNeeded() {
         if (!isForeground) {
-            startForeground(NOTIFICATION_ID, buildNotification())
+            val n = buildNotification()
+            if (Build.VERSION.SDK_INT >= 29) {
+                startForeground(NOTIFICATION_ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK)
+            } else {
+                startForeground(NOTIFICATION_ID, n)
+            }
             isForeground = true
         }
     }
 
     private fun buildNotification(): Notification {
-        val launchIntent = Intent(this, MainActivity::class.java)
+        val isPlaying = isPlaying()
+
+        val playPauseAction = if (isPlaying) PlaybackStateCompat.ACTION_PAUSE else PlaybackStateCompat.ACTION_PLAY
+        val playPauseIntent = MediaButtonReceiver.buildMediaButtonPendingIntent(this, playPauseAction)
+        val stopIntent = MediaButtonReceiver.buildMediaButtonPendingIntent(this, PlaybackStateCompat.ACTION_STOP)
         val contentIntent = PendingIntent.getActivity(
             this,
             0,
-            launchIntent,
-            PendingIntent.FLAG_IMMUTABLE
+            Intent(this, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            },
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
 
-        val playIntent = PendingIntent.getService(
-            this,
-            1,
-            Intent(this, PlaybackService::class.java).setAction(ACTION_PLAY),
-            PendingIntent.FLAG_IMMUTABLE
-        )
-        val pauseIntent = PendingIntent.getService(
-            this,
-            2,
-            Intent(this, PlaybackService::class.java).setAction(ACTION_PAUSE),
-            PendingIntent.FLAG_IMMUTABLE
-        )
-        val stopIntent = PendingIntent.getService(
-            this,
-            3,
-            Intent(this, PlaybackService::class.java).setAction(ACTION_STOP),
-            PendingIntent.FLAG_IMMUTABLE
-        )
-
-        val isPlaying = isPlaying()
         return NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
+            .setSmallIcon(R.mipmap.ic_launcher)
             .setContentTitle("2by2 Music Player")
             .setContentText(if (isPlaying) "Playing" else "Paused")
-            .setSmallIcon(R.mipmap.ic_launcher)
-            .setContentIntent(contentIntent)
+            .setOnlyAlertOnce(true)
+            .setShowWhen(false)
             .setOngoing(isPlaying)
-            .addAction(
-                R.drawable.ic_launcher_foreground,
-                if (isPlaying) "Pause" else "Play",
-                if (isPlaying) pauseIntent else playIntent
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .setCategory(NotificationCompat.CATEGORY_TRANSPORT)
+            .setStyle(
+                MediaStyle()
+                    .setMediaSession(mediaSession.sessionToken)
+                    .setShowActionsInCompactView(0, 1)
             )
-            .addAction(R.drawable.ic_launcher_foreground, "Stop", stopIntent)
+            .setContentIntent(contentIntent)
+            .addAction(
+                NotificationCompat.Action(
+                    R.drawable.ic_launcher_foreground,
+                    if (isPlaying) "Pause" else "Play",
+                    playPauseIntent
+                )
+            )
+            .addAction(
+                NotificationCompat.Action(
+                    R.drawable.ic_launcher_foreground,
+                    "Stop",
+                    stopIntent
+                )
+            )
             .build()
     }
 
@@ -231,6 +294,29 @@ class PlaybackService : Service() {
             )
             notificationManager.createNotificationChannel(channel)
         }
+    }
+
+    fun updateSessionState() {
+        val playing = isPlaying()
+        val state = if (playing) PlaybackStateCompat.STATE_PLAYING else PlaybackStateCompat.STATE_PAUSED
+        val actions =
+            PlaybackStateCompat.ACTION_PLAY or
+                    PlaybackStateCompat.ACTION_PAUSE or
+                    PlaybackStateCompat.ACTION_PLAY_PAUSE or
+                    PlaybackStateCompat.ACTION_STOP or
+                    PlaybackStateCompat.ACTION_SEEK_TO
+
+        mediaSession.setPlaybackState(
+            PlaybackStateCompat.Builder()
+                .setActions(actions)
+                .setState(
+                    state,
+                    getCurrentPositionMs(),
+                    if (playing) 1f else 0f,
+                    SystemClock.elapsedRealtime()
+                )
+                .build()
+        )
     }
 
     private fun releaseHandles() {
@@ -291,6 +377,18 @@ class PlaybackService : Service() {
         BASSMIDI.BASS_MIDI_StreamSetFonts(stream, fonts, 1)
         return MidiHandles(stream, soundFontHandle)
     }
+
+    private val stateTicker = object : Runnable {
+        override fun run() {
+            if (isPlaying()) {
+                updateSessionState()
+                handler.postDelayed(this, 200)
+            }
+        }
+    }
+
+    fun getCurrentUriString(): String? = currentUriString
+    fun getCurrentTitle(): String? = currentTitle
 
     companion object {
         private const val NOTIFICATION_CHANNEL_ID = "playback"

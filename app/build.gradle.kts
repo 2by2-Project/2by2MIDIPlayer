@@ -62,4 +62,5 @@ dependencies {
     implementation("dev.atsushieno:ktmidi:+")
     implementation("androidx.compose.material:material-icons-extended")
     implementation("androidx.compose.material:material")
+    implementation("androidx.media:media:1.7.0")
 }
