@@ -226,7 +226,6 @@ fun MusicPlayerMainScreen(modifier: Modifier = Modifier) {
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(title, Modifier.weight(1f), maxLines = 1)
-                    Spacer(Modifier.weight(1f))
                     Text(
                         text = currentPositionString,
                         style = MaterialTheme.typography.bodySmall,
