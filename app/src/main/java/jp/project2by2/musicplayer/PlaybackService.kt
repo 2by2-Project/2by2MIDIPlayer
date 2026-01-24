@@ -22,6 +22,7 @@ import androidx.core.app.NotificationCompat
 import android.media.AudioAttributes
 import android.media.AudioFocusRequest
 import android.media.AudioManager
+import androidx.annotation.RequiresApi
 import androidx.media.app.NotificationCompat.MediaStyle
 import androidx.media.session.MediaButtonReceiver
 import com.un4seen.bass.BASS
@@ -351,6 +352,7 @@ class PlaybackService : Service() {
         handles = null
     }
 
+    @RequiresApi(Build.VERSION_CODES.TIRAMISU)
     private fun findLoopPoint(uri: android.net.Uri): LoopPoint {
         val loopPoint = LoopPoint()
         contentResolver.openInputStream(uri)?.use { inputStream ->
