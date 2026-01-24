@@ -789,7 +789,7 @@ private fun queryMidiFiles(context: Context): List<MidiFileItem> {
         "%.mid",
         "%.midi"
     )
-    val sortOrder = "${MediaStore.Files.FileColumns.DATE_MODIFIED} ASC"
+    val sortOrder = "${MediaStore.Files.FileColumns.DISPLAY_NAME} ASC"
 
     val results = mutableListOf<MidiFileItem>()
     context.contentResolver.query(
