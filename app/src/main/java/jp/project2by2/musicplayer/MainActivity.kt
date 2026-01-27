@@ -32,6 +32,7 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -79,6 +80,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
@@ -299,7 +301,9 @@ fun MusicPlayerMainScreen(modifier: Modifier = Modifier) {
                     if (selectedFolderKey != null) {
                         Text(
                             text = selectedFolderName ?: "Unknown",
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier.fillMaxWidth()
+                                .clipToBounds()
+                                .basicMarquee(Int.MAX_VALUE),
                             textAlign = TextAlign.Center
                         )
                     } else {
@@ -533,7 +537,9 @@ private fun MidiFileRow(
             Text(
                 text = item.title,
                 maxLines = 1,
-                color = contentColor
+                color = contentColor,
+                modifier = Modifier.clipToBounds()
+                    .basicMarquee(Int.MAX_VALUE)
             )
             if (item.folderName.isNotBlank()) {
                 Text(
@@ -638,7 +644,9 @@ private fun FolderCard(
             }
             Text(
                 text = folder.name,
-                modifier = Modifier.padding(12.dp),
+                modifier = Modifier.padding(12.dp)
+                    .clipToBounds()
+                    .basicMarquee(Int.MAX_VALUE),
                 maxLines = 1
             )
         }
