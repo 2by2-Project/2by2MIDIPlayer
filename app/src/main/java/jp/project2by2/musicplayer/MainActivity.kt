@@ -128,6 +128,7 @@ fun MusicPlayerMainScreen(modifier: Modifier = Modifier) {
     var searchQuery by remember { mutableStateOf("") }
     var selectedFolderKey by remember { mutableStateOf<String?>(null) }
     var selectedFolderName by remember { mutableStateOf<String?>(null) }
+    var selectedFolderCoverUri by remember { mutableStateOf<Uri?>(null) }
 
     val midiFiles = remember { mutableStateListOf<MidiFileItem>() }
     val folderItems = remember { mutableStateListOf<FolderItem>() }
@@ -252,6 +253,11 @@ fun MusicPlayerMainScreen(modifier: Modifier = Modifier) {
             return
         }
         selectedMidiFileUri = uri
+
+        // Set artist and cover uri
+        playbackService?.currentArtist = selectedFolderName
+        playbackService?.currentArtworkUri = selectedFolderCoverUri
+
         try {
             val ok = playbackService?.loadMidi(uri.toString()) ?: false
             if (!ok) {
@@ -449,6 +455,7 @@ fun MusicPlayerMainScreen(modifier: Modifier = Modifier) {
                                 onFolderClick = { folder ->
                                     selectedFolderKey = folder.key
                                     selectedFolderName = folder.name
+                                    selectedFolderCoverUri = folder.coverUri
                                 }
                             )
                             BrowseScreen.Files -> MidiFileList(

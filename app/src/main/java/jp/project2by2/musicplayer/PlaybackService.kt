@@ -12,6 +12,7 @@ import android.provider.OpenableColumns
 import android.media.AudioAttributes
 import android.media.AudioFocusRequest
 import android.media.AudioManager
+import android.net.Uri
 import android.os.Looper
 import androidx.annotation.RequiresApi
 import androidx.media3.common.util.UnstableApi
@@ -42,6 +43,8 @@ class PlaybackService : MediaSessionService() {
     // Current playing
     private var currentUriString: String? = null
     private var currentTitle: String? = null
+    public var currentArtist: String? = null
+    public var currentArtworkUri: Uri? = null
 
     inner class LocalBinder : Binder() {
         fun getService(): PlaybackService = this@PlaybackService
@@ -173,14 +176,12 @@ class PlaybackService : MediaSessionService() {
             )
         }
 
-        val title = resolveDisplayName(uri)
-
         // Current playing
         currentUriString = uriString
-        currentTitle = title
+        currentTitle = resolveDisplayName(uri)
 
         // Media3
-        bassPlayer.setMetadata(title)
+        bassPlayer.setMetadata(currentTitle!!, currentArtist, currentArtworkUri)
         bassPlayer.invalidateFromBass()
 
         return true
