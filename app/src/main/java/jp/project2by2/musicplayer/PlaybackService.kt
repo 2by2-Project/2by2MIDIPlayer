@@ -13,7 +13,9 @@ import android.media.AudioAttributes
 import android.media.AudioFocusRequest
 import android.media.AudioManager
 import android.net.Uri
+import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import androidx.annotation.RequiresApi
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.session.DefaultMediaNotificationProvider
@@ -30,6 +32,8 @@ import java.io.File
 class PlaybackService : MediaSessionService() {
     private val binder = LocalBinder()
 
+    private val mainHandler = Handler(Looper.getMainLooper())
+
     private var handles: MidiHandles? = null
     private var loopPoint: LoopPoint? = null
     private var syncProc: BASS.SYNCPROC? = null
@@ -45,6 +49,9 @@ class PlaybackService : MediaSessionService() {
     private var currentTitle: String? = null
     public var currentArtist: String? = null
     public var currentArtworkUri: Uri? = null
+
+    @Volatile private var loopPositionOverrideMs: Long? = null
+    @Volatile private var loopOverrideUntilUptimeMs: Long = 0L
 
     inner class LocalBinder : Binder() {
         fun getService(): PlaybackService = this@PlaybackService
@@ -161,11 +168,16 @@ class PlaybackService : MediaSessionService() {
         }
         loopPoint?.let { lp ->
             syncProc = BASS.SYNCPROC { _, _, _, _ ->
+                val startSecs = lp.startMs.toDouble() / 1000.0
+                val startBytes = BASS.BASS_ChannelSeconds2Bytes(h.stream, startSecs)
+
                 BASS.BASS_ChannelSetPosition(
                     h.stream,
                     lp.startTick.toLong(),
                     BASSMIDI.BASS_POS_MIDI_TICK or BASSMIDI.BASS_MIDI_DECAYSEEK
                 )
+
+                notifyLooped(lp.startMs)
             }
             syncHandle = BASS.BASS_ChannelSetSync(
                 h.stream,
@@ -220,6 +232,12 @@ class PlaybackService : MediaSessionService() {
     }
 
     fun getCurrentPositionMs(): Long {
+        val now = SystemClock.uptimeMillis()
+        val override = loopPositionOverrideMs
+        if (override != null && now < loopOverrideUntilUptimeMs) {
+            return override
+        }
+
         val h = handles ?: return 0L
         val bytes = BASS.BASS_ChannelGetPosition(h.stream, BASS.BASS_POS_BYTE)
         val secs = BASS.BASS_ChannelBytes2Seconds(h.stream, bytes)
@@ -439,6 +457,16 @@ class PlaybackService : MediaSessionService() {
     private fun seekInternalFromController(ms: Long) {
         setCurrentPositionMs(ms)
         bassPlayer.invalidateFromBass()
+    }
+
+    private fun notifyLooped(startMs: Long) {
+        loopPositionOverrideMs = startMs
+        loopOverrideUntilUptimeMs = SystemClock.uptimeMillis() + 300L
+
+        mainHandler.post {
+            bassPlayer.invalidateFromBass()
+            triggerNotificationUpdate()
+        }
     }
 }
 
