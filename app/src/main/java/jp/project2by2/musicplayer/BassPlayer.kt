@@ -1,5 +1,6 @@
 package jp.project2by2.musicplayer
 
+import android.net.Uri
 import android.os.Looper
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
@@ -22,10 +23,15 @@ class BassPlayer(
 ) : SimpleBasePlayer(looper) {
 
     private var title: String = "2by2 Music Player"
+    private var artist: String? = null
+    private var artworkUri: Uri? = null
+
     private val mediaId = "midi"
 
-    fun setMetadata(title: String) {
+    fun setMetadata(title: String, artist: String?, artworkUri: Uri?) {
         this.title = title
+        this.artist = artist
+        this.artworkUri = artworkUri
         invalidateState()
     }
 
@@ -41,6 +47,8 @@ class BassPlayer(
 
         val metadata = MediaMetadata.Builder()
             .setTitle(title)
+            .setArtist(artist)
+            .setArtworkUri(artworkUri)
             .build()
 
         val mediaItem = MediaItem.Builder()
