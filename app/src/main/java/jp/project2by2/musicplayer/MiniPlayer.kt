@@ -1,6 +1,7 @@
 package jp.project2by2.musicplayer
 
 import android.net.Uri
+import androidx.annotation.OptIn
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
@@ -35,6 +36,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.unit.dp
+import androidx.media3.common.util.UnstableApi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -148,6 +150,7 @@ fun MiniPlayerBar(
     }
 }
 
+@OptIn(UnstableApi::class)
 @Composable
 fun MiniPlayerContainer(
     playbackService: PlaybackService?,
