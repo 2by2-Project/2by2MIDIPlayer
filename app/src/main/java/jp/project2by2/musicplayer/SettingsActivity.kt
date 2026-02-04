@@ -6,6 +6,7 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import android.provider.OpenableColumns
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.LocalActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -19,7 +20,9 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material3.ElevatedButton
@@ -27,8 +30,10 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
@@ -115,10 +120,18 @@ private fun SettingsScreen(playbackService: PlaybackService?) {
     var effectsEnabled by remember { mutableStateOf(true) }
     var reverbStrength by remember { mutableStateOf(1f) }
 
+    var loopEnabled by remember { mutableStateOf(true) }
+    var loopMode by remember { mutableStateOf(0) }
+    var shuffleEnabled by remember { mutableStateOf(false) }
+
     androidx.compose.runtime.LaunchedEffect(svc) {
         // Load settings
         effectsEnabled = SettingsDataStore.effectsEnabledFlow(context).first()
         reverbStrength = SettingsDataStore.reverbStrengthFlow(context).first()
+
+        loopEnabled = SettingsDataStore.loopEnabledFlow(context).first()
+        loopMode = SettingsDataStore.loopModeFlow(context).first()
+        shuffleEnabled = SettingsDataStore.shuffleEnabledFlow(context).first()
     }
 
     fun resolveDisplayName(uri: Uri): String {
@@ -216,6 +229,90 @@ private fun SettingsScreen(playbackService: PlaybackService?) {
                         }
                     )
                 }
+                // Playback
+                item {
+                    Text("Playback", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.padding(16.dp))
+                }
+                item {
+                    SettingsSwitchItem(
+                        title = "Enable Loop",
+                        checked = loopEnabled,
+                        onCheckedChange = { checked ->
+                            loopEnabled = checked
+                            scope.launch {
+                                SettingsDataStore.setLoopEnabled(context, checked)
+                            }
+                        }
+                    )
+                }
+                item {
+                    Surface(
+                        modifier = Modifier.padding(horizontal = 16.dp).fillMaxWidth(),
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(0.5f),
+                        shape = MaterialTheme.shapes.small
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(16.dp)
+                        ) {
+                            SettingsRadioItem(
+                                text = "Play indefinitely",
+                                enabled = loopEnabled,
+                                selected = loopMode == 0,
+                                onClick = {
+                                    loopMode = 0
+                                    scope.launch {
+                                        SettingsDataStore.setLoopMode(context, 0)
+                                    }
+                                }
+                            )
+                            SettingsRadioItem(
+                                text = "Play indefinitely when detected",
+                                enabled = loopEnabled,
+                                selected = loopMode == 1,
+                                onClick = {
+                                    loopMode = 1
+                                    scope.launch {
+                                        SettingsDataStore.setLoopMode(context, 1)
+                                    }
+                                }
+                            )
+                            SettingsRadioItem(
+                                text = "Loop and fade",
+                                enabled = loopEnabled,
+                                selected = loopMode == 2,
+                                onClick = {
+                                    loopMode = 2
+                                    scope.launch {
+                                        SettingsDataStore.setLoopMode(context, 2)
+                                    }
+                                }
+                            )
+                            SettingsRadioItem(
+                                text = "Loop and fade when detected",
+                                enabled = loopEnabled,
+                                selected = loopMode == 3,
+                                onClick = {
+                                    loopMode = 3
+                                    scope.launch {
+                                        SettingsDataStore.setLoopMode(context, 3)
+                                    }
+                                }
+                            )
+                        }
+                    }
+                }
+                item {
+                    SettingsSwitchItem(
+                        title = "Enable Shuffle",
+                        checked = shuffleEnabled,
+                        onCheckedChange = { checked ->
+                            shuffleEnabled = checked
+                            scope.launch {
+                                SettingsDataStore.setShuffleEnabled(context, checked)
+                            }
+                        }
+                    )
+                }
             }
         }
     }
@@ -304,5 +401,34 @@ fun SettingsSliderItem(
             enabled = enabled,
             modifier = Modifier.fillMaxWidth()
         )
+    }
+}
+
+
+@Composable
+private fun SettingsRadioItem(
+    text: String,
+    selected: Boolean,
+    enabled: Boolean = true,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .selectable(
+                selected = selected,
+                onClick = { if (enabled) onClick() else null },
+                role = androidx.compose.ui.semantics.Role.RadioButton
+            )
+            .padding(vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        RadioButton(
+            selected = selected,
+            enabled = enabled,
+            onClick = null
+        )
+        Spacer(Modifier.width(16.dp))
+        Text(text, style = MaterialTheme.typography.bodyLarge)
     }
 }

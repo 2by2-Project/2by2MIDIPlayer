@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.floatPreferencesKey
+import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
@@ -17,6 +18,10 @@ object SettingsDataStore {
 
     private val effectsEnabledKey = booleanPreferencesKey("effects_enabled")
     private val reverbStrengthKey = floatPreferencesKey("reverb_strength")
+
+    private val loopEnabledKey = booleanPreferencesKey("loop_enabled")
+    private val loopModeKey = intPreferencesKey("loop_mode")
+    private val shuffleEnabledKey = booleanPreferencesKey("shuffle_enabled")
 
     fun soundFontNameFlow(context: Context): Flow<String?> {
         return context.settingsDataStore.data.map { prefs ->
@@ -34,6 +39,21 @@ object SettingsDataStore {
             .map { it[reverbStrengthKey] ?: 1f }
             .distinctUntilChanged()
 
+    fun loopEnabledFlow(context: Context): Flow<Boolean> =
+        context.settingsDataStore.data
+            .map { it[loopEnabledKey] ?: true }
+            .distinctUntilChanged()
+
+    fun loopModeFlow(context: Context): Flow<Int> =
+        context.settingsDataStore.data
+            .map { it[loopModeKey] ?: 0 }
+            .distinctUntilChanged()
+
+    fun shuffleEnabledFlow(context: Context): Flow<Boolean> =
+        context.settingsDataStore.data
+            .map { it[shuffleEnabledKey] ?: false }
+            .distinctUntilChanged()
+
     suspend fun setSoundFontName(context: Context, name: String) {
         context.settingsDataStore.edit { prefs ->
             prefs[soundFontNameKey] = name
@@ -46,5 +66,17 @@ object SettingsDataStore {
 
     suspend fun setReverbStrength(context: Context, value: Float) {
         context.settingsDataStore.edit { it[reverbStrengthKey] = value }
+    }
+
+    suspend fun setLoopEnabled(context: Context, enabled: Boolean) {
+        context.settingsDataStore.edit { it[loopEnabledKey] = enabled }
+    }
+
+    suspend fun setLoopMode(context: Context, loopMode: Int) {
+        context.settingsDataStore.edit { it[loopModeKey] = loopMode }
+    }
+
+    suspend fun setShuffleEnabled(context: Context, enabled: Boolean) {
+        context.settingsDataStore.edit { it[shuffleEnabledKey] = enabled }
     }
 }

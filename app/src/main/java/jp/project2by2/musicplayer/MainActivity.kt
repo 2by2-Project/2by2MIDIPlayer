@@ -236,8 +236,9 @@ fun MusicPlayerMainScreen(
     LaunchedEffect(playbackService) {
         val service = playbackService ?: return@LaunchedEffect
 
-        service.getCurrentUriString()?.let { uriString ->
-            selectedMidiFileUri = Uri.parse(uriString)
+        while (playbackService === service) {
+            selectedMidiFileUri = service.getCurrentUriString()?.let { Uri.parse(it) }
+            delay(250)
         }
     }
 
