@@ -55,7 +55,7 @@ class PlaybackService : MediaSessionService() {
     private var volumeSlideSyncHandle: Int = 0
     private var loopRepeatCount: Int = 0
     private val transitionInProgress = AtomicBoolean(false)
-    @Volatile private var loopEnabledSnapshot: Boolean = true
+    @Volatile private var loopEnabledSnapshot: Boolean = false
     @Volatile private var loopModeSnapshot: Int = 0
     @Volatile private var shuffleEnabledSnapshot: Boolean = false
 

@@ -13,6 +13,11 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -117,10 +122,10 @@ private fun SettingsScreen(playbackService: PlaybackService?) {
 
     val svc = playbackService
 
-    var effectsEnabled by remember { mutableStateOf(true) }
+    var effectsEnabled by remember { mutableStateOf(false) }
     var reverbStrength by remember { mutableStateOf(1f) }
 
-    var loopEnabled by remember { mutableStateOf(true) }
+    var loopEnabled by remember { mutableStateOf(false) }
     var loopMode by remember { mutableStateOf(0) }
     var shuffleEnabled by remember { mutableStateOf(false) }
 
@@ -215,19 +220,35 @@ private fun SettingsScreen(playbackService: PlaybackService?) {
                     )
                 }
                 item {
-                    SettingsSliderItem(
-                        title = "Reverb strength",
-                        value = reverbStrength,
-                        enabled = effectsEnabled,
-                        valueRange = 0.0f..3.0f,
-                        onValueChange = { v ->
-                            reverbStrength = v
-                            svc?.setReverbStrength(v)
-                            scope.launch {
-                                SettingsDataStore.setReverbStrength(context, v)
+                    AnimatedVisibility(
+                        visible = effectsEnabled,
+                        enter = expandVertically(expandFrom = Alignment.Top) + fadeIn(),
+                        exit = shrinkVertically(shrinkTowards = Alignment.Top) + fadeOut()
+                    ) {
+                        Surface(
+                            modifier = Modifier.padding(horizontal = 16.dp).fillMaxWidth(),
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(0.5f),
+                            shape = MaterialTheme.shapes.small
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(8.dp)
+                            ) {
+                                SettingsSliderItem(
+                                    title = "Reverb strength",
+                                    value = reverbStrength,
+                                    enabled = effectsEnabled,
+                                    valueRange = 0.0f..3.0f,
+                                    onValueChange = { v ->
+                                        reverbStrength = v
+                                        svc?.setReverbStrength(v)
+                                        scope.launch {
+                                            SettingsDataStore.setReverbStrength(context, v)
+                                        }
+                                    }
+                                )
                             }
                         }
-                    )
+                    }
                 }
                 // Playback
                 item {
@@ -246,58 +267,64 @@ private fun SettingsScreen(playbackService: PlaybackService?) {
                     )
                 }
                 item {
-                    Surface(
-                        modifier = Modifier.padding(horizontal = 16.dp).fillMaxWidth(),
-                        color = MaterialTheme.colorScheme.surfaceVariant.copy(0.5f),
-                        shape = MaterialTheme.shapes.small
+                    AnimatedVisibility(
+                        visible = loopEnabled,
+                        enter = expandVertically(expandFrom = Alignment.Top) + fadeIn(),
+                        exit = shrinkVertically(shrinkTowards = Alignment.Top) + fadeOut()
                     ) {
-                        Column(
-                            modifier = Modifier.padding(16.dp)
+                        Surface(
+                            modifier = Modifier.padding(horizontal = 16.dp).fillMaxWidth(),
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(0.5f),
+                            shape = MaterialTheme.shapes.small
                         ) {
-                            SettingsRadioItem(
-                                text = "Play indefinitely",
-                                enabled = loopEnabled,
-                                selected = loopMode == 0,
-                                onClick = {
-                                    loopMode = 0
-                                    scope.launch {
-                                        SettingsDataStore.setLoopMode(context, 0)
+                            Column(
+                                modifier = Modifier.padding(8.dp)
+                            ) {
+                                SettingsRadioItem(
+                                    text = "Play indefinitely",
+                                    enabled = loopEnabled,
+                                    selected = loopMode == 0,
+                                    onClick = {
+                                        loopMode = 0
+                                        scope.launch {
+                                            SettingsDataStore.setLoopMode(context, 0)
+                                        }
                                     }
-                                }
-                            )
-                            SettingsRadioItem(
-                                text = "Play indefinitely when detected",
-                                enabled = loopEnabled,
-                                selected = loopMode == 1,
-                                onClick = {
-                                    loopMode = 1
-                                    scope.launch {
-                                        SettingsDataStore.setLoopMode(context, 1)
+                                )
+                                SettingsRadioItem(
+                                    text = "Play indefinitely when detected",
+                                    enabled = loopEnabled,
+                                    selected = loopMode == 1,
+                                    onClick = {
+                                        loopMode = 1
+                                        scope.launch {
+                                            SettingsDataStore.setLoopMode(context, 1)
+                                        }
                                     }
-                                }
-                            )
-                            SettingsRadioItem(
-                                text = "Loop and fade",
-                                enabled = loopEnabled,
-                                selected = loopMode == 2,
-                                onClick = {
-                                    loopMode = 2
-                                    scope.launch {
-                                        SettingsDataStore.setLoopMode(context, 2)
+                                )
+                                SettingsRadioItem(
+                                    text = "Loop and fade",
+                                    enabled = loopEnabled,
+                                    selected = loopMode == 2,
+                                    onClick = {
+                                        loopMode = 2
+                                        scope.launch {
+                                            SettingsDataStore.setLoopMode(context, 2)
+                                        }
                                     }
-                                }
-                            )
-                            SettingsRadioItem(
-                                text = "Loop and fade when detected",
-                                enabled = loopEnabled,
-                                selected = loopMode == 3,
-                                onClick = {
-                                    loopMode = 3
-                                    scope.launch {
-                                        SettingsDataStore.setLoopMode(context, 3)
+                                )
+                                SettingsRadioItem(
+                                    text = "Loop and fade when detected",
+                                    enabled = loopEnabled,
+                                    selected = loopMode == 3,
+                                    onClick = {
+                                        loopMode = 3
+                                        scope.launch {
+                                            SettingsDataStore.setLoopMode(context, 3)
+                                        }
                                     }
-                                }
-                            )
+                                )
+                            }
                         }
                     }
                 }
@@ -420,7 +447,7 @@ private fun SettingsRadioItem(
                 onClick = { if (enabled) onClick() else null },
                 role = androidx.compose.ui.semantics.Role.RadioButton
             )
-            .padding(vertical = 12.dp),
+            .padding(horizontal = 16.dp, vertical = 16.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         RadioButton(
