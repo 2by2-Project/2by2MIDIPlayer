@@ -31,7 +31,7 @@ object SettingsDataStore {
 
     fun effectsEnabledFlow(context: Context): Flow<Boolean> =
         context.settingsDataStore.data
-            .map { it[effectsEnabledKey] ?: true }
+            .map { it[effectsEnabledKey] ?: false }
             .distinctUntilChanged()
 
     fun reverbStrengthFlow(context: Context): Flow<Float> =
@@ -41,7 +41,7 @@ object SettingsDataStore {
 
     fun loopEnabledFlow(context: Context): Flow<Boolean> =
         context.settingsDataStore.data
-            .map { it[loopEnabledKey] ?: true }
+            .map { it[loopEnabledKey] ?: false }
             .distinctUntilChanged()
 
     fun loopModeFlow(context: Context): Flow<Int> =
