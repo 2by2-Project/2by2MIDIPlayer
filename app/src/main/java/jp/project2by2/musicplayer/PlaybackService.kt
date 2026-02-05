@@ -84,6 +84,7 @@ class PlaybackService : MediaSessionService() {
 
         bassPlayer = BassPlayer(
             looper = Looper.getMainLooper(),
+            initialTitle = getString(R.string.app_name),
             onPlay = { playInternalFromController() },
             onPause = { pauseInternalFromController(releaseFocus = true) },
             onSeek = { ms -> seekInternalFromController(ms) },
@@ -103,12 +104,12 @@ class PlaybackService : MediaSessionService() {
         )
 
         mediaSession = MediaSession.Builder(this, bassPlayer)
-            .setId("2by2Playback")
+            .setId(getString(R.string.playback_session_id))
             .setSessionActivity(contentIntent)
             .build()
 
         notificationProvider = DefaultMediaNotificationProvider.Builder(this)
-            .setChannelName(R.string.app_name)
+            .setChannelName(R.string.notification_channel_name)
             .setChannelId(NOTIFICATION_CHANNEL_ID)
             .setNotificationId(NOTIFICATION_ID)
             .build().also { provider ->
@@ -679,7 +680,7 @@ class PlaybackService : MediaSessionService() {
                 }
             }
 
-        return uri.lastPathSegment?.substringAfterLast('/') ?: "Unknown"
+        return uri.lastPathSegment?.substringAfterLast('/') ?: getString(R.string.unknown)
     }
 
     private val audioManager by lazy { getSystemService(AUDIO_SERVICE) as AudioManager }

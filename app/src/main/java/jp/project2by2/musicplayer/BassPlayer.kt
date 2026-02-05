@@ -15,6 +15,7 @@ import com.google.common.util.concurrent.ListenableFuture
 @UnstableApi
 class BassPlayer(
     looper: Looper = Looper.getMainLooper(),
+    private val initialTitle: String,
     private val onPlay: () -> Unit,
     private val onPause: () -> Unit,
     private val onSeek: (Long) -> Unit,
@@ -25,7 +26,7 @@ class BassPlayer(
     private val playerHandler = Handler(looper)
     private val applicationLooper = looper
 
-    private var title: String = "2by2 Music Player"
+    private var title: String = initialTitle
     private var artist: String? = null
     private var artworkUri: Uri? = null
 
