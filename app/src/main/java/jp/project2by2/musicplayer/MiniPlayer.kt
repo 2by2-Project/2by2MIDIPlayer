@@ -1,6 +1,5 @@
 package jp.project2by2.musicplayer
 
-import android.content.Context
 import android.net.Uri
 import androidx.annotation.OptIn
 import androidx.compose.animation.AnimatedVisibility
@@ -23,11 +22,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Loop
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
-import androidx.compose.material.icons.materialIcon
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -47,6 +44,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.media3.common.util.UnstableApi
 import kotlinx.coroutines.Dispatchers
@@ -219,15 +217,15 @@ fun MiniPlayerBar(
                         .padding(horizontal = 16.dp, vertical = 4.dp)
                 ) {
                     Text(
-                        text = "Current time: $currentPositionMs ms",
+                        text = stringResource(id = R.string.info_current_time, currentPositionMs),
                         style = MaterialTheme.typography.bodySmall
                     )
                     Text(
-                        text = "Loop point: $loopStartMs ms",
+                        text = stringResource(id = R.string.info_loop_point, loopStartMs),
                         style = MaterialTheme.typography.bodySmall
                     )
                     Text(
-                        text = "End of track: $loopEndMs ms",
+                        text = stringResource(id = R.string.info_end_of_track, loopEndMs),
                         style = MaterialTheme.typography.bodySmall,
                         modifier = Modifier.padding(bottom = 8.dp)
                     )
@@ -249,6 +247,7 @@ fun MiniPlayerContainer(
     onPrevious: () -> Unit,
     onNext: () -> Unit,
 ) {
+    val context = LocalContext.current
     // 750ms（まずはここ）: 500〜1000msで調整
     val uiState = produceState<MiniPlayerUi?>(initialValue = null, key1 = playbackService, key2 = selectedMidiFileUri) {
         val service = playbackService ?: run { value = null; return@produceState }
@@ -259,7 +258,7 @@ fun MiniPlayerContainer(
                 val lp = service.getLoopPoint()
                 val duration = service.getDurationMs().coerceAtLeast(0L)
                 MiniPlayerUi(
-                    title = service.getCurrentTitle() ?: "No file selected",
+                    title = service.getCurrentTitle() ?: context.getString(R.string.info_no_file_selected),
                     isPlaying = service.isPlaying(),
                     positionMs = service.getCurrentPositionMs(),
                     durationMs = duration,

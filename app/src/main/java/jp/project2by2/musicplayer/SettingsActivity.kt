@@ -1,12 +1,10 @@
 package jp.project2by2.musicplayer
 
 import android.app.Activity
-import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import android.provider.OpenableColumns
-import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.LocalActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -54,16 +52,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import com.un4seen.bass.BASS
-import com.un4seen.bass.BASSMIDI
 import jp.project2by2.musicplayer.ui.theme._2by2MusicPlayerTheme
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
 import java.io.File
-import kotlin.math.roundToInt
 
 class SettingsActivity : ComponentActivity() {
     private var boundService by mutableStateOf<PlaybackService?>(null)
@@ -151,7 +146,7 @@ private fun SettingsScreen(playbackService: PlaybackService?) {
             }
 
         // fallback
-        return uri.lastPathSegment?.substringAfterLast('/') ?: "Unknown"
+        return uri.lastPathSegment?.substringAfterLast('/') ?: context.getString(R.string.unknown)
     }
 
     val soundFontPicker = rememberLauncherForActivityResult(
@@ -173,10 +168,10 @@ private fun SettingsScreen(playbackService: PlaybackService?) {
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Settings") },
+                title = { Text(stringResource(id = R.string.settings)) },
                 navigationIcon = {
                     IconButton(onClick = { activity.finish() }) {
-                        Icon(imageVector = Icons.Default.ArrowBack, contentDescription = "Back")
+                        Icon(imageVector = Icons.Default.ArrowBack, contentDescription = stringResource(id = R.string.back))
                     }
                 }
             )
@@ -194,21 +189,21 @@ private fun SettingsScreen(playbackService: PlaybackService?) {
             ) {
                 // MIDI Synthesizer
                 item {
-                    Text("MIDI Synthesizer", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.padding(16.dp))
+                    Text(stringResource(id = R.string.settings_category_midi_synthesizer), style = MaterialTheme.typography.headlineSmall, modifier = Modifier.padding(16.dp))
                 }
                 item {
-                    val label = soundFontName ?: "Loaded"
-                    SettingsInfoItem(title = "SoundFont", value = if (hasSoundFont) label else "Not set")
+                    val label = soundFontName ?: stringResource(id = R.string.settings_soundfont_loaded)
+                    SettingsInfoItem(title = stringResource(id = R.string.settings_soundfont_title), value = if (hasSoundFont) label else stringResource(id = R.string.settings_soundfont_not_set))
                     ElevatedButton(
                         onClick = { soundFontPicker.launch("application/octet-stream") },
                         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)
                     ) {
-                        Text("Load SoundFont")
+                        Text(stringResource(id = R.string.settings_soundfont_load_button))
                     }
                 }
                 item {
                     SettingsSwitchItem(
-                        title = "Enable Reverb / Chorus effects",
+                        title = stringResource(id = R.string.settings_effects_toggle_title),
                         checked = effectsEnabled,
                         onCheckedChange = { checked ->
                             effectsEnabled = checked
@@ -234,7 +229,7 @@ private fun SettingsScreen(playbackService: PlaybackService?) {
                                 modifier = Modifier.padding(8.dp)
                             ) {
                                 SettingsSliderItem(
-                                    title = "Reverb strength",
+                                    title = stringResource(id = R.string.settings_effects_reverb_strength),
                                     value = reverbStrength,
                                     enabled = effectsEnabled,
                                     valueRange = 0.0f..3.0f,
@@ -252,11 +247,11 @@ private fun SettingsScreen(playbackService: PlaybackService?) {
                 }
                 // Playback
                 item {
-                    Text("Playback", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.padding(16.dp))
+                    Text(stringResource(id = R.string.settings_category_playback), style = MaterialTheme.typography.headlineSmall, modifier = Modifier.padding(16.dp))
                 }
                 item {
                     SettingsSwitchItem(
-                        title = "Enable Loop",
+                        title = stringResource(id = R.string.settings_playback_loop_toggle),
                         checked = loopEnabled,
                         onCheckedChange = { checked ->
                             loopEnabled = checked
@@ -281,7 +276,7 @@ private fun SettingsScreen(playbackService: PlaybackService?) {
                                 modifier = Modifier.padding(8.dp)
                             ) {
                                 SettingsRadioItem(
-                                    text = "Play indefinitely",
+                                    text = stringResource(id = R.string.settings_playback_loop_play_indefinitely),
                                     enabled = loopEnabled,
                                     selected = loopMode == 0,
                                     onClick = {
@@ -292,7 +287,7 @@ private fun SettingsScreen(playbackService: PlaybackService?) {
                                     }
                                 )
                                 SettingsRadioItem(
-                                    text = "Play indefinitely when detected",
+                                    text = stringResource(id = R.string.settings_playback_loop_play_indefinitely_when_detected),
                                     enabled = loopEnabled,
                                     selected = loopMode == 1,
                                     onClick = {
@@ -303,7 +298,7 @@ private fun SettingsScreen(playbackService: PlaybackService?) {
                                     }
                                 )
                                 SettingsRadioItem(
-                                    text = "Loop and fade",
+                                    text = stringResource(id = R.string.settings_playback_loop_loop_and_fade),
                                     enabled = loopEnabled,
                                     selected = loopMode == 2,
                                     onClick = {
@@ -314,7 +309,7 @@ private fun SettingsScreen(playbackService: PlaybackService?) {
                                     }
                                 )
                                 SettingsRadioItem(
-                                    text = "Loop and fade when detected",
+                                    text = stringResource(id = R.string.settings_playback_loop_loop_and_fade_when_detected),
                                     enabled = loopEnabled,
                                     selected = loopMode == 3,
                                     onClick = {
@@ -330,7 +325,7 @@ private fun SettingsScreen(playbackService: PlaybackService?) {
                 }
                 item {
                     SettingsSwitchItem(
-                        title = "Enable Shuffle",
+                        title = stringResource(id = R.string.settings_playback_shuffle_toggle),
                         checked = shuffleEnabled,
                         onCheckedChange = { checked ->
                             shuffleEnabled = checked

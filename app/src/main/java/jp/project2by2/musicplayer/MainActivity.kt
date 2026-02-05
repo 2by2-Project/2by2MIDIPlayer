@@ -88,6 +88,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
@@ -287,7 +288,7 @@ fun MusicPlayerMainScreen(
     fun handleMidiTap(uri: Uri) {
         val cacheSoundFontFile = File(context.cacheDir, "soundfont.sf2")
         if (!cacheSoundFontFile.exists()) {
-            Toast.makeText(context, "SoundFont is not set!", Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, context.getString(R.string.error_soundfont_not_set), Toast.LENGTH_SHORT).show()
             return
         }
         selectedMidiFileUri = uri
@@ -295,7 +296,7 @@ fun MusicPlayerMainScreen(
         // Set artist and cover uri
         val service = playbackService
         if (service == null) {
-            Toast.makeText(context, "Playback service is not ready", Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, context.getString(R.string.error_playback_service_not_ready), Toast.LENGTH_SHORT).show()
             return
         }
         service.currentArtist = selectedFolderName
@@ -306,14 +307,14 @@ fun MusicPlayerMainScreen(
                 service.loadMidi(uri.toString())
             }
             if (!ok) {
-                Toast.makeText(context, "Failed to load MIDI or SoundFont", Toast.LENGTH_SHORT).show()
+                Toast.makeText(context, context.getString(R.string.error_failed_to_load_midi), Toast.LENGTH_SHORT).show()
                 return@launch
             }
             controllerFuture.addListener(
                 {
                     runCatching { controllerFuture.get().play() }
                         .onFailure {
-                            Toast.makeText(context, "Failed to start playback", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, context.getString(R.string.error_failed_to_start_playback), Toast.LENGTH_SHORT).show()
                         }
                 },
                 MoreExecutors.directExecutor()
@@ -348,7 +349,7 @@ fun MusicPlayerMainScreen(
                         ) {
                             Icon(
                                 imageVector = Icons.Default.ArrowBack,
-                                contentDescription = "Back"
+                                contentDescription = stringResource(id = R.string.back)
                             )
                         }
                     }
@@ -356,7 +357,7 @@ fun MusicPlayerMainScreen(
                 title = {
                     if (selectedFolderKey != null) {
                         Text(
-                            text = selectedFolderName ?: "Unknown",
+                            text = selectedFolderName ?: stringResource(id = R.string.unknown),
                             modifier = Modifier.fillMaxWidth()
                                 .clipToBounds()
                                 .basicMarquee(Int.MAX_VALUE),
@@ -365,7 +366,7 @@ fun MusicPlayerMainScreen(
                     } else {
                         Image(
                             painter = painterResource(id = R.drawable.logo_image),
-                            contentDescription = "App Logo",
+                            contentDescription = stringResource(id = R.string.app_logo),
                             modifier = Modifier.height(48.dp)
                         )
                     }
@@ -383,7 +384,7 @@ fun MusicPlayerMainScreen(
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Search,
-                                contentDescription = "Search",
+                                contentDescription = stringResource(id = R.string.search),
                                 modifier = Modifier.padding(8.dp)
                             )
                         }
@@ -395,7 +396,7 @@ fun MusicPlayerMainScreen(
                     ) {
                         Icon(
                             imageVector = Icons.Default.Settings,
-                            contentDescription = "Settings",
+                            contentDescription = stringResource(id = R.string.settings),
                             modifier = Modifier.padding(8.dp)
                         )
                     }
@@ -463,7 +464,7 @@ fun MusicPlayerMainScreen(
                                 .padding(horizontal = 16.dp, vertical = 8.dp)
                                 .zIndex(0f)
                                 .focusRequester(focusRequesterSearch),
-                            placeholder = { Text("Search by file name") },
+                            placeholder = { Text(stringResource(id = R.string.topbar_search_summary)) },
                             singleLine = true
                         )
                         LaunchedEffect(Unit) {
@@ -473,11 +474,11 @@ fun MusicPlayerMainScreen(
                 }
                 if (!hasAudioPermission) {
                     ElevatedButton(onClick = { storagePermissionLauncher.launch(permissionsToRequest) }) {
-                        Text("Grant storage permission")
+                        Text(stringResource(id = R.string.info_grant_storage_permission))
                     }
                 } else if (midiFiles.isEmpty()) {
                     Text(
-                        text = "No .mid files found",
+                        text = stringResource(id = R.string.info_no_mid_files_found),
                         style = MaterialTheme.typography.bodySmall
                     )
                 } else {
@@ -561,7 +562,7 @@ private fun MidiFileList(
 ) {
     if (items.isEmpty()) {
         Text(
-            text = "No matching files",
+            text = stringResource(id = R.string.info_no_matching_files),
             style = MaterialTheme.typography.bodySmall
         )
         return
@@ -827,15 +828,16 @@ private fun buildFolderItems(
     val grouped = items.groupBy { it.folderKey }
     val results = mutableListOf<FolderItem>()
     for ((key, _) in grouped) {
-        val name = extractFolderName(key).ifBlank { "Unknown" }
+        val name = extractFolderName(key).ifBlank { context.getString(R.string.unknown) }
         val coverUri = if (hasImagePermission) findCoverImageUri(context, key) else null
         results.add(FolderItem(key = key, name = name, coverUri = coverUri))
     }
     return results.sortedBy { it.name.lowercase() }
 }
 
+@Composable
 private fun formatDuration(durationMs: Long): String {
-    if (durationMs <= 0L) return "--:--"
+    if (durationMs <= 0L) return stringResource(id = R.string.duration_placeholder)
     val totalSeconds = durationMs / 1000
     val minutes = totalSeconds / 60
     val seconds = totalSeconds % 60
