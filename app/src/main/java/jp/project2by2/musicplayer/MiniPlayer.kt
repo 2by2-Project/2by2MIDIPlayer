@@ -32,7 +32,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -50,7 +50,6 @@ import androidx.compose.ui.unit.dp
 import androidx.media3.common.util.UnstableApi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -87,14 +86,8 @@ fun MiniPlayerBar(
     var sliderValue by remember { mutableStateOf(progress) }
     var isDetailsExpanded by remember { mutableStateOf(false) }
 
-    var loopEnabled by remember { mutableStateOf(false) }
-    var shuffleEnabled by remember { mutableStateOf(false) }
-
-    // Load settings value
-    LaunchedEffect(isPlaying) {
-        loopEnabled = SettingsDataStore.loopEnabledFlow(context).first()
-        shuffleEnabled = SettingsDataStore.shuffleEnabledFlow(context).first()
-    }
+    val loopEnabled by SettingsDataStore.loopEnabledFlow(context).collectAsState(initial = false)
+    val shuffleEnabled by SettingsDataStore.shuffleEnabledFlow(context).collectAsState(initial = false)
 
     Surface(
         shape = RoundedCornerShape(0.dp),
@@ -154,9 +147,8 @@ fun MiniPlayerBar(
             ) {
                 IconButton(
                     onClick = {
-                        shuffleEnabled = !shuffleEnabled
                         scope.launch {
-                            SettingsDataStore.setShuffleEnabled(context, shuffleEnabled)
+                            SettingsDataStore.setShuffleEnabled(context, !shuffleEnabled)
                         }
                     }
                 ) {
@@ -194,9 +186,8 @@ fun MiniPlayerBar(
                 }
                 IconButton(
                     onClick = {
-                        loopEnabled = !loopEnabled
                         scope.launch {
-                            SettingsDataStore.setLoopEnabled(context, loopEnabled)
+                            SettingsDataStore.setLoopEnabled(context, !loopEnabled)
                         }
                     }
                 ) {

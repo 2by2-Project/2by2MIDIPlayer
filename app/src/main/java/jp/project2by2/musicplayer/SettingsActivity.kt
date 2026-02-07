@@ -120,18 +120,14 @@ private fun SettingsScreen(playbackService: PlaybackService?) {
     var effectsEnabled by remember { mutableStateOf(false) }
     var reverbStrength by remember { mutableStateOf(1f) }
 
-    var loopEnabled by remember { mutableStateOf(false) }
-    var loopMode by remember { mutableStateOf(0) }
-    var shuffleEnabled by remember { mutableStateOf(false) }
+    val loopEnabled by SettingsDataStore.loopEnabledFlow(context).collectAsState(initial = false)
+    val loopMode by SettingsDataStore.loopModeFlow(context).collectAsState(initial = 0)
+    val shuffleEnabled by SettingsDataStore.shuffleEnabledFlow(context).collectAsState(initial = false)
 
     androidx.compose.runtime.LaunchedEffect(svc) {
         // Load settings
         effectsEnabled = SettingsDataStore.effectsEnabledFlow(context).first()
         reverbStrength = SettingsDataStore.reverbStrengthFlow(context).first()
-
-        loopEnabled = SettingsDataStore.loopEnabledFlow(context).first()
-        loopMode = SettingsDataStore.loopModeFlow(context).first()
-        shuffleEnabled = SettingsDataStore.shuffleEnabledFlow(context).first()
     }
 
     fun resolveDisplayName(uri: Uri): String {
@@ -254,7 +250,6 @@ private fun SettingsScreen(playbackService: PlaybackService?) {
                         title = stringResource(id = R.string.settings_playback_loop_toggle),
                         checked = loopEnabled,
                         onCheckedChange = { checked ->
-                            loopEnabled = checked
                             scope.launch {
                                 SettingsDataStore.setLoopEnabled(context, checked)
                             }
@@ -280,7 +275,6 @@ private fun SettingsScreen(playbackService: PlaybackService?) {
                                     enabled = loopEnabled,
                                     selected = loopMode == 0,
                                     onClick = {
-                                        loopMode = 0
                                         scope.launch {
                                             SettingsDataStore.setLoopMode(context, 0)
                                         }
@@ -291,7 +285,6 @@ private fun SettingsScreen(playbackService: PlaybackService?) {
                                     enabled = loopEnabled,
                                     selected = loopMode == 1,
                                     onClick = {
-                                        loopMode = 1
                                         scope.launch {
                                             SettingsDataStore.setLoopMode(context, 1)
                                         }
@@ -302,7 +295,6 @@ private fun SettingsScreen(playbackService: PlaybackService?) {
                                     enabled = loopEnabled,
                                     selected = loopMode == 2,
                                     onClick = {
-                                        loopMode = 2
                                         scope.launch {
                                             SettingsDataStore.setLoopMode(context, 2)
                                         }
@@ -313,7 +305,6 @@ private fun SettingsScreen(playbackService: PlaybackService?) {
                                     enabled = loopEnabled,
                                     selected = loopMode == 3,
                                     onClick = {
-                                        loopMode = 3
                                         scope.launch {
                                             SettingsDataStore.setLoopMode(context, 3)
                                         }
@@ -328,7 +319,6 @@ private fun SettingsScreen(playbackService: PlaybackService?) {
                         title = stringResource(id = R.string.settings_playback_shuffle_toggle),
                         checked = shuffleEnabled,
                         onCheckedChange = { checked ->
-                            shuffleEnabled = checked
                             scope.launch {
                                 SettingsDataStore.setShuffleEnabled(context, checked)
                             }
