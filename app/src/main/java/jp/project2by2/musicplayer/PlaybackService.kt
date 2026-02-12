@@ -351,12 +351,11 @@ class PlaybackService : MediaSessionService() {
         handles = null
     }
 
-    @RequiresApi(Build.VERSION_CODES.TIRAMISU)
     private fun findLoopPoint(midiFile: File): LoopPoint {
         val loopPoint = LoopPoint()
         try {
             midiFile.inputStream().use { inputStream ->
-                val bytes = inputStream.readAllBytes().toList()
+                val bytes = inputStream.readBytes().toList()
                 val music = Midi1Music().apply { read(bytes) }
 
                 for (track in music.tracks) {
@@ -576,13 +575,22 @@ class PlaybackService : MediaSessionService() {
     private fun queryFolderPlaylist(currentUri: Uri): List<Uri> {
         val folderKey = resolveFolderKey(currentUri) ?: return emptyList()
         val collection = MediaStore.Files.getContentUri("external")
-        val projection = arrayOf(
-            MediaStore.Files.FileColumns._ID,
-            MediaStore.Files.FileColumns.DISPLAY_NAME,
-            MediaStore.Files.FileColumns.RELATIVE_PATH,
-            MediaStore.Files.FileColumns.DATA,
-            MediaStore.Files.FileColumns.MIME_TYPE
-        )
+        val projection = if (Build.VERSION.SDK_INT >= 29) {
+            arrayOf(
+                MediaStore.Files.FileColumns._ID,
+                MediaStore.Files.FileColumns.DISPLAY_NAME,
+                MediaStore.Files.FileColumns.RELATIVE_PATH,
+                MediaStore.Files.FileColumns.DATA,
+                MediaStore.Files.FileColumns.MIME_TYPE
+            )
+        } else {
+            arrayOf(
+                MediaStore.Files.FileColumns._ID,
+                MediaStore.Files.FileColumns.DISPLAY_NAME,
+                MediaStore.Files.FileColumns.DATA,
+                MediaStore.Files.FileColumns.MIME_TYPE
+            )
+        }
         val selection = (
             "${MediaStore.Files.FileColumns.MIME_TYPE}=? OR " +
                 "${MediaStore.Files.FileColumns.MIME_TYPE}=? OR " +
@@ -596,7 +604,11 @@ class PlaybackService : MediaSessionService() {
         contentResolver.query(collection, projection, selection, selectionArgs, sortOrder)?.use { cursor ->
             val idColumn = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns._ID)
             val nameColumn = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns.DISPLAY_NAME)
-            val relativePathColumn = cursor.getColumnIndex(MediaStore.Files.FileColumns.RELATIVE_PATH)
+            val relativePathColumn = if (Build.VERSION.SDK_INT >= 29) {
+                cursor.getColumnIndex(MediaStore.Files.FileColumns.RELATIVE_PATH)
+            } else {
+                -1
+            }
             val dataColumn = cursor.getColumnIndex(MediaStore.Files.FileColumns.DATA)
 
             while (cursor.moveToNext()) {
@@ -616,13 +628,23 @@ class PlaybackService : MediaSessionService() {
     }
 
     private fun resolveFolderKey(uri: Uri): String? {
-        val projection = arrayOf(
-            MediaStore.Files.FileColumns.RELATIVE_PATH,
-            MediaStore.Files.FileColumns.DATA
-        )
+        val projection = if (Build.VERSION.SDK_INT >= 29) {
+            arrayOf(
+                MediaStore.Files.FileColumns.RELATIVE_PATH,
+                MediaStore.Files.FileColumns.DATA
+            )
+        } else {
+            arrayOf(
+                MediaStore.Files.FileColumns.DATA
+            )
+        }
         contentResolver.query(uri, projection, null, null, null)?.use { cursor ->
             if (!cursor.moveToFirst()) return null
-            val relativePathColumn = cursor.getColumnIndex(MediaStore.Files.FileColumns.RELATIVE_PATH)
+            val relativePathColumn = if (Build.VERSION.SDK_INT >= 29) {
+                cursor.getColumnIndex(MediaStore.Files.FileColumns.RELATIVE_PATH)
+            } else {
+                -1
+            }
             val dataColumn = cursor.getColumnIndex(MediaStore.Files.FileColumns.DATA)
             val relativePath = if (relativePathColumn >= 0) cursor.getString(relativePathColumn) else null
             val dataPath = if (dataColumn >= 0) cursor.getString(dataColumn) else null
