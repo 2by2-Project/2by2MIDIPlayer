@@ -764,13 +764,22 @@ private data class FolderItem(
 
 private fun queryMidiFiles(context: Context): List<MidiFileItem> {
     val collection = MediaStore.Files.getContentUri("external")
-    val projection = arrayOf(
-        MediaStore.Files.FileColumns._ID,
-        MediaStore.Files.FileColumns.DISPLAY_NAME,
-        MediaStore.Files.FileColumns.DURATION,
-        MediaStore.Files.FileColumns.RELATIVE_PATH,
-        MediaStore.Files.FileColumns.DATA
-    )
+    val projection = if (Build.VERSION.SDK_INT >= 29) {
+        arrayOf(
+            MediaStore.Files.FileColumns._ID,
+            MediaStore.Files.FileColumns.DISPLAY_NAME,
+            MediaStore.Files.FileColumns.DURATION,
+            MediaStore.Files.FileColumns.RELATIVE_PATH,
+            MediaStore.Files.FileColumns.DATA
+        )
+    } else {
+        arrayOf(
+            MediaStore.Files.FileColumns._ID,
+            MediaStore.Files.FileColumns.DISPLAY_NAME,
+            MediaStore.Files.FileColumns.DURATION,
+            MediaStore.Files.FileColumns.DATA
+        )
+    }
     val selection = (
         "${MediaStore.Files.FileColumns.MIME_TYPE}=? OR " +
             "${MediaStore.Files.FileColumns.MIME_TYPE}=? OR " +
@@ -796,7 +805,11 @@ private fun queryMidiFiles(context: Context): List<MidiFileItem> {
         val idColumn = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns._ID)
         val nameColumn = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns.DISPLAY_NAME)
         val durationColumn = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns.DURATION)
-        val relativePathColumn = cursor.getColumnIndex(MediaStore.Files.FileColumns.RELATIVE_PATH)
+        val relativePathColumn = if (Build.VERSION.SDK_INT >= 29) {
+            cursor.getColumnIndex(MediaStore.Files.FileColumns.RELATIVE_PATH)
+        } else {
+            -1
+        }
         val dataColumn = cursor.getColumnIndex(MediaStore.Files.FileColumns.DATA)
         while (cursor.moveToNext()) {
             val id = cursor.getLong(idColumn)
@@ -867,12 +880,20 @@ private fun hasPermission(context: Context, permission: String): Boolean {
 private fun findCoverImageUri(context: Context, folderKey: String): Uri? {
     if (folderKey.isBlank()) return null
     val collection = MediaStore.Files.getContentUri("external")
-    val projection = arrayOf(
-        MediaStore.Files.FileColumns._ID,
-        MediaStore.Files.FileColumns.DISPLAY_NAME,
-        MediaStore.Files.FileColumns.RELATIVE_PATH,
-        MediaStore.Files.FileColumns.DATA
-    )
+    val projection = if (Build.VERSION.SDK_INT >= 29) {
+        arrayOf(
+            MediaStore.Files.FileColumns._ID,
+            MediaStore.Files.FileColumns.DISPLAY_NAME,
+            MediaStore.Files.FileColumns.RELATIVE_PATH,
+            MediaStore.Files.FileColumns.DATA
+        )
+    } else {
+        arrayOf(
+            MediaStore.Files.FileColumns._ID,
+            MediaStore.Files.FileColumns.DISPLAY_NAME,
+            MediaStore.Files.FileColumns.DATA
+        )
+    }
     val names = listOf(
         "cover.jpg",
         "cover.png",
