@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">2by2 Music Player</string>
-    <string name="error_soundfont_not_set">サウンドフォントが未設定です</string>
+    <string name="error_soundfont_not_set">サウンドフォントが未設定です。右上のボタンから設定画面を開き、サウンドフォントを設定してください。</string>
     <string name="error_playback_service_not_ready">Playback serviceの初期化に失敗しました</string>
     <string name="error_failed_to_load_midi">MIDIまたはサウンドフォントの読み込みに失敗しました</string>
     <string name="error_failed_to_start_playback">再生時にエラーが発生しました</string>
@@ -34,4 +34,15 @@
     <string name="info_no_file_selected">ファイルが選択されていません</string>
     <string name="notification_channel_name">再生コントロール</string>
     <string name="unknown_artist">不明なアーティスト</string>
+    <string name="soundfont_dialog_title">サウンドフォントを選択</string>
+    <string name="soundfont_dialog_message">MIDI音楽を再生するには、サウンドフォントが必要です。以下のおすすめサウンドフォントよりお選びいただけます。\n\n※高品質なサウンドフォントは、ダウンロードに時間がかかります。</string>
+    <string name="soundfont_download_button">ダウンロードして設定</string>
+    <string name="soundfont_dialog_dismiss">後で</string>
+    <string name="soundfont_downloading">ダウンロードしています...</string>
+    <string name="soundfont_download_success">サウンドフォントの設定が完了しました</string>
+    <string name="soundfont_download_failed">サウンドフォントをダウンロードできませんでした</string>
+    <string name="settings_soundfont_recommended_button">おすすめのサウンドフォントを選択</string>
+    <string name="soundfont_size_small">軽量</string>
+    <string name="soundfont_size_medium">中程度</string>
+    <string name="soundfont_size_large">高品質</string>
 </resources>

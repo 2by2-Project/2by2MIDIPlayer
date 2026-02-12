@@ -161,6 +161,8 @@ fun MusicPlayerMainScreen(
     var playbackService by remember { mutableStateOf<PlaybackService?>(null) }
     var isBound by remember { mutableStateOf(false) }
 
+    var showSoundFontDialog by remember { mutableStateOf(false) }
+
     // Playing state (for bottom bar)
     var isSearchActive by remember { mutableStateOf(false) }
     var searchQuery by remember { mutableStateOf("") }
@@ -269,6 +271,12 @@ fun MusicPlayerMainScreen(
         if (needsAnyPermission) {
             storagePermissionLauncher.launch(permissionsToRequest)
         }
+
+        // Check if SoundFont is set
+        val cacheSoundFontFile = File(context.cacheDir, "soundfont.sf2")
+        if (!cacheSoundFontFile.exists()) {
+            showSoundFontDialog = true
+        }
     }
 
     // Back handler
@@ -288,7 +296,7 @@ fun MusicPlayerMainScreen(
     fun handleMidiTap(uri: Uri) {
         val cacheSoundFontFile = File(context.cacheDir, "soundfont.sf2")
         if (!cacheSoundFontFile.exists()) {
-            Toast.makeText(context, context.getString(R.string.error_soundfont_not_set), Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, context.getString(R.string.error_soundfont_not_set), Toast.LENGTH_LONG).show()
             return
         }
         selectedMidiFileUri = uri
@@ -551,6 +559,13 @@ fun MusicPlayerMainScreen(
                 }
             }
         }
+    }
+
+    if (showSoundFontDialog) {
+        SoundFontDownloadDialog(
+            onDismiss = { showSoundFontDialog = false },
+            onDownloadComplete = { /* Optional callback if needed */ }
+        )
     }
 }
 

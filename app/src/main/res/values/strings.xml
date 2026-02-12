@@ -1,6 +1,6 @@
 <resources>
     <string name="app_name">2by2 Music Player</string>
-    <string name="error_soundfont_not_set">SoundFont is not set!</string>
+    <string name="error_soundfont_not_set">SoundFont is not set! Please set soundfont from right-top settings menu.</string>
     <string name="error_playback_service_not_ready">Playback service is not ready</string>
     <string name="error_failed_to_load_midi">Failed to load MIDI or SoundFont</string>
     <string name="error_failed_to_start_playback">Failed to start playback</string>
@@ -35,4 +35,18 @@
     <string name="playback_session_id" translatable="false">2by2Playback</string>
     <string name="notification_channel_name">Playback</string>
     <string name="unknown_artist">Unknown Artist</string>
+    <string name="soundfont_dialog_title">Choose SoundFont</string>
+    <string name="soundfont_dialog_message">You need Soundfont for playing MIDI file. You can choose recommended soundfont from below.\n\n* The large soundfont takes several time for downloading.</string>
+    <string name="soundfont_fluidr3_gm_gs" translatable="false">FluidR3 GM-GS</string>
+    <string name="soundfont_general_user_gs" translatable="false">General User GS</string>
+    <string name="soundfont_sgm_v2_01" translatable="false">SGM-V2.01</string>
+    <string name="soundfont_download_button">Download and Set</string>
+    <string name="soundfont_dialog_dismiss">Later</string>
+    <string name="soundfont_downloading">Downloading…</string>
+    <string name="soundfont_download_success">SoundFont set successfully!</string>
+    <string name="soundfont_download_failed">Failed to download SoundFont</string>
+    <string name="settings_soundfont_recommended_button">Download Recommended SoundFont</string>
+    <string name="soundfont_size_small">Small</string>
+    <string name="soundfont_size_medium">Medium</string>
+    <string name="soundfont_size_large">Large</string>
 </resources>

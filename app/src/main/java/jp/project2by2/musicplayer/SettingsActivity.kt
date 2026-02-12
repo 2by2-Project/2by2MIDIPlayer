@@ -124,6 +124,8 @@ private fun SettingsScreen(playbackService: PlaybackService?) {
     val loopMode by SettingsDataStore.loopModeFlow(context).collectAsState(initial = 0)
     val shuffleEnabled by SettingsDataStore.shuffleEnabledFlow(context).collectAsState(initial = false)
 
+    var showSoundFontDialog by remember { mutableStateOf(false) }
+
     androidx.compose.runtime.LaunchedEffect(svc) {
         // Load settings
         effectsEnabled = SettingsDataStore.effectsEnabledFlow(context).first()
@@ -195,6 +197,12 @@ private fun SettingsScreen(playbackService: PlaybackService?) {
                         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)
                     ) {
                         Text(stringResource(id = R.string.settings_soundfont_load_button))
+                    }
+                    ElevatedButton(
+                        onClick = { showSoundFontDialog = true },
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)
+                    ) {
+                        Text(stringResource(id = R.string.settings_soundfont_recommended_button))
                     }
                 }
                 item {
@@ -327,6 +335,15 @@ private fun SettingsScreen(playbackService: PlaybackService?) {
                 }
             }
         }
+    }
+
+    if (showSoundFontDialog) {
+        SoundFontDownloadDialog(
+            onDismiss = { showSoundFontDialog = false },
+            onDownloadComplete = {
+                hasSoundFont = File(context.cacheDir, "soundfont.sf2").exists()
+            }
+        )
     }
 }
 
