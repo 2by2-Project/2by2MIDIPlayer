@@ -351,40 +351,6 @@ class PlaybackService : MediaSessionService() {
         handles = null
     }
 
-    private fun findLoopPoint(midiFile: File): LoopPoint {
-        val loopPoint = LoopPoint()
-        try {
-            midiFile.inputStream().use { inputStream ->
-                val bytes = inputStream.readBytes().toList()
-                val music = Midi1Music().apply { read(bytes) }
-
-                for (track in music.tracks) {
-                    var tick = 0
-                    for (e in track.events) {
-                        tick += e.deltaTime
-                        val m = e.message
-                        val isCC = ((m.statusByte.toInt() and 0xF0) == MidiChannelStatus.CC)
-                        if (isCC && m.msb.toInt() == 111) {
-                            loopPoint.hasLoopStartMarker = true
-                            loopPoint.startTick = tick
-                            loopPoint.startMs = music.getTimePositionInMillisecondsForTick(tick).toLong()
-                        }
-                    }
-                }
-
-                for (track in music.tracks) {
-                    var tick = 0
-                    for (e in track.events) tick += e.deltaTime
-                    loopPoint.endTick = tick
-                    loopPoint.endMs = music.getTimePositionInMillisecondsForTick(tick).toLong()
-                }
-            }
-        } catch (_: Exception) {
-            // Parse errors should not crash playback. Use default loop values.
-        }
-        return loopPoint
-    }
-
     private fun handlePlaybackBoundary(lp: LoopPoint, streamHandle: Int) {
         if (handles?.stream != streamHandle) return
 
@@ -833,6 +799,40 @@ class PlaybackService : MediaSessionService() {
         private const val SOUND_FONT_FILE = "soundfont.sf2"
         private const val LOOP_REPEAT_BEFORE_FADE_COUNT = 1
         private const val FADE_OUT_DURATION_MS = 8000
+
+        fun findLoopPoint(midiFile: File): LoopPoint {
+            val loopPoint = LoopPoint()
+            try {
+                midiFile.inputStream().use { inputStream ->
+                    val bytes = inputStream.readBytes().toList()
+                    val music = Midi1Music().apply { read(bytes) }
+
+                    for (track in music.tracks) {
+                        var tick = 0
+                        for (e in track.events) {
+                            tick += e.deltaTime
+                            val m = e.message
+                            val isCC = ((m.statusByte.toInt() and 0xF0) == MidiChannelStatus.CC)
+                            if (isCC && m.msb.toInt() == 111) {
+                                loopPoint.hasLoopStartMarker = true
+                                loopPoint.startTick = tick
+                                loopPoint.startMs = music.getTimePositionInMillisecondsForTick(tick).toLong()
+                            }
+                        }
+                    }
+
+                    for (track in music.tracks) {
+                        var tick = 0
+                        for (e in track.events) tick += e.deltaTime
+                        loopPoint.endTick = tick
+                        loopPoint.endMs = music.getTimePositionInMillisecondsForTick(tick).toLong()
+                    }
+                }
+            } catch (_: Exception) {
+                // Parse errors should not crash playback. Use default loop values.
+            }
+            return loopPoint
+        }
     }
 
     private fun playInternalFromController() {

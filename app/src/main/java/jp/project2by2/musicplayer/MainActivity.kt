@@ -34,17 +34,20 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -58,8 +61,12 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Audiotrack
 import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ElevatedButton
@@ -700,12 +707,15 @@ private fun MidiFileList(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun MidiFileRow(
     item: MidiFileItem,
     isSelected: Boolean,
     onClick: () -> Unit
 ) {
+    val context = LocalContext.current
+    var showActions by remember { mutableStateOf(false) }
     val background = if (isSelected) {
         MaterialTheme.colorScheme.primaryContainer.copy(0.25f)
     } else {
@@ -719,7 +729,10 @@ private fun MidiFileRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable { onClick() }
+            .combinedClickable(
+                onClick = { onClick() },
+                onLongClick = { showActions = true }
+            )
             .padding(horizontal = 0.dp, vertical = 0.dp)
             .background(background, RoundedCornerShape(4.dp)),
         verticalAlignment = Alignment.CenterVertically
@@ -751,6 +764,71 @@ private fun MidiFileRow(
             color = contentColor
         )
     }
+
+    if (showActions) {
+        MidiFileActionsDialog(
+            title = item.title,
+            onDismiss = { showActions = false },
+            onPlay = {
+                showActions = false
+                onClick()
+            },
+            onShare = {
+                showActions = false
+                shareMidiFile(context, item.uri)
+            },
+            onDetails = {
+                showActions = false
+                val intent = Intent(context, FileDetailsActivity::class.java).apply {
+                    putExtra(FileDetailsActivity.EXTRA_URI, item.uri)
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+                context.startActivity(intent)
+            }
+        )
+    }
+}
+
+@Composable
+private fun MidiFileActionsDialog(
+    title: String,
+    onDismiss: () -> Unit,
+    onPlay: () -> Unit,
+    onShare: () -> Unit,
+    onDetails: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(text = title) },
+        text = {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                ElevatedButton(onClick = onPlay, modifier = Modifier.fillMaxWidth()) {
+                    Icon(imageVector = Icons.Filled.PlayArrow, contentDescription = null)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(text = stringResource(id = R.string.action_play))
+                }
+                ElevatedButton(onClick = onShare, modifier = Modifier.fillMaxWidth()) {
+                    Icon(imageVector = Icons.Filled.Share, contentDescription = null)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(text = stringResource(id = R.string.action_share))
+                }
+                ElevatedButton(onClick = onDetails, modifier = Modifier.fillMaxWidth()) {
+                    Icon(imageVector = Icons.Filled.Info, contentDescription = null)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(text = stringResource(id = R.string.action_details))
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text(text = stringResource(id = R.string.cancel))
+            }
+        }
+    )
 }
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -1113,6 +1191,16 @@ private fun formatDuration(durationMs: Long): String {
     val minutes = totalSeconds / 60
     val seconds = totalSeconds % 60
     return String.format("%d:%02d", minutes, seconds)
+}
+
+private fun shareMidiFile(context: Context, uri: Uri) {
+    val mimeType = context.contentResolver.getType(uri) ?: "application/octet-stream"
+    val shareIntent = Intent(Intent.ACTION_SEND).apply {
+        type = mimeType
+        putExtra(Intent.EXTRA_STREAM, uri)
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    }
+    context.startActivity(Intent.createChooser(shareIntent, null))
 }
 
 private fun hasPermission(context: Context, permission: String): Boolean {

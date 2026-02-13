@@ -45,6 +45,10 @@
             android:name=".SettingsActivity"
             android:exported="false"
             android:theme="@style/Theme._2by2MusicPlayer" />
+        <activity
+            android:name=".FileDetailsActivity"
+            android:exported="false"
+            android:theme="@style/Theme._2by2MusicPlayer" />
 
         <service
             android:name=".PlaybackService"
