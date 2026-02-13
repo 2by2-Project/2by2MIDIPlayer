@@ -5,6 +5,7 @@
     <string name="error_failed_to_load_midi">Failed to load MIDI or SoundFont</string>
     <string name="error_failed_to_start_playback">Failed to start playback</string>
     <string name="back">Back</string>
+    <string name="cancel">Cancel</string>
     <string name="unknown">Unknown</string>
     <string name="app_logo">App Logo</string>
     <string name="search">Search</string>
@@ -52,4 +53,12 @@
     <string name="button_sample_demo_music">Browse Sample MIDIs</string>
     <string name="folder_demo_name">Sample MIDI musics</string>
     <string name="loading_demo_files">Loading sample MIDI files…</string>
+    <string name="action_play">Play</string>
+    <string name="action_share">Share</string>
+    <string name="action_details">Details</string>
+    <string name="file_details_parent_folder">Parent folder</string>
+    <string name="file_details_format">Format</string>
+    <string name="file_details_duration">Duration</string>
+    <string name="file_details_loop_point">Loop point</string>
+    <string name="file_details_loop_none">None</string>
 </resources>

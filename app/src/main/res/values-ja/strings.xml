@@ -6,6 +6,7 @@
     <string name="error_failed_to_load_midi">MIDIまたはサウンドフォントの読み込みに失敗しました</string>
     <string name="error_failed_to_start_playback">再生時にエラーが発生しました</string>
     <string name="back">戻る</string>
+    <string name="cancel">キャンセル</string>
     <string name="unknown">不明</string>
     <string name="app_logo">アプリロゴ</string>
     <string name="search">検索</string>
@@ -48,4 +49,12 @@
     <string name="button_sample_demo_music">サンプルMIDI一覧を表示</string>
     <string name="folder_demo_name">サンプルMIDI楽曲</string>
     <string name="loading_demo_files">サンプルMIDIファイルを読み込んでいます…</string>
+    <string name="action_play">再生</string>
+    <string name="action_share">シェアする</string>
+    <string name="action_details">ファイルの詳細</string>
+    <string name="file_details_parent_folder">親フォルダ</string>
+    <string name="file_details_format">種類</string>
+    <string name="file_details_duration">曲の長さ</string>
+    <string name="file_details_loop_point">ループ地点</string>
+    <string name="file_details_loop_none">なし</string>
 </resources>
