@@ -50,6 +50,8 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.itemsIndexed
+import androidx.compose.foundation.lazy.grid.LazyGridState
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
@@ -339,6 +341,8 @@ fun MusicPlayerMainScreen(
 
     // Focus requester for search bar
     val focusRequesterSearch = remember { FocusRequester() }
+    val folderGridState = rememberLazyGridState()
+    val animatedFolderKeys = remember { mutableSetOf<String>() }
 
     // Main screen start
     Scaffold(
@@ -490,27 +494,19 @@ fun MusicPlayerMainScreen(
                         style = MaterialTheme.typography.bodySmall
                     )
                 } else {
-                    val baseItems = if (selectedFolderKey != null) {
-                        midiFiles.filter { it.folderKey == selectedFolderKey }
-                    } else {
-                        midiFiles
-                    }
                     val isSearching = isSearchActive && searchQuery.isNotBlank()
-                    val filtered = if (isSearching) {
-                        baseItems.filter { it.title.contains(searchQuery, ignoreCase = true) }
-                    } else {
-                        baseItems
-                    }
-                    val screen = when {
-                        isSearching -> BrowseScreen.Search
-                        selectedFolderKey == null -> BrowseScreen.Folders
-                        else -> BrowseScreen.Files
+                    val screenState: Pair<BrowseScreen, String?> = when {
+                        isSearching -> BrowseScreen.Search to selectedFolderKey
+                        selectedFolderKey == null -> BrowseScreen.Folders to null
+                        else -> BrowseScreen.Files to selectedFolderKey
                     }
                     AnimatedContent(
-                        targetState = screen,
+                        targetState = screenState,
                         transitionSpec = {
+                            val target = targetState.first
+                            val initial = initialState.first
                             when {
-                                targetState == BrowseScreen.Files && initialState == BrowseScreen.Folders ->
+                                target == BrowseScreen.Files && initial == BrowseScreen.Folders ->
                                     slideInHorizontally(
                                         initialOffsetX = { it },
                                         animationSpec = tween(220)
@@ -519,7 +515,7 @@ fun MusicPlayerMainScreen(
                                             targetOffsetX = { -it },
                                             animationSpec = tween(220)
                                         ) + fadeOut(animationSpec = tween(120))
-                                targetState == BrowseScreen.Folders && initialState == BrowseScreen.Files ->
+                                target == BrowseScreen.Folders && initial == BrowseScreen.Files ->
                                     slideInHorizontally(
                                         initialOffsetX = { -it },
                                         animationSpec = tween(220)
@@ -534,26 +530,41 @@ fun MusicPlayerMainScreen(
                             }
                         },
                         label = "BrowseContent"
-                    ) { state ->
-                        when (state) {
+                    ) { (screen, folderKey) ->
+                        when (screen) {
                             BrowseScreen.Folders -> FolderGrid(
                                 items = folderItems,
+                                gridState = folderGridState,
+                                animatedKeys = animatedFolderKeys,
                                 onFolderClick = { folder ->
                                     selectedFolderKey = folder.key
                                     selectedFolderName = folder.name
                                     selectedFolderCoverUri = folder.coverUri
                                 }
                             )
-                            BrowseScreen.Files -> MidiFileList(
-                                items = filtered,
-                                selectedUri = selectedMidiFileUri,
-                                onItemClick = { handleMidiTap(it) }
-                            )
-                            BrowseScreen.Search -> MidiFileList(
-                                items = filtered,
-                                selectedUri = selectedMidiFileUri,
-                                onItemClick = { handleMidiTap(it) }
-                            )
+                            BrowseScreen.Files -> {
+                                val items = midiFiles.filter { it.folderKey == folderKey }
+                                MidiFileList(
+                                    items = items,
+                                    selectedUri = selectedMidiFileUri,
+                                    onItemClick = { handleMidiTap(it) }
+                                )
+                            }
+                            BrowseScreen.Search -> {
+                                val baseItems = if (folderKey != null) {
+                                    midiFiles.filter { it.folderKey == folderKey }
+                                } else {
+                                    midiFiles.toList()
+                                }
+                                val items = baseItems.filter {
+                                    it.title.contains(searchQuery, ignoreCase = true)
+                                }
+                                MidiFileList(
+                                    items = items,
+                                    selectedUri = selectedMidiFileUri,
+                                    onItemClick = { handleMidiTap(it) }
+                                )
+                            }
                         }
                     }
                 }
@@ -653,11 +664,14 @@ private fun MidiFileRow(
 @Composable
 private fun FolderGrid(
     items: List<FolderItem>,
+    gridState: LazyGridState = rememberLazyGridState(),
+    animatedKeys: MutableSet<String> = remember { mutableSetOf() },
     onFolderClick: (FolderItem) -> Unit
 ) {
     LazyVerticalGrid(
         columns = GridCells.Fixed(2),
         modifier = Modifier.fillMaxSize(),
+        state = gridState,
         verticalArrangement = Arrangement.spacedBy(12.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         contentPadding = PaddingValues(horizontal = 16.dp, vertical = 16.dp)
@@ -666,6 +680,7 @@ private fun FolderGrid(
             FolderCardAnimated(
                 folder = folder,
                 index = index,
+                animatedKeys = animatedKeys,
                 onClick = { onFolderClick(folder) }
             )
         }
@@ -676,12 +691,17 @@ private fun FolderGrid(
 private fun FolderCardAnimated(
     folder: FolderItem,
     index: Int,
+    animatedKeys: MutableSet<String>,
     onClick: () -> Unit
 ) {
-    var visible by remember(folder.key) { mutableStateOf(false) }
+    val alreadyAnimated = folder.key in animatedKeys
+    var visible by remember(folder.key) { mutableStateOf(alreadyAnimated) }
     LaunchedEffect(folder.key) {
-        delay(0)
-        visible = true
+        if (!alreadyAnimated) {
+            delay(0)
+            visible = true
+        }
+        animatedKeys.add(folder.key)
     }
     AnimatedVisibility(
         visible = visible,
