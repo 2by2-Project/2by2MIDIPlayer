@@ -28,6 +28,9 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.Audiotrack
+import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material3.Button
 import androidx.compose.material3.ElevatedButton
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -39,6 +42,7 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -192,16 +196,24 @@ private fun SettingsScreen(playbackService: PlaybackService?) {
                 item {
                     val label = soundFontName ?: stringResource(id = R.string.settings_soundfont_loaded)
                     SettingsInfoItem(title = stringResource(id = R.string.settings_soundfont_title), value = if (hasSoundFont) label else stringResource(id = R.string.settings_soundfont_not_set))
-                    ElevatedButton(
+                    Button(
                         onClick = { soundFontPicker.launch("application/octet-stream") },
                         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)
                     ) {
                         Text(stringResource(id = R.string.settings_soundfont_load_button))
                     }
-                    ElevatedButton(
+                    // Recommended soundfonts
+                    TextButton(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 8.dp),
                         onClick = { showSoundFontDialog = true },
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)
                     ) {
+                        Icon(
+                            imageVector = Icons.Filled.AutoAwesome,
+                            contentDescription = null,
+                            modifier = Modifier.padding(end = 8.dp)
+                        )
                         Text(stringResource(id = R.string.settings_soundfont_recommended_button))
                     }
                 }
