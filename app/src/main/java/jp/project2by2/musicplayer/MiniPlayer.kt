@@ -9,6 +9,8 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.basicMarquee
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -18,6 +20,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.Slider
@@ -47,6 +50,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -79,6 +83,7 @@ fun MiniPlayerBar(
     onSeekTo: (Float) -> Unit,
     onPrevious: () -> Unit,
     onNext: () -> Unit,
+    onExpandRequest: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -88,6 +93,7 @@ fun MiniPlayerBar(
     var isSeeking by remember { mutableStateOf(false) }
     var sliderValue by remember { mutableStateOf(progress) }
     var isDetailsExpanded by remember { mutableStateOf(false) }
+    var dragAccumY by remember { mutableStateOf(0f) }
 
     val loopEnabled by SettingsDataStore.loopEnabledFlow(context).collectAsState(initial = false)
     val shuffleEnabled by SettingsDataStore.shuffleEnabledFlow(context).collectAsState(initial = false)
@@ -99,6 +105,36 @@ fun MiniPlayerBar(
         onClick = { isDetailsExpanded = !isDetailsExpanded }
     ) {
         Column(Modifier.fillMaxWidth()) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(16.dp)
+                    .pointerInput(Unit) {
+                        detectVerticalDragGestures(
+                            onVerticalDrag = { change, dragAmount ->
+                                change.consume()
+                                dragAccumY += dragAmount
+                            },
+                            onDragEnd = {
+                                if (dragAccumY < -56f) {
+                                    onExpandRequest()
+                                }
+                                dragAccumY = 0f
+                            },
+                            onDragCancel = {
+                                dragAccumY = 0f
+                            }
+                        )
+                    },
+                contentAlignment = Alignment.Center
+            ) {
+                Surface(
+                    shape = RoundedCornerShape(50),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f)
+                ) {
+                    Spacer(modifier = Modifier.width(36.dp).height(4.dp))
+                }
+            }
             Slider(
                 value = if (isSeeking) sliderValue else progress,
                 valueRange = 0f..1f,
@@ -246,6 +282,7 @@ fun MiniPlayerContainer(
     onSeekToMs: (Long) -> Unit,
     onPrevious: () -> Unit,
     onNext: () -> Unit,
+    onExpandRequest: () -> Unit,
 ) {
     val context = LocalContext.current
     // 750ms（まずはここ）: 500〜1000msで調整
@@ -297,5 +334,6 @@ fun MiniPlayerContainer(
         },
         onPrevious = onPrevious,
         onNext = onNext,
+        onExpandRequest = onExpandRequest,
     )
 }

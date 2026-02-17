@@ -5,14 +5,29 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Language Preference
 - 常に日本語での応答を心がけてください (Always respond in Japanese)
 
+## Development Workflow
+**CRITICAL**: After implementing code changes, ALWAYS build before reporting completion:
+1. Implement code changes
+2. Set JAVA_HOME: `export JAVA_HOME="/c/Program Files/Android/Android Studio/jbr"`
+3. Run: `./gradlew assembleDebug`
+4. Fix any compilation errors
+5. Only report completion when build succeeds
+6. User will test on physical device (Pixel 10)
+
 ## Project Overview
 2by2 MIDI Player is an Android MIDI player app that uses BASS/BASSMIDI for audio playback and ktmidi for MIDI file parsing. The app features loop point detection (CC#111), visual piano roll editing, and SoundFont management.
 
 ## Build Commands
 
+**IMPORTANT**: Set JAVA_HOME to Android Studio's JBR before building:
+```bash
+export JAVA_HOME="/c/Program Files/Android/Android Studio/jbr"
+```
+
 ### Build APK
 ```bash
-./gradlew assembleDebug        # Debug APK
+./gradlew assembleDebug        # Debug APK (faster, skips Lint strict mode)
+./gradlew build                # Full build with tests and Lint
 ./gradlew assembleRelease      # Release APK
 ```
 

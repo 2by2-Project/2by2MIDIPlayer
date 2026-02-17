@@ -5,7 +5,18 @@
       "Bash(cmd /c \"gradlew.bat assembleDebug 2>&1\")",
       "Bash(cmd /c \"gradlew.bat assembleDebug\")",
       "Bash(dir:*)",
-      "Bash(find:*)"
+      "Bash(find:*)",
+      "Bash(grep:*)",
+      "WebSearch",
+      "Bash(./gradlew assembleDebug:*)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(./gradlew build:*)",
+      "Bash(java -version:*)",
+      "Bash(ls:*)",
+      "Bash(\"/c/Program Files/Android/Android Studio/jbr/bin/java\" -version)",
+      "Bash(export JAVA_HOME=\"/c/Program Files/Android/Android Studio/jbr\":*)",
+      "Bash(./gradlew clean:*)"
     ]
   }
 }

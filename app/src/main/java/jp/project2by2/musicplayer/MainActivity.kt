@@ -35,6 +35,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -45,8 +46,11 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -57,15 +61,24 @@ import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.Slider
+import androidx.compose.material.SliderDefaults
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Audiotrack
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.LocationOn
+import androidx.compose.material.icons.filled.Loop
+import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Shuffle
+import androidx.compose.material.icons.filled.SkipNext
+import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
@@ -85,13 +98,18 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -101,10 +119,14 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import androidx.core.content.ContextCompat
@@ -119,10 +141,12 @@ import jp.project2by2.musicplayer.ui.theme._2by2MusicPlayerTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.InputStream
+import kotlin.math.roundToInt
 
 class MainActivity : ComponentActivity() {
     private var externalOpenUri by mutableStateOf<Uri?>(null)
@@ -187,6 +211,11 @@ fun MusicPlayerMainScreen(
     var selectedFolderKey by remember { mutableStateOf<String?>(null) }
     var selectedFolderName by remember { mutableStateOf<String?>(null) }
     var selectedFolderCoverUri by remember { mutableStateOf<Uri?>(null) }
+    var showNowPlaying by remember { mutableStateOf(false) }
+    var pianoRollData by remember { mutableStateOf<PianoRollData?>(null) }
+    var miniLiftProgress by remember { mutableFloatStateOf(0f) }
+    var miniLiftDragPx by remember { mutableFloatStateOf(0f) }
+    var skipNowPlayingEnterAnimation by remember { mutableStateOf(false) }
 
     val midiFiles = remember { mutableStateListOf<MidiFileItem>() }
     val folderItems = remember { mutableStateListOf<FolderItem>() }
@@ -328,6 +357,9 @@ fun MusicPlayerMainScreen(
             }
         }
     }
+    BackHandler(enabled = showNowPlaying) {
+        showNowPlaying = false
+    }
 
     fun handleMidiTap(uri: Uri) {
         val cacheSoundFontFile = File(context.cacheDir, "soundfont.sf2")
@@ -357,6 +389,14 @@ fun MusicPlayerMainScreen(
             controllerFuture.addListener(
                 {
                     runCatching { controllerFuture.get().play() }
+                        .onSuccess {
+                            scope.launch {
+                                skipNowPlayingEnterAnimation = false
+                                showNowPlaying = true
+                                miniLiftProgress = 0f
+                                miniLiftDragPx = 0f
+                            }
+                        }
                         .onFailure {
                             Toast.makeText(context, context.getString(R.string.error_failed_to_start_playback), Toast.LENGTH_SHORT).show()
                         }
@@ -414,12 +454,36 @@ fun MusicPlayerMainScreen(
         onExternalOpenConsumed()    // 二重再生防止
     }
 
+    LaunchedEffect(selectedMidiFileUri) {
+        val uri = selectedMidiFileUri ?: run {
+            pianoRollData = null
+            return@LaunchedEffect
+        }
+        pianoRollData = PianoRollData(
+            notes = emptyList(),
+            totalDurationMs = 0L,
+            measurePositions = emptyList(),
+            measureTickPositions = emptyList(),
+            totalTicks = 0,
+            tickTimeAnchors = emptyList()
+        )
+        val loaded = withContext(Dispatchers.Default) {
+            runCatching {
+                loadPianoRollDataFast(context, uri)
+            }.getOrNull()
+        }
+        if (selectedMidiFileUri == uri && loaded != null) {
+            pianoRollData = loaded
+        }
+    }
+
     // Focus requester for search bar
     val focusRequesterSearch = remember { FocusRequester() }
     val folderGridState = rememberLazyGridState()
     val animatedFolderKeys = remember { mutableSetOf<String>() }
 
     // Main screen start
+    Box(modifier = modifier.fillMaxSize()) {
     Scaffold(
         topBar = {
             TopAppBar(
@@ -500,30 +564,53 @@ fun MusicPlayerMainScreen(
                 exit = slideOutVertically(targetOffsetY = { it }, animationSpec = tween(400)) +
                         fadeOut(animationSpec = tween(400))
             ) {
-                MiniPlayerContainer(
-                    playbackService = playbackService,
-                    selectedMidiFileUri = selectedMidiFileUri,
-                    onPlay = { controllerFuture.get().play() },
-                    onPause = { controllerFuture.get().pause() },
-                    onSeekToMs = { ms -> controllerFuture.get().seekTo(ms) },
-                    onPrevious = {
-                        scope.launch {
-                            val shuffleEnabled = SettingsDataStore.shuffleEnabledFlow(context).first()
-                            val currentPositionMs = playbackService?.getCurrentPositionMs() ?: 0L
-                            if (currentPositionMs > 3000L) {
-                                controllerFuture.get().seekTo(0)
-                            } else {
-                                playbackService?.playPreviousTrackInCurrentFolder(shuffleEnabled)
-                            }
-                        }
+                DraggableMiniPlayerContainer(
+                    onExpand = {
+                        skipNowPlayingEnterAnimation = true
+                        showNowPlaying = true
+                        miniLiftProgress = 0f
+                        miniLiftDragPx = 0f
                     },
-                    onNext = {
-                        scope.launch {
-                            val shuffleEnabled = SettingsDataStore.shuffleEnabledFlow(context).first()
-                            playbackService?.playNextTrackInCurrentFolder(shuffleEnabled)
-                        }
+                    onDragProgress = { progress, dragPx ->
+                        miniLiftProgress = progress
+                        miniLiftDragPx = dragPx
                     }
-                )
+                ) {
+                    MiniPlayerContainer(
+                        playbackService = playbackService,
+                        selectedMidiFileUri = selectedMidiFileUri,
+                        onPlay = {
+                            controllerFuture.get().play()
+                            skipNowPlayingEnterAnimation = false
+                            showNowPlaying = true
+                            miniLiftProgress = 0f
+                            miniLiftDragPx = 0f
+                        },
+                        onPause = { controllerFuture.get().pause() },
+                        onSeekToMs = { ms -> controllerFuture.get().seekTo(ms) },
+                        onPrevious = {
+                            scope.launch {
+                                val shuffleEnabled = SettingsDataStore.shuffleEnabledFlow(context).first()
+                                val currentPositionMs = playbackService?.getCurrentPositionMs() ?: 0L
+                                if (currentPositionMs > 3000L) {
+                                    controllerFuture.get().seekTo(0)
+                                } else {
+                                    playbackService?.playPreviousTrackInCurrentFolder(shuffleEnabled)
+                                }
+                            }
+                        },
+                        onNext = {
+                            scope.launch {
+                                val shuffleEnabled = SettingsDataStore.shuffleEnabledFlow(context).first()
+                                playbackService?.playNextTrackInCurrentFolder(shuffleEnabled)
+                            }
+                        },
+                        onExpandRequest = {
+                            skipNowPlayingEnterAnimation = false
+                            showNowPlaying = true
+                        }
+                    )
+                }
             }
         },
         modifier = Modifier.fillMaxSize(),
@@ -673,12 +760,543 @@ fun MusicPlayerMainScreen(
             }
         }
     }
+    if (!showNowPlaying && selectedMidiFileUri != null && miniLiftProgress > 0f) {
+        val configuration = LocalConfiguration.current
+        val density = LocalDensity.current
+        val screenPx = with(density) { configuration.screenHeightDp.dp.toPx() }
+        val progress = miniLiftProgress.coerceIn(0f, 1f)
+        val dragProgressByY = (miniLiftDragPx.coerceAtLeast(0f) / MINI_PLAYER_EXPAND_THRESHOLD_PX).coerceIn(0f, 1f)
+        val followPx = screenPx * dragProgressByY
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .zIndex(2f)
+                .offset { IntOffset(0, (screenPx - followPx).roundToInt()) }
+                .alpha(progress)
+        ) {
+            NowPlayingPianoRollSheet(
+                fileUri = selectedMidiFileUri,
+                playbackService = playbackService,
+                pianoRollData = pianoRollData,
+                onSeekToMs = { ms -> controllerFuture.get().seekTo(ms) },
+                onPrevious = {
+                    scope.launch {
+                        val shuffleEnabled = SettingsDataStore.shuffleEnabledFlow(context).first()
+                        val currentPositionMs = playbackService?.getCurrentPositionMs() ?: 0L
+                        if (currentPositionMs > 3000L) {
+                            controllerFuture.get().seekTo(0)
+                        } else {
+                            playbackService?.playPreviousTrackInCurrentFolder(shuffleEnabled)
+                        }
+                    }
+                },
+                onNext = {
+                    scope.launch {
+                        val shuffleEnabled = SettingsDataStore.shuffleEnabledFlow(context).first()
+                        playbackService?.playNextTrackInCurrentFolder(shuffleEnabled)
+                    }
+                },
+                onClose = { showNowPlaying = false }
+            )
+        }
+    }
+    if (showNowPlaying && selectedMidiFileUri != null) {
+        DraggableNowPlayingContainer(
+            onClose = {
+                showNowPlaying = false
+                skipNowPlayingEnterAnimation = false
+            },
+            animateIn = !skipNowPlayingEnterAnimation,
+            modifier = Modifier.fillMaxSize().zIndex(3f)
+        ) {
+            NowPlayingPianoRollSheet(
+                fileUri = selectedMidiFileUri,
+                playbackService = playbackService,
+                pianoRollData = pianoRollData,
+                onSeekToMs = { ms -> controllerFuture.get().seekTo(ms) },
+                onPrevious = {
+                    scope.launch {
+                        val shuffleEnabled = SettingsDataStore.shuffleEnabledFlow(context).first()
+                        val currentPositionMs = playbackService?.getCurrentPositionMs() ?: 0L
+                        if (currentPositionMs > 3000L) {
+                            controllerFuture.get().seekTo(0)
+                        } else {
+                            playbackService?.playPreviousTrackInCurrentFolder(shuffleEnabled)
+                        }
+                    }
+                },
+                onNext = {
+                    scope.launch {
+                        val shuffleEnabled = SettingsDataStore.shuffleEnabledFlow(context).first()
+                        playbackService?.playNextTrackInCurrentFolder(shuffleEnabled)
+                    }
+                },
+                onClose = { showNowPlaying = false }
+            )
+        }
+    }
+    }
 
     if (showSoundFontDialog) {
         SoundFontDownloadDialog(
             onDismiss = { showSoundFontDialog = false },
             onDownloadComplete = { /* Optional callback if needed */ }
         )
+    }
+}
+
+private data class NowPlayingRollUi(
+    val isPlaying: Boolean,
+    val positionMs: Long,
+    val durationMs: Long,
+    val loopStartMs: Long,
+    val loopEndMs: Long
+)
+
+private const val MINI_PLAYER_EXPAND_THRESHOLD_PX = 1600f
+
+@Composable
+private fun DraggableMiniPlayerContainer(
+    onExpand: () -> Unit,
+    onDragProgress: (Float, Float) -> Unit,
+    content: @Composable () -> Unit
+) {
+    var offsetY by remember { mutableFloatStateOf(0f) }
+    val scope = rememberCoroutineScope()
+    val expandThreshold = MINI_PLAYER_EXPAND_THRESHOLD_PX / 6
+    var lastSentProgress by remember { mutableFloatStateOf(-1f) }
+    var lastSentDragPx by remember { mutableFloatStateOf(-1f) }
+
+    fun dispatchProgress(progress: Float, dragPx: Float, force: Boolean = false) {
+        if (!force &&
+            kotlin.math.abs(progress - lastSentProgress) < 0.007f &&
+            kotlin.math.abs(dragPx - lastSentDragPx) < 1.5f
+        ) return
+        lastSentProgress = progress
+        lastSentDragPx = dragPx
+        onDragProgress(progress, dragPx)
+    }
+
+    Box(
+        modifier = Modifier
+            .offset { IntOffset(0, offsetY.roundToInt()) }
+            .pointerInput(Unit) {
+                detectVerticalDragGestures(
+                    onVerticalDrag = { change, dragAmount ->
+                        change.consume()
+                        offsetY = (offsetY + dragAmount).coerceAtMost(0f)
+                        dispatchProgress(((-offsetY) / expandThreshold).coerceIn(0f, 1f), -offsetY)
+                    },
+                    onDragEnd = {
+                        if (offsetY < -expandThreshold) {
+                            offsetY = 0f
+                            dispatchProgress(0f, 0f, force = true)
+                            onExpand()
+                        } else {
+                            scope.launch {
+                                repeat(7) {
+                                    offsetY += (0f - offsetY) * 0.45f
+                                    dispatchProgress(((-offsetY) / expandThreshold).coerceIn(0f, 1f), -offsetY)
+                                    delay(10)
+                                }
+                                offsetY = 0f
+                                dispatchProgress(0f, 0f, force = true)
+                            }
+                        }
+                    },
+                    onDragCancel = {
+                        scope.launch {
+                            repeat(7) {
+                                offsetY += (0f - offsetY) * 0.45f
+                                dispatchProgress(((-offsetY) / expandThreshold).coerceIn(0f, 1f), -offsetY)
+                                delay(10)
+                            }
+                            offsetY = 0f
+                            dispatchProgress(0f, 0f, force = true)
+                        }
+                    }
+                )
+            }
+    ) {
+        content()
+    }
+}
+
+@Composable
+private fun DraggableNowPlayingContainer(
+    onClose: () -> Unit,
+    animateIn: Boolean = true,
+    modifier: Modifier = Modifier,
+    content: @Composable () -> Unit
+) {
+    val configuration = LocalConfiguration.current
+    val density = LocalDensity.current
+    val maxOffsetPx = with(density) { configuration.screenHeightDp.dp.toPx() }
+    val scope = rememberCoroutineScope()
+    var offsetY by remember { mutableFloatStateOf(maxOffsetPx) }
+
+    LaunchedEffect(maxOffsetPx, animateIn) {
+        if (animateIn) {
+            offsetY = maxOffsetPx
+            repeat(12) {
+                offsetY += (0f - offsetY) * 0.38f
+                delay(12)
+            }
+            offsetY = 0f
+        } else {
+            offsetY = 0f
+        }
+    }
+
+    Box(
+        modifier = modifier
+            .background(Color.Black.copy(alpha = (1f - (offsetY / maxOffsetPx).coerceIn(0f, 1f)) * 0.35f))
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .offset { IntOffset(0, offsetY.roundToInt()) }
+                .pointerInput(maxOffsetPx) {
+                    detectVerticalDragGestures(
+                        onVerticalDrag = { change, dragAmount ->
+                            change.consume()
+                            offsetY = (offsetY + dragAmount).coerceIn(0f, maxOffsetPx)
+                        },
+                        onDragEnd = {
+                            if (offsetY > maxOffsetPx * 0.28f) {
+                                offsetY = maxOffsetPx
+                                onClose()
+                            } else {
+                                scope.launch {
+                                    repeat(8) {
+                                        offsetY += (0f - offsetY) * 0.42f
+                                        delay(10)
+                                    }
+                                    offsetY = 0f
+                                }
+                            }
+                        },
+                        onDragCancel = {
+                            scope.launch {
+                                repeat(8) {
+                                    offsetY += (0f - offsetY) * 0.42f
+                                    delay(10)
+                                }
+                                offsetY = 0f
+                            }
+                        }
+                    )
+                }
+        ) {
+            content()
+        }
+    }
+}
+
+@Composable
+private fun NowPlayingPianoRollSheet(
+    fileUri: Uri?,
+    playbackService: PlaybackService?,
+    pianoRollData: PianoRollData?,
+    onSeekToMs: (Long) -> Unit,
+    onPrevious: () -> Unit,
+    onNext: () -> Unit,
+    onClose: () -> Unit
+) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+
+    val loopEnabled by SettingsDataStore.loopEnabledFlow(context).collectAsState(initial = false)
+    val shuffleEnabled by SettingsDataStore.shuffleEnabledFlow(context).collectAsState(initial = false)
+
+    if (fileUri == null) return
+    var stablePositionMs by remember(fileUri) { mutableLongStateOf(0L) }
+    var targetPositionMs by remember(fileUri) { mutableLongStateOf(0L) }
+    val ui = produceState<NowPlayingRollUi?>(initialValue = null, key1 = playbackService, key2 = fileUri) {
+        val service = playbackService ?: run { value = null; return@produceState }
+        while (kotlinx.coroutines.currentCoroutineContext().isActive) {
+            val lp = service.getLoopPoint()
+            val duration = service.getDurationMs().coerceAtLeast(0L)
+            value = NowPlayingRollUi(
+                isPlaying = service.isPlaying(),
+                positionMs = service.getCurrentPositionMs(),
+                durationMs = duration,
+                loopStartMs = lp?.startMs ?: 0L,
+                loopEndMs = duration
+            )
+            delay(24)
+        }
+    }.value
+
+    LaunchedEffect(ui?.positionMs, ui?.durationMs) {
+        val raw = ui?.positionMs ?: return@LaunchedEffect
+        if (targetPositionMs == 0L && stablePositionMs == 0L) {
+            targetPositionMs = raw
+            stablePositionMs = raw
+            return@LaunchedEffect
+        }
+        val deltaFromStable = raw - stablePositionMs
+        if (deltaFromStable < -250L) {
+            // Loop wrap / backward seek: snap immediately.
+            stablePositionMs = raw
+        }
+        targetPositionMs = raw
+    }
+
+    LaunchedEffect(ui?.isPlaying, ui?.durationMs, ui?.loopStartMs, ui?.loopEndMs, targetPositionMs) {
+        var lastFrameNanos = 0L
+        while (kotlinx.coroutines.currentCoroutineContext().isActive) {
+            withFrameNanos { now ->
+                if (lastFrameNanos == 0L) {
+                    lastFrameNanos = now
+                    return@withFrameNanos
+                }
+                val frameMs = ((now - lastFrameNanos) / 1_000_000L).coerceIn(0L, 50L)
+                lastFrameNanos = now
+                val duration = ui?.durationMs?.coerceAtLeast(0L) ?: 0L
+                val loopStart = ui?.loopStartMs?.coerceAtLeast(0L) ?: 0L
+                val loopEnd = ui?.loopEndMs?.coerceAtLeast(loopStart) ?: duration
+                if (ui?.isPlaying == true) {
+                    var predicted = (stablePositionMs + frameMs).coerceAtMost(duration)
+                    if (loopEnd > loopStart && predicted >= loopEnd) {
+                        predicted = loopStart + (predicted - loopEnd)
+                    }
+                    val target = targetPositionMs.coerceIn(0L, duration)
+                    val correction = ((target - predicted) * 0.20f).toLong()
+                    stablePositionMs = (predicted + correction).coerceIn(0L, duration)
+                } else {
+                    stablePositionMs = targetPositionMs.coerceIn(0L, duration)
+                }
+            }
+        }
+    }
+
+    // For seekbar slider
+    var isSeeking by remember { mutableStateOf(false) }
+    var sliderValue by remember { mutableStateOf(0.0f) }
+
+    // derivedStateOf（局所化）
+    val progress by remember(ui?.positionMs, ui?.durationMs) {
+        derivedStateOf {
+            val duration = ui?.durationMs ?: 0L
+            val position = ui?.positionMs ?: 0L
+            if (duration > 0L) {
+                (position.toFloat() / duration.toFloat()).coerceIn(0f, 1f)
+            } else {
+                0f
+            }
+        }
+    }
+    Surface(
+        color = MaterialTheme.colorScheme.surface,
+        modifier = Modifier
+            .fillMaxSize()
+            .statusBarsPadding()
+            .navigationBarsPadding()
+    ) {
+        Column(modifier = Modifier.fillMaxSize()) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        text = playbackService?.getCurrentTitle().orEmpty(),
+                        Modifier
+                            .padding(end = 16.dp)
+                            .clipToBounds()
+                            .basicMarquee(iterations = Int.MAX_VALUE),
+                        maxLines = 1,
+                        style = MaterialTheme.typography.headlineSmall
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = playbackService?.currentArtist.orEmpty(),
+                        Modifier
+                            .padding(end = 16.dp)
+                            .clipToBounds()
+                            .basicMarquee(iterations = Int.MAX_VALUE),
+                        maxLines = 1,
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                }
+            }
+            when {
+                pianoRollData == null || ui == null -> {
+                    Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator()
+                    }
+                }
+                else -> {
+                    PlaybackPianoRollView(
+                        notes = pianoRollData.notes,
+                        measureTickPositions = pianoRollData.measureTickPositions,
+                        tickTimeAnchors = pianoRollData.tickTimeAnchors,
+                        currentPositionMs = stablePositionMs,
+                        loopPointMs = ui.loopStartMs,
+                        endPointMs = ui.loopEndMs,
+                        totalDurationMs = maxOf(pianoRollData.totalDurationMs, ui.durationMs),
+                        totalTicks = pianoRollData.totalTicks,
+                        zoomLevel = calculateInitialZoomLevel(
+                            maxOf(pianoRollData.totalDurationMs, ui.durationMs),
+                            pianoRollData.measurePositions
+                        ),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f)
+                    )
+                }
+            }
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(8.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Slider(
+                    value = if (isSeeking) sliderValue else progress,
+                    valueRange = 0f..1f,
+                    onValueChange = { v ->
+                        isSeeking = true
+                        sliderValue = v
+                    },
+                    onValueChangeFinished = {
+                        isSeeking = false
+                        val duration = ui?.durationMs ?: 0L
+                        val ms = (sliderValue.coerceIn(0f, 1f) * duration.toFloat()).toLong()
+                        targetPositionMs = ms
+                        onSeekToMs(ms)
+                    },
+                    colors = SliderDefaults.colors(
+                        thumbColor = MaterialTheme.colorScheme.primary,
+                        activeTrackColor = MaterialTheme.colorScheme.primary,
+                        inactiveTrackColor = MaterialTheme.colorScheme.surfaceVariant,
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(32.dp)
+                )
+            }
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 0.dp),
+            ) {
+                val seconds = (ui?.positionMs ?: 0L) / 1000
+                val minutes = seconds / 60
+                val remainingSeconds = seconds % 60
+                Text(
+                    text = String.format("%d:%02d", minutes, remainingSeconds),
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Spacer(Modifier.weight(1f))
+                val durationText = ui?.durationMs ?: 0L
+                Text(
+                    text = String.format("%d:%02d", durationText / 60000, (durationText % 60000) / 1000),
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+            Row (
+                modifier = Modifier.fillMaxWidth()
+                    .padding(start = 12.dp, end = 12.dp, top = 0.dp, bottom = 12.dp),
+                horizontalArrangement = Arrangement.SpaceEvenly,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                val sideControlButtonSize = 48.dp
+                val sideControlIconSize = 32.dp
+                IconButton(
+                    modifier = Modifier.size(sideControlButtonSize),
+                    onClick = {
+                        scope.launch {
+                            SettingsDataStore.setShuffleEnabled(context, !shuffleEnabled)
+                        }
+                    }
+                ) {
+                    Surface(
+                        shape = RoundedCornerShape(50),
+                        color = if (shuffleEnabled) { MaterialTheme.colorScheme.primaryContainer } else { Color.Transparent },
+                        modifier = Modifier.fillMaxSize()
+                    ) {
+                        Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+                            Icon(
+                                imageVector = Icons.Default.Shuffle,
+                                contentDescription = null,
+                                modifier = Modifier.size(sideControlIconSize)
+                            )
+                        }
+                    }
+                }
+                IconButton(
+                    modifier = Modifier.size(sideControlButtonSize),
+                    onClick = onPrevious
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.SkipPrevious,
+                        contentDescription = null,
+                        modifier = Modifier.size(sideControlIconSize)
+                    )
+                }
+                Surface(
+                    shape = CircleShape,
+                    color = MaterialTheme.colorScheme.primary,
+                    tonalElevation = 6.dp,
+                    modifier = Modifier
+                        .padding(vertical = 12.dp)
+                        .size(92.dp)
+                ) {
+                    IconButton(
+                        onClick = {
+                            val service = playbackService ?: return@IconButton
+                            if (ui?.isPlaying == true) service.pause() else service.play()
+                        },
+                        modifier = Modifier.fillMaxSize()
+                    ) {
+                        Icon(
+                            imageVector = if (ui?.isPlaying == true) Icons.Default.Pause else Icons.Default.PlayArrow,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onPrimary,
+                            modifier = Modifier.size(42.dp)
+                        )
+                    }
+                }
+                IconButton(
+                    modifier = Modifier.size(sideControlButtonSize),
+                    onClick = onNext
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.SkipNext,
+                        contentDescription = null,
+                        modifier = Modifier.size(sideControlIconSize)
+                    )
+                }
+                IconButton(
+                    modifier = Modifier.size(sideControlButtonSize),
+                    onClick = {
+                        scope.launch {
+                            SettingsDataStore.setLoopEnabled(context, !loopEnabled)
+                        }
+                    }
+                ) {
+                    Surface(
+                        shape = RoundedCornerShape(50),
+                        color = if (loopEnabled) { MaterialTheme.colorScheme.primaryContainer } else { Color.Transparent },
+                        modifier = Modifier.fillMaxSize()
+                    ) {
+                        Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+                            Icon(
+                                imageVector = Icons.Default.Loop,
+                                contentDescription = null,
+                                modifier = Modifier.size(sideControlIconSize)
+                            )
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -786,6 +1404,14 @@ private fun MidiFileRow(
                     addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                 }
                 context.startActivity(intent)
+            },
+            onEditLoopPoint = {
+                showActions = false
+                val intent = Intent(context, EditLoopPointActivity::class.java).apply {
+                    putExtra(EditLoopPointActivity.EXTRA_URI, item.uri)
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+                context.startActivity(intent)
             }
         )
     }
@@ -797,7 +1423,8 @@ private fun MidiFileActionsDialog(
     onDismiss: () -> Unit,
     onPlay: () -> Unit,
     onShare: () -> Unit,
-    onDetails: () -> Unit
+    onDetails: () -> Unit,
+    onEditLoopPoint: () -> Unit
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -822,6 +1449,11 @@ private fun MidiFileActionsDialog(
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(text = stringResource(id = R.string.action_details))
                 }
+                /*ElevatedButton(onClick = onEditLoopPoint, modifier = Modifier.fillMaxWidth()) {
+                    Icon(imageVector = Icons.Filled.LocationOn, contentDescription = null)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(text = stringResource(id = R.string.action_edit_loop_point))
+                }*/
             }
         },
         confirmButton = {},
