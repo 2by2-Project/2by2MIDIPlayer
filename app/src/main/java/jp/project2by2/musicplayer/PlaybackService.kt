@@ -11,6 +11,7 @@ import android.os.Build
 import android.os.IBinder
 import android.provider.OpenableColumns
 import android.provider.MediaStore
+import android.util.Log
 import android.media.AudioAttributes
 import android.media.AudioFocusRequest
 import android.media.AudioManager
@@ -25,6 +26,8 @@ import androidx.media3.session.MediaSessionService
 import com.un4seen.bass.BASS
 import com.un4seen.bass.BASSMIDI
 import dev.atsushieno.ktmidi.Midi1Music
+import dev.atsushieno.ktmidi.Midi1Event
+import dev.atsushieno.ktmidi.Midi1SimpleMessage
 import dev.atsushieno.ktmidi.MidiChannelStatus
 import dev.atsushieno.ktmidi.read
 import java.io.File
@@ -123,10 +126,17 @@ class PlaybackService : MediaSessionService() {
 
     private fun observePlaybackSettings() {
         serviceScope.launch {
-            SettingsDataStore.loopEnabledFlow(this@PlaybackService).collectLatest { loopEnabledSnapshot = it }
+            SettingsDataStore.loopEnabledFlow(this@PlaybackService).collectLatest {
+                loopEnabledSnapshot = it
+                applyLoopRuntimeFlags()
+                refreshBoundarySync()
+            }
         }
         serviceScope.launch {
-            SettingsDataStore.loopModeFlow(this@PlaybackService).collectLatest { loopModeSnapshot = it.coerceIn(0, 3) }
+            SettingsDataStore.loopModeFlow(this@PlaybackService).collectLatest {
+                loopModeSnapshot = it.coerceIn(0, 3)
+                refreshBoundarySync()
+            }
         }
         serviceScope.launch {
             SettingsDataStore.shuffleEnabledFlow(this@PlaybackService).collectLatest { shuffleEnabledSnapshot = it }
@@ -199,6 +209,27 @@ class PlaybackService : MediaSessionService() {
             return false
         }
 
+        val seedLoopPoint = precomputedLoopPoint ?: findLoopPoint(cacheMidiFile)
+        if (
+            LOOP_DIAG &&
+            LOOP_TAIL_PADDING_EXPERIMENT &&
+            seedLoopPoint.hasLoopStartMarker &&
+            seedLoopPoint.endTick > 0
+        ) {
+            runCatching {
+                val patched = patchCachedMidiTailForBass(
+                    midiFile = cacheMidiFile,
+                    targetEndTick = seedLoopPoint.endTick
+                )
+                Log.d(
+                    LOOP_TAG,
+                    "tailPad applied=$patched targetEndTick=${seedLoopPoint.endTick}"
+                )
+            }.onFailure {
+                Log.d(LOOP_TAG, "tailPad failed: ${it.message}")
+            }
+        }
+
         releaseHandles()
         handles = bassLoadMidiWithSoundFont(cacheMidiFile.absolutePath, cacheSoundFontFile.absolutePath)
         val h = handles ?: return false
@@ -232,11 +263,24 @@ class PlaybackService : MediaSessionService() {
         bassPlayer.invalidateFromBass()
 
         loopPoint = precomputedLoopPoint ?: findLoopPoint(cacheMidiFile)
+        val streamLengthBytes = BASS.BASS_ChannelGetLength(h.stream, BASS.BASS_POS_BYTE)
+        val streamLengthMs = (BASS.BASS_ChannelBytes2Seconds(h.stream, streamLengthBytes) * 1000.0).toLong()
+        val lp = loopPoint
+        if (LOOP_DIAG) {
+            Log.d(
+                LOOP_TAG,
+                "loadMidi uri=$uriString startTick=${lp?.startTick} endTick=${lp?.endTick} " +
+                    "startMs=${lp?.startMs} endMs=${lp?.endMs} streamLenMs=$streamLengthMs hasCC111=${lp?.hasLoopStartMarker}"
+            )
+        }
 
         BASS.BASS_ChannelSetAttribute(h.stream, BASS.BASS_ATTRIB_VOL, 1f)
-        BASS.BASS_ChannelFlags(h.stream, BASS.BASS_SAMPLE_LOOP, BASS.BASS_SAMPLE_LOOP)
-        BASS.BASS_ChannelFlags(h.stream, BASSMIDI.BASS_MIDI_DECAYSEEK, BASSMIDI.BASS_MIDI_DECAYSEEK)
-        BASS.BASS_ChannelFlags(h.stream, BASSMIDI.BASS_MIDI_DECAYEND, BASSMIDI.BASS_MIDI_DECAYEND)
+        applyLoopRuntimeFlags()
+        if (LOOP_DIAG) {
+            val lenTick = BASS.BASS_ChannelGetLength(h.stream, BASSMIDI.BASS_POS_MIDI_TICK)
+            val flags = BASS.BASS_ChannelFlags(h.stream, 0, 0)
+            Log.d(LOOP_TAG, "postFlags lenTick=$lenTick flags=$flags")
+        }
 
         refreshBoundarySync()
 
@@ -377,6 +421,16 @@ class PlaybackService : MediaSessionService() {
 
     private fun handlePlaybackBoundary(lp: LoopPoint, streamHandle: Int) {
         if (handles?.stream != streamHandle) return
+        val currentTick = BASS.BASS_ChannelGetPosition(streamHandle, BASSMIDI.BASS_POS_MIDI_TICK).coerceAtLeast(0L)
+        if (LOOP_DIAG) {
+            val curBytes = BASS.BASS_ChannelGetPosition(streamHandle, BASS.BASS_POS_BYTE)
+            val curMs = (BASS.BASS_ChannelBytes2Seconds(streamHandle, curBytes) * 1000.0).toLong()
+            Log.d(
+                LOOP_TAG,
+                "boundary fired curTick=$currentTick curMs=$curMs loopStartTick=${lp.startTick} " +
+                    "loopEndTick=${lp.endTick} tempEndMs=$temporaryEndPointMs loopMode=$loopModeSnapshot loopEnabled=$loopEnabledSnapshot"
+            )
+        }
 
         // Pseudo boundary for loop-point editor.
         val tempEnd = temporaryEndPointMs
@@ -424,6 +478,12 @@ class PlaybackService : MediaSessionService() {
     }
 
     private fun seekToLoopStart(streamHandle: Int, lp: LoopPoint) {
+        // When there is no explicit loop marker and loop start is 0, BASS_SAMPLE_LOOP already wraps to 0.
+        // Re-seeking to 0 here can retrigger attacks and cause audible doubling.
+        if (!lp.hasLoopStartMarker && lp.startTick <= 0) {
+            notifyLooped(0L)
+            return
+        }
         BASS.BASS_ChannelSetPosition(
             streamHandle,
             lp.startTick.toLong(),
@@ -452,13 +512,13 @@ class PlaybackService : MediaSessionService() {
             BASS.BASS_ChannelRemoveSync(h.stream, syncHandle)
             syncHandle = 0
         }
-
         syncProc = BASS.SYNCPROC { _, _, _, _ ->
             handlePlaybackBoundary(lp, h.stream)
         }
 
         val syncType: Int
         val syncParam: Long
+        val syncLabel: String
         val tempEnd = temporaryEndPointMs
         if (tempEnd != null) {
             val totalBytes = BASS.BASS_ChannelGetLength(h.stream, BASS.BASS_POS_BYTE)
@@ -468,13 +528,17 @@ class PlaybackService : MediaSessionService() {
             val endBytes = BASS.BASS_ChannelSeconds2Bytes(h.stream, endMs.toDouble() / 1000.0)
             syncType = BASS.BASS_SYNC_POS or BASS.BASS_SYNC_MIXTIME
             syncParam = endBytes
+            syncLabel = "TEMP_END_MS"
         } else if (loopEnabledSnapshot && lp.hasLoopStartMarker) {
-            val bytes = BASS.BASS_ChannelGetLength(h.stream, BASS.BASS_POS_BYTE)
-            syncType = BASS.BASS_SYNC_MIXTIME
-            syncParam = bytes
+            val effectiveEndTick = getEffectiveLoopEndTick(h.stream, lp)
+            val earlyEndTick = (effectiveEndTick - LOOP_SYNC_EARLY_TICKS).coerceAtLeast(lp.startTick.toLong().coerceAtLeast(1L))
+            syncType = BASS.BASS_SYNC_POS or BASS.BASS_SYNC_MIXTIME or BASSMIDI.BASS_POS_MIDI_TICK
+            syncParam = earlyEndTick
+            syncLabel = "TICK_MIXTIME_EFFECTIVE_EARLY"
         } else {
             syncType = BASS.BASS_SYNC_END
             syncParam = 0L
+            syncLabel = "END"
         }
 
         syncHandle = BASS.BASS_ChannelSetSync(
@@ -484,6 +548,53 @@ class PlaybackService : MediaSessionService() {
             syncProc,
             0
         )
+        if (syncHandle == 0 && loopEnabledSnapshot && lp.hasLoopStartMarker) {
+            // Fallback path if tick+mixtime sync is not accepted on this runtime.
+            val bytes = BASS.BASS_ChannelGetLength(h.stream, BASS.BASS_POS_BYTE)
+            syncHandle = BASS.BASS_ChannelSetSync(
+                h.stream,
+                BASS.BASS_SYNC_MIXTIME,
+                bytes,
+                syncProc,
+                0
+            )
+        }
+        if (LOOP_DIAG) {
+            val lenTick = BASS.BASS_ChannelGetLength(h.stream, BASSMIDI.BASS_POS_MIDI_TICK)
+            val lenBytes = BASS.BASS_ChannelGetLength(h.stream, BASS.BASS_POS_BYTE)
+            val lenMs = (BASS.BASS_ChannelBytes2Seconds(h.stream, lenBytes) * 1000.0).toLong()
+            val flags = BASS.BASS_ChannelFlags(h.stream, 0, 0)
+            Log.d(
+                LOOP_TAG,
+                "sync set handle=$syncHandle type=$syncLabel param=$syncParam " +
+                    "loopStartTick=${lp.startTick} loopEndTick=${lp.endTick} loopStartMs=${lp.startMs} loopEndMs=${lp.endMs} " +
+                    "lenTick=$lenTick lenMs=$lenMs flags=$flags"
+            )
+        }
+    }
+
+    private fun getEffectiveLoopEndTick(streamHandle: Int, lp: LoopPoint): Long {
+        val lenTick = BASS.BASS_ChannelGetLength(streamHandle, BASSMIDI.BASS_POS_MIDI_TICK)
+        val lpEnd = lp.endTick.toLong().coerceAtLeast(1L)
+        return if (lenTick > 0) minOf(lpEnd, lenTick) else lpEnd
+    }
+
+    private fun applyLoopRuntimeFlags() {
+        val h = handles ?: return
+        val lp = loopPoint
+        BASS.BASS_ChannelFlags(h.stream, BASS.BASS_SAMPLE_LOOP, BASS.BASS_SAMPLE_LOOP)
+
+        val enableDecay = loopEnabledSnapshot && (lp?.hasLoopStartMarker == true)
+        val decayMask = BASSMIDI.BASS_MIDI_DECAYSEEK or BASSMIDI.BASS_MIDI_DECAYEND
+        val decayFlags = if (enableDecay) decayMask else 0
+        BASS.BASS_ChannelFlags(h.stream, decayFlags, decayMask)
+        if (LOOP_DIAG) {
+            Log.d(
+                LOOP_TAG,
+                "applyLoopRuntimeFlags loopEnabled=$loopEnabledSnapshot hasLoopMarker=${lp?.hasLoopStartMarker} autoSampleLoop=false " +
+                    "decayEnabled=$enableDecay flags=${BASS.BASS_ChannelFlags(h.stream, 0, 0)}"
+            )
+        }
     }
 
     private fun fadeOutThenPlayNext(
@@ -757,7 +868,11 @@ class PlaybackService : MediaSessionService() {
 
     private fun bassLoadMidiWithSoundFont(midiPath: String, sf2Path: String): MidiHandles {
         val soundFontHandle = BASSMIDI.BASS_MIDI_FontInit(sf2Path, 0)
-        val stream = BASSMIDI.BASS_MIDI_StreamCreateFile(midiPath, 0, 0, 0, 0)
+        val midiFlags = BASSMIDI.BASS_MIDI_NOCROP
+        val stream = BASSMIDI.BASS_MIDI_StreamCreateFile(midiPath, 0, 0, 0, midiFlags)
+        if (LOOP_DIAG) {
+            Log.d(LOOP_TAG, "createStream flags=$midiFlags stream=$stream")
+        }
         val fonts = arrayOf(
             BASSMIDI.BASS_MIDI_FONT().apply {
                 font = soundFontHandle
@@ -881,13 +996,227 @@ class PlaybackService : MediaSessionService() {
         private const val LOOP_REPEAT_BEFORE_FADE_COUNT = 1
         private const val FADE_OUT_DURATION_MS = 8000
 
+        private class SmfReader(private val bytes: ByteArray) {
+            var pos: Int = 0
+            fun canRead(n: Int): Boolean = pos + n <= bytes.size
+            fun readU8(): Int = bytes[pos++].toInt() and 0xFF
+            fun readU16(): Int = (readU8() shl 8) or readU8()
+            fun readU32(): Int = (readU8() shl 24) or (readU8() shl 16) or (readU8() shl 8) or readU8()
+            fun readAscii4(): String = String(bytes, pos, 4).also { pos += 4 }
+            fun skip(n: Int) { pos = (pos + n).coerceAtMost(bytes.size) }
+            fun readVarLen(): Int {
+                var value = 0
+                repeat(4) {
+                    val b = readU8()
+                    value = (value shl 7) or (b and 0x7F)
+                    if ((b and 0x80) == 0) return value
+                }
+                return value
+            }
+        }
+
+        private fun parseSmfMaxTick(bytes: ByteArray): Int? {
+            val r = SmfReader(bytes)
+            if (!r.canRead(14)) return null
+            if (r.readAscii4() != "MThd") return null
+            val headerLen = r.readU32()
+            if (headerLen < 6 || !r.canRead(headerLen)) return null
+            r.readU16() // format
+            val trackCount = r.readU16()
+            r.readU16() // division
+            if (headerLen > 6) r.skip(headerLen - 6)
+            if (trackCount <= 0) return null
+
+            var maxTick = 0
+            repeat(trackCount) {
+                if (!r.canRead(8)) return@repeat
+                val chunkType = r.readAscii4()
+                val len = r.readU32()
+                if (chunkType != "MTrk" || !r.canRead(len)) {
+                    r.skip(len)
+                    return@repeat
+                }
+                val trackEnd = r.pos + len
+                var tick = 0
+                var runningStatus = -1
+
+                while (r.pos < trackEnd && r.canRead(1)) {
+                    tick += r.readVarLen()
+                    if (tick > maxTick) maxTick = tick
+                    if (!r.canRead(1)) break
+                    var status = r.readU8()
+                    var firstData: Int? = null
+                    if (status < 0x80) {
+                        if (runningStatus < 0x80) break
+                        firstData = status
+                        status = runningStatus
+                    } else if (status < 0xF0) {
+                        runningStatus = status
+                    }
+
+                    when {
+                        status == 0xFF -> {
+                            if (!r.canRead(1)) break
+                            r.readU8() // meta type
+                            val metaLen = r.readVarLen()
+                            if (!r.canRead(metaLen)) break
+                            r.skip(metaLen)
+                        }
+                        status == 0xF0 || status == 0xF7 -> {
+                            val syxLen = r.readVarLen()
+                            if (!r.canRead(syxLen)) break
+                            r.skip(syxLen)
+                        }
+                        status in 0x80..0xEF -> {
+                            val eventType = status and 0xF0
+                            val needTwo = eventType != 0xC0 && eventType != 0xD0
+                            if (firstData == null) {
+                                if (!r.canRead(1)) break
+                                r.readU8()
+                            }
+                            if (needTwo) {
+                                if (!r.canRead(1)) break
+                                r.readU8()
+                            }
+                        }
+                        else -> {
+                            runningStatus = -1
+                        }
+                    }
+                }
+                if (r.pos < trackEnd) r.pos = trackEnd
+            }
+            return maxTick
+        }
+
+        private fun patchCachedMidiTailForBass(midiFile: File, targetEndTick: Int): Boolean {
+            if (targetEndTick <= 1) return false
+            val music = Midi1Music()
+            val raw = midiFile.readBytes()
+            music.read(raw.toList())
+            if (music.tracks.isEmpty()) return false
+
+            val track = selectTailPadTrack(music) ?: return false
+            val safeChannel = findLeastUsedChannel(music)
+            if (LOOP_DIAG) {
+                val idx = music.tracks.indexOf(track)
+                Log.d(LOOP_TAG, "tailPad trackIndex=$idx targetEndTick=$targetEndTick safeChannel=$safeChannel")
+            }
+            // Normalize EOT first so inserted events are never placed after an earlier EOT marker.
+            stripEndOfTrackEvents(track.events)
+            val padTick = (targetEndTick - 1).coerceAtLeast(0)
+            // Use a harmless channel CC instead of All Sound Off (CC120), which can cut tails abruptly.
+            insertChannelCcEvent(track.events, padTick, channel = safeChannel, ccNumber = 0, value = 0)
+            ensureTrackEndOfTrackAtOrAfter(track.events, targetEndTick)
+
+            val patched = writeMidiToBytes(music)
+            midiFile.writeBytes(patched)
+            return true
+        }
+
+        private fun selectTailPadTrack(music: Midi1Music): dev.atsushieno.ktmidi.Midi1Track? {
+            var bestTrack: dev.atsushieno.ktmidi.Midi1Track? = null
+            var bestTick = -1
+            for (track in music.tracks) {
+                var tick = 0
+                var lastChannelTick = -1
+                for (event in track.events) {
+                    tick += event.deltaTime
+                    val status = event.message.statusByte.toInt() and 0xFF
+                    if (status in 0x80..0xEF) {
+                        lastChannelTick = tick
+                    }
+                }
+                if (lastChannelTick > bestTick) {
+                    bestTick = lastChannelTick
+                    bestTrack = track
+                }
+            }
+            return bestTrack ?: music.tracks.firstOrNull { it.events.isNotEmpty() }
+        }
+
+        private fun stripEndOfTrackEvents(events: MutableList<Midi1Event>) {
+            events.removeAll { isEndOfTrack(it) }
+        }
+
+        private fun findLeastUsedChannel(music: Midi1Music): Int {
+            val counts = IntArray(16)
+            for (track in music.tracks) {
+                for (event in track.events) {
+                    val status = event.message.statusByte.toInt() and 0xFF
+                    if (status in 0x80..0xEF) {
+                        val ch = status and 0x0F
+                        counts[ch]++
+                    }
+                }
+            }
+            var bestChannel = 15
+            var bestCount = Int.MAX_VALUE
+            for (ch in 0 until 16) {
+                if (counts[ch] < bestCount) {
+                    bestCount = counts[ch]
+                    bestChannel = ch
+                }
+            }
+            return bestChannel
+        }
+
+        private fun insertChannelCcEvent(
+            events: MutableList<Midi1Event>,
+            targetTick: Int,
+            channel: Int,
+            ccNumber: Int,
+            value: Int
+        ) {
+            var accumulatedTick = 0
+            var insertIndex = events.size
+            for ((index, event) in events.withIndex()) {
+                if (accumulatedTick + event.deltaTime > targetTick) {
+                    insertIndex = index
+                    break
+                }
+                accumulatedTick += event.deltaTime
+            }
+            val deltaTime = (targetTick - accumulatedTick).coerceAtLeast(0)
+            val statusByte = (MidiChannelStatus.CC or (channel and 0x0F))
+            val message = Midi1SimpleMessage(statusByte, ccNumber, value)
+            events.add(insertIndex, Midi1Event(deltaTime, message))
+            if (insertIndex + 1 < events.size) {
+                val nextEvent = events[insertIndex + 1]
+                val newDelta = (nextEvent.deltaTime - deltaTime).coerceAtLeast(0)
+                events[insertIndex + 1] = Midi1Event(newDelta, nextEvent.message)
+            }
+        }
+
+        private fun ensureTrackEndOfTrackAtOrAfter(events: MutableList<Midi1Event>, targetTick: Int) {
+            if (events.isEmpty()) {
+                events.add(createEndOfTrackEvent(targetTick.coerceAtLeast(0)))
+                return
+            }
+            var totalTick = 0
+            for (event in events) totalTick += event.deltaTime
+            val lastIndex = events.lastIndex
+            val last = events[lastIndex]
+            if (isEndOfTrack(last)) {
+                if (totalTick < targetTick) {
+                    events[lastIndex] = Midi1Event(last.deltaTime + (targetTick - totalTick), last.message)
+                }
+            } else if (totalTick <= targetTick) {
+                events.add(createEndOfTrackEvent(targetTick - totalTick))
+            } else {
+                events.add(createEndOfTrackEvent(0))
+            }
+        }
+
         fun findLoopPoint(midiFile: File): LoopPoint {
             val loopPoint = LoopPoint()
             try {
                 midiFile.inputStream().use { inputStream ->
-                    val bytes = inputStream.readBytes().toList()
+                    val rawBytes = inputStream.readBytes()
+                    val bytes = rawBytes.toList()
                     val music = Midi1Music().apply { read(bytes) }
 
+                    var maxTickFromMusic = 0
                     for (track in music.tracks) {
                         var tick = 0
                         for (e in track.events) {
@@ -895,18 +1224,25 @@ class PlaybackService : MediaSessionService() {
                             val m = e.message
                             val isCC = ((m.statusByte.toInt() and 0xF0) == MidiChannelStatus.CC)
                             if (isCC && m.msb.toInt() == 111) {
-                                loopPoint.hasLoopStartMarker = true
-                                loopPoint.startTick = tick
-                                loopPoint.startMs = music.getTimePositionInMillisecondsForTick(tick).toLong()
+                                if (!loopPoint.hasLoopStartMarker || tick < loopPoint.startTick) {
+                                    loopPoint.hasLoopStartMarker = true
+                                    loopPoint.startTick = tick
+                                    loopPoint.startMs = music.getTimePositionInMillisecondsForTick(tick).toLong()
+                                }
                             }
                         }
+                        if (tick > maxTickFromMusic) maxTickFromMusic = tick
                     }
-
-                    for (track in music.tracks) {
-                        var tick = 0
-                        for (e in track.events) tick += e.deltaTime
-                        loopPoint.endTick = tick
-                        loopPoint.endMs = music.getTimePositionInMillisecondsForTick(tick).toLong()
+                    val maxTickSmf = parseSmfMaxTick(rawBytes)
+                    val maxTick = maxTickSmf ?: maxTickFromMusic
+                    loopPoint.endTick = maxTick
+                    loopPoint.endMs = music.getTimePositionInMillisecondsForTick(maxTick).toLong()
+                    if (LOOP_DIAG) {
+                        Log.d(
+                            LOOP_TAG,
+                            "findLoopPoint maxTickSmf=$maxTickSmf maxTickMusic=$maxTickFromMusic " +
+                                "chosenEndTick=${loopPoint.endTick} chosenEndMs=${loopPoint.endMs}"
+                        )
                     }
                 }
             } catch (_: Exception) {
@@ -914,6 +1250,11 @@ class PlaybackService : MediaSessionService() {
             }
             return loopPoint
         }
+
+        private const val LOOP_TAG = "LoopDiag"
+        private const val LOOP_DIAG = true
+        private const val LOOP_TAIL_PADDING_EXPERIMENT = true
+        private const val LOOP_SYNC_EARLY_TICKS = 96L
     }
 
     private fun playInternalFromController() {

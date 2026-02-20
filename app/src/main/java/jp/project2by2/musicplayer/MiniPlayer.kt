@@ -294,13 +294,14 @@ fun MiniPlayerContainer(
             val snapshot = withContext(Dispatchers.Default) {
                 val lp = service.getLoopPoint()
                 val duration = service.getDurationMs().coerceAtLeast(0L)
+                val loopEnd = lp?.endMs?.takeIf { it > 0L }?.coerceIn(0L, duration) ?: duration
                 MiniPlayerUi(
                     title = service.getCurrentTitle() ?: context.getString(R.string.info_no_file_selected),
                     isPlaying = service.isPlaying(),
                     positionMs = service.getCurrentPositionMs(),
                     durationMs = duration,
                     loopStartMs = lp?.startMs ?: 0L,
-                    loopEndMs = duration,
+                    loopEndMs = loopEnd,
                 )
             }
 
