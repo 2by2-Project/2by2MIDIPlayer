@@ -3,6 +3,7 @@ package jp.project2by2.musicplayer
 import android.content.Context
 import android.net.Uri
 import android.os.SystemClock
+import android.util.Log
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -44,6 +45,7 @@ private val MidiChannelNeonPalette = listOf(
     Color(0xFFB388FF),
     Color(0xFFFF4081)
 )
+private const val PIANO_ROLL_DEBUG_SAMPLE_LIMIT = 24
 
 data class PianoRollNote(
     val noteNumber: Int,
@@ -86,6 +88,16 @@ suspend fun loadPianoRollData(context: Context, uri: Uri): PianoRollData {
     val measureTicks = calculateMeasureTickPositions(music)
     val anchors = buildTickTimeAnchors(music, maxTick)
     val notes = extractPianoRollNotes(music)
+    val tickSample = measureTicks.take(PIANO_ROLL_DEBUG_SAMPLE_LIMIT).joinToString(", ")
+    val tickSpanSample = measureTicks.zipWithNext()
+        .take(PIANO_ROLL_DEBUG_SAMPLE_LIMIT)
+        .joinToString(", ") { (a, b) -> "${b - a}t" }
+    Log.i(
+        "PlaybackPianoRollTS",
+        "loadPianoRollData: uri=$uri notes=${notes.size} maxTick=$maxTick measureTicks=${measureTicks.size} anchors=${anchors.size}"
+    )
+    Log.d("PlaybackPianoRollTS", "measureTicks(sample): $tickSample")
+    Log.d("PlaybackPianoRollTS", "measureTickSpans(sample): $tickSpanSample")
     return PianoRollData(
         notes = notes,
         totalDurationMs = duration,
@@ -116,6 +128,10 @@ suspend fun loadPianoRollDataProgressive(
     val measures = calculateMeasurePositions(music, duration)
     val measureTicks = calculateMeasureTickPositions(music)
     val anchors = buildTickTimeAnchors(music, maxTick)
+    Log.i(
+        "PlaybackPianoRollTS",
+        "loadPianoRollDataProgressive: uri=$uri maxTick=$maxTick durationMs=$duration measureTicks=${measureTicks.size} anchors=${anchors.size}"
+    )
 
     val notes = extractPianoRollNotesProgressive(music, chunkSize) { partial ->
         onChunk(
@@ -313,24 +329,16 @@ fun PlaybackPianoRollView(
     Box(modifier = modifier.background(Color(0xFF161616))) {
         Canvas(Modifier.fillMaxSize()) {
             val durationTicks = totalTicks.coerceAtLeast(1)
-            val measureCount = measureTickPositions.size.coerceAtLeast(1)
-            val maxMeasureTicks = maxMeasureTickSpan(measureTickPositions, durationTicks).coerceAtLeast(1)
-            val displayDurationTicks = (maxMeasureTicks * measureCount).coerceAtLeast(1)
+            val displayDurationTicks = durationTicks
             val viewport = (displayDurationTicks / zoomLevel).toInt().coerceAtLeast(1)
             val half = viewport / 2
             val currentTick = msToTick(currentPositionMs, tickTimeAnchors, durationTicks)
-            val currentDisplayTick = mapTickToNormalizedMeasureAxis(
-                tick = currentTick,
-                measureTickPositions = measureTickPositions,
-                totalTicks = durationTicks,
-                maxMeasureTicks = maxMeasureTicks
-            )
+            val currentDisplayTick = currentTick
             val visibleStart = (currentDisplayTick - half).coerceIn(0, (displayDurationTicks - viewport).coerceAtLeast(0))
             val visibleEnd = visibleStart + viewport
 
-            measureTickPositions.forEachIndexed { index, _ ->
-                val measureDisplayTick = index * maxMeasureTicks
-                if (measureDisplayTick !in visibleStart..visibleEnd) return@forEachIndexed
+            measureTickPositions.forEach { measureDisplayTick ->
+                if (measureDisplayTick !in visibleStart..visibleEnd) return@forEach
                 val x = ((measureDisplayTick - visibleStart).toFloat() / viewport.toFloat()) * size.width
                 drawLine(
                     color = Color.Gray.copy(alpha = 0.45f),
@@ -341,18 +349,8 @@ fun PlaybackPianoRollView(
             }
 
             notes.forEachIndexed { index, note ->
-                val startDisplayTick = mapTickToNormalizedMeasureAxis(
-                    tick = note.startTick,
-                    measureTickPositions = measureTickPositions,
-                    totalTicks = durationTicks,
-                    maxMeasureTicks = maxMeasureTicks
-                )
-                val endDisplayTick = mapTickToNormalizedMeasureAxis(
-                    tick = note.endTick,
-                    measureTickPositions = measureTickPositions,
-                    totalTicks = durationTicks,
-                    maxMeasureTicks = maxMeasureTicks
-                )
+                val startDisplayTick = note.startTick.coerceIn(0, durationTicks)
+                val endDisplayTick = note.endTick.coerceIn(0, durationTicks)
                 if (startDisplayTick >= visibleEnd || endDisplayTick <= visibleStart) return@forEachIndexed
                 val x = ((startDisplayTick - visibleStart).toFloat() / viewport.toFloat()) * size.width
                 val w = ((endDisplayTick - startDisplayTick).toFloat() / viewport.toFloat()) * size.width
@@ -370,13 +368,7 @@ fun PlaybackPianoRollView(
             }
 
             fun drawMarker(ms: Long, color: Color, width: Float) {
-                val markerTick = msToTick(ms, tickTimeAnchors, durationTicks)
-                val markerDisplayTick = mapTickToNormalizedMeasureAxis(
-                    tick = markerTick,
-                    measureTickPositions = measureTickPositions,
-                    totalTicks = durationTicks,
-                    maxMeasureTicks = maxMeasureTicks
-                )
+                val markerDisplayTick = msToTick(ms, tickTimeAnchors, durationTicks).coerceIn(0, durationTicks)
                 if (markerDisplayTick !in visibleStart..visibleEnd) return
                 val x = ((markerDisplayTick - visibleStart).toFloat() / viewport.toFloat()) * size.width
                 drawLine(color = color, start = Offset(x, 0f), end = Offset(x, size.height), strokeWidth = width)
@@ -387,48 +379,6 @@ fun PlaybackPianoRollView(
             drawMarker(currentPositionMs, Color.White, 5f)
         }
     }
-}
-
-private fun maxMeasureTickSpan(measureTickPositions: List<Int>, totalTicks: Int): Int {
-    if (measureTickPositions.isEmpty()) return totalTicks.coerceAtLeast(1)
-    var maxSpan = 1
-    for (i in measureTickPositions.indices) {
-        val start = measureTickPositions[i]
-        val end = if (i + 1 < measureTickPositions.size) measureTickPositions[i + 1] else totalTicks
-        val span = (end - start).coerceAtLeast(1)
-        if (span > maxSpan) maxSpan = span
-    }
-    return maxSpan
-}
-
-private fun mapTickToNormalizedMeasureAxis(
-    tick: Int,
-    measureTickPositions: List<Int>,
-    totalTicks: Int,
-    maxMeasureTicks: Int
-): Int {
-    if (measureTickPositions.isEmpty()) return tick.coerceIn(0, totalTicks)
-    val clampedTick = tick.coerceIn(0, totalTicks)
-    val measureIndex = measureIndexForTickInMeasures(clampedTick, measureTickPositions)
-    val measureStart = measureTickPositions[measureIndex]
-    val measureEnd = if (measureIndex + 1 < measureTickPositions.size) measureTickPositions[measureIndex + 1] else totalTicks
-    val measureLen = (measureEnd - measureStart).coerceAtLeast(1)
-    val localTick = (clampedTick - measureStart).coerceIn(0, measureLen)
-    val normalizedLocal = (localTick * maxMeasureTicks) / measureLen
-    return (measureIndex * maxMeasureTicks + normalizedLocal).coerceAtLeast(0)
-}
-
-private fun measureIndexForTickInMeasures(tick: Int, measureTicks: List<Int>): Int {
-    var low = 0
-    var high = measureTicks.lastIndex
-    while (low <= high) {
-        val mid = (low + high) ushr 1
-        when {
-            measureTicks[mid] <= tick -> low = mid + 1
-            else -> high = mid - 1
-        }
-    }
-    return high.coerceIn(0, measureTicks.lastIndex)
 }
 
 private fun calculateMeasureTickPositions(music: Midi1Music): List<Int> {
@@ -444,6 +394,20 @@ private fun calculateMeasureTickPositions(music: Midi1Music): List<Int> {
         val currentSig = signatures.lastOrNull { it.tick <= currentTick } ?: signatures.first()
         val ticksPerMeasure = (currentSig.numerator * 4 * ticksPerQuarterNote) / currentSig.denominator
         currentTick += ticksPerMeasure.coerceAtLeast(1)
+    }
+    if (measures.isNotEmpty()) {
+        val sigSample = signatures
+            .take(PIANO_ROLL_DEBUG_SAMPLE_LIMIT)
+            .joinToString(", ") { "t${it.tick}:${it.numerator}/${it.denominator}" }
+        val spans = measures.zipWithNext()
+            .take(PIANO_ROLL_DEBUG_SAMPLE_LIMIT)
+            .joinToString(", ") { (a, b) -> "${b - a}t" }
+        Log.i(
+            "PlaybackPianoRollTS",
+            "calculateMeasureTickPositions: tpq=$ticksPerQuarterNote maxTick=$maxTick signatures=${signatures.size} measures=${measures.size}"
+        )
+        Log.d("PlaybackPianoRollTS", "signatures(sample): $sigSample")
+        Log.d("PlaybackPianoRollTS", "measureSpansTick(sample): $spans")
     }
     return measures
 }

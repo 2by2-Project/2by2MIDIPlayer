@@ -268,6 +268,7 @@ data class EditLoopState(
 private const val MIN_ZOOM = 1f
 private const val MAX_ZOOM = 40f
 private const val INITIAL_VISIBLE_MEASURES = 5
+private const val TS_DEBUG_SAMPLE_LIMIT = 24
 
 fun calculateInitialZoomLevel(totalDurationMs: Long, measurePositions: List<Long>): Float {
     if (totalDurationMs <= 0L) return MIN_ZOOM
@@ -1238,9 +1239,15 @@ fun extractTempoChanges(music: Midi1Music): List<TempoChange> {
 }
 
 fun extractTimeSignatures(music: Midi1Music): List<TimeSignature> {
-    val signatures = mutableListOf<TimeSignature>()
+    data class RawTimeSignature(
+        val tick: Int,
+        val numerator: Int,
+        val denominator: Int,
+        val trackIndex: Int
+    )
 
-    for (track in music.tracks) {
+    val raw = mutableListOf<RawTimeSignature>()
+    for ((trackIndex, track) in music.tracks.withIndex()) {
         var tick = 0
         for (event in track.events) {
             tick += event.deltaTime
@@ -1250,14 +1257,115 @@ fun extractTimeSignatures(music: Midi1Music): List<TimeSignature> {
                 val data = (msg as? Midi1CompoundMessage)?.extraData ?: continue
                 if (data.size >= 2) {
                     val numerator = data[0].toInt() and 0xFF
-                    val denominator = 1 shl (data[1].toInt() and 0xFF) // 2^denominator
-                    signatures.add(TimeSignature(tick, numerator, denominator))
+                    val denominatorPow = data[1].toInt() and 0xFF
+                    if (numerator <= 0 || denominatorPow !in 0..7) continue
+                    val denominator = 1 shl denominatorPow // 2^denominator
+                    raw.add(
+                        RawTimeSignature(
+                            tick = tick.coerceAtLeast(0),
+                            numerator = numerator,
+                            denominator = denominator,
+                            trackIndex = trackIndex
+                        )
+                    )
                 }
             }
         }
     }
 
-    return signatures.ifEmpty { listOf(TimeSignature(0, 4, 4)) } // Default 4/4
+    if (raw.isEmpty()) return listOf(TimeSignature(0, 4, 4))
+
+    val maxTick = music.tracks.maxOfOrNull { track ->
+        track.events.sumOf { it.deltaTime }
+    } ?: 0
+    if (maxTick <= 0) return listOf(TimeSignature(0, 4, 4))
+
+    val normalized = raw
+        .groupBy { it.tick }
+        .toSortedMap()
+        .map { (tick, entriesAtTick) ->
+            val chosen = entriesAtTick
+                .sortedWith(
+                    compareByDescending<RawTimeSignature> { it.numerator == 4 && it.denominator == 4 }
+                        .thenBy { it.trackIndex }
+                )
+                .first()
+            TimeSignature(tick, chosen.numerator, chosen.denominator)
+        }
+        .toMutableList()
+
+    fun ticksPerMeasure(sig: TimeSignature): Int {
+        return ((sig.numerator * 4 * music.deltaTimeSpec) / sig.denominator).coerceAtLeast(1)
+    }
+
+    // Choose baseline by "adopted measure count":
+    // for each segment between time-signature events, accumulate how many measures that signature occupies.
+    val measureCoverage = mutableMapOf<Pair<Int, Int>, Double>()
+    val tick0Sig = normalized.firstOrNull { it.tick == 0 } ?: TimeSignature(0, 4, 4)
+    var currentSig = tick0Sig
+    var currentTick = 0
+    for (sig in normalized) {
+        if (sig.tick <= 0) continue
+        val segmentEnd = sig.tick.coerceIn(0, maxTick)
+        if (segmentEnd > currentTick) {
+            val ticks = (segmentEnd - currentTick).toDouble()
+            val measures = ticks / ticksPerMeasure(currentSig).toDouble()
+            val key = currentSig.numerator to currentSig.denominator
+            measureCoverage[key] = (measureCoverage[key] ?: 0.0) + measures
+            currentTick = segmentEnd
+        }
+        currentSig = sig
+    }
+    if (maxTick > currentTick) {
+        val ticks = (maxTick - currentTick).toDouble()
+        val measures = ticks / ticksPerMeasure(currentSig).toDouble()
+        val key = currentSig.numerator to currentSig.denominator
+        measureCoverage[key] = (measureCoverage[key] ?: 0.0) + measures
+    }
+
+    val basePair = measureCoverage.entries
+        .maxWithOrNull(
+            compareBy<Map.Entry<Pair<Int, Int>, Double>> { it.value }
+                .thenBy { if (it.key == (4 to 4)) 1 else 0 }
+        )
+        ?.key ?: (4 to 4)
+
+    // Always anchor display baseline at tick 0 with the selected base signature.
+    // This avoids starting from a short 2/4 or 1/8 marker that makes the whole roll look "double speed".
+    normalized.removeAll { it.tick == 0 }
+    normalized.add(0, TimeSignature(0, basePair.first, basePair.second))
+
+    // Keep timeline compact: drop no-op consecutive duplicates after normalization.
+    val deduped = mutableListOf<TimeSignature>()
+    for (sig in normalized.sortedBy { it.tick }) {
+        val prev = deduped.lastOrNull()
+        if (prev == null || prev.numerator != sig.numerator || prev.denominator != sig.denominator) {
+            deduped.add(sig)
+        }
+    }
+
+    if (BuildConfig.DEBUG) {
+        val rawSample = raw
+            .sortedBy { it.tick }
+            .take(TS_DEBUG_SAMPLE_LIMIT)
+            .joinToString(", ") { "t${it.tick}:${it.numerator}/${it.denominator}(trk${it.trackIndex})" }
+        val coverageSample = measureCoverage.entries
+            .sortedByDescending { it.value }
+            .take(TS_DEBUG_SAMPLE_LIMIT)
+            .joinToString(", ") { "${it.key.first}/${it.key.second}=${"%.2f".format(it.value)}bars" }
+        val normalizedSample = deduped
+            .take(TS_DEBUG_SAMPLE_LIMIT)
+            .joinToString(", ") { "t${it.tick}:${it.numerator}/${it.denominator}" }
+        Log.i(
+            "EditLoopPointTS",
+            "TS analyze: tpq=${music.deltaTimeSpec} maxTick=$maxTick rawCount=${raw.size} normalizedCount=${deduped.size} base=${basePair.first}/${basePair.second}"
+        )
+        Log.d("EditLoopPointTS", "raw(sample): $rawSample")
+        Log.d("EditLoopPointTS", "coverage(sample): $coverageSample")
+        Log.d("EditLoopPointTS", "normalized(sample): $normalizedSample")
+    }
+
+    return deduped
 }
 
 fun calculateMeasurePositions(music: Midi1Music, totalDurationMs: Long): List<Long> {
@@ -1283,6 +1391,22 @@ fun calculateMeasurePositions(music: Midi1Music, totalDurationMs: Long): List<Lo
         // Calculate ticks per measure: (numerator / denominator) * 4 * ticksPerQuarterNote
         val ticksPerMeasure = (currentSig.numerator * 4 * ticksPerQuarterNote) / currentSig.denominator
         currentTick += ticksPerMeasure
+    }
+
+    if (BuildConfig.DEBUG && measures.isNotEmpty()) {
+        val spansSample = measures
+            .zipWithNext()
+            .take(TS_DEBUG_SAMPLE_LIMIT)
+            .joinToString(", ") { (a, b) -> "${b - a}ms" }
+        val pointsSample = measures
+            .take(TS_DEBUG_SAMPLE_LIMIT)
+            .joinToString(", ") { "${it}ms" }
+        Log.i(
+            "EditLoopPointTS",
+            "measurePositions: count=${measures.size} totalDurationMs=$totalDurationMs first=${measures.first()} last=${measures.lastOrNull() ?: 0L}"
+        )
+        Log.d("EditLoopPointTS", "measurePoints(sample): $pointsSample")
+        Log.d("EditLoopPointTS", "measureSpans(sample): $spansSample")
     }
 
     return measures

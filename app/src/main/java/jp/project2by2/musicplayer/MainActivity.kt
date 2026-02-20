@@ -11,6 +11,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
 import android.provider.MediaStore
+import android.util.Log
 import android.widget.Toast
 import androidx.annotation.RequiresApi
 import androidx.activity.ComponentActivity
@@ -463,6 +464,7 @@ fun MusicPlayerMainScreen(
             pianoRollData = null
             return@LaunchedEffect
         }
+        Log.i("PlaybackPianoRollTS", "MainActivity selectedMidiFileUri changed: uri=$uri")
         pianoRollData = PianoRollData(
             notes = emptyList(),
             totalDurationMs = 0L,
@@ -478,6 +480,12 @@ fun MusicPlayerMainScreen(
         }
         if (selectedMidiFileUri == uri && loaded != null) {
             pianoRollData = loaded
+            Log.i(
+                "PlaybackPianoRollTS",
+                "MainActivity pianoRoll loaded: notes=${loaded.notes.size} totalTicks=${loaded.totalTicks} measureTicks=${loaded.measureTickPositions.size}"
+            )
+        } else if (loaded == null) {
+            Log.e("PlaybackPianoRollTS", "MainActivity pianoRoll load failed: uri=$uri")
         }
     }
 
@@ -1170,9 +1178,9 @@ private fun NowPlayingPianoRollSheet(
                         endPointMs = ui.loopEndMs,
                         totalDurationMs = maxOf(pianoRollData.totalDurationMs, ui.durationMs),
                         totalTicks = pianoRollData.totalTicks,
-                        zoomLevel = calculateInitialZoomLevel(
-                            maxOf(pianoRollData.totalDurationMs, ui.durationMs),
-                            pianoRollData.measurePositions
+                        zoomLevel = calculatePlaybackInitialZoomLevel(
+                            totalTicks = pianoRollData.totalTicks,
+                            measureTickPositions = pianoRollData.measureTickPositions
                         ),
                         modifier = Modifier
                             .fillMaxWidth()
@@ -1327,6 +1335,33 @@ private fun NowPlayingPianoRollSheet(
             }
         }
     }
+}
+
+private fun calculatePlaybackInitialZoomLevel(
+    totalTicks: Int,
+    measureTickPositions: List<Int>,
+    targetVisibleMeasures: Int = 5
+): Float {
+    if (totalTicks <= 0) return 10f
+    val spans = measureTickPositions
+        .zipWithNext()
+        .map { (a, b) -> (b - a).coerceAtLeast(1) }
+    if (spans.isEmpty()) return 10f.coerceIn(1f, 40f)
+
+    val dominantMeasureTicks = spans
+        .groupingBy { it }
+        .eachCount()
+        .maxWithOrNull(compareBy<Map.Entry<Int, Int>> { it.value }.thenBy { it.key })
+        ?.key
+        ?: spans[spans.size / 2]
+
+    val targetWindowTicks = (dominantMeasureTicks * targetVisibleMeasures).coerceAtLeast(1)
+    val zoom = (totalTicks.toFloat() / targetWindowTicks.toFloat()).coerceIn(1f, 40f)
+    Log.d(
+        "PlaybackPianoRollTS",
+        "calculatePlaybackInitialZoomLevel: totalTicks=$totalTicks dominantMeasureTicks=$dominantMeasureTicks targetMeasures=$targetVisibleMeasures zoom=$zoom"
+    )
+    return zoom
 }
 
 @Composable
