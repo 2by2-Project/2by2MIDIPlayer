@@ -1,7 +1,6 @@
 package jp.project2by2.musicplayer
 
 import android.app.PendingIntent
-import android.content.ContentUris
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -10,7 +9,6 @@ import android.os.Binder
 import android.os.Build
 import android.os.IBinder
 import android.provider.OpenableColumns
-import android.provider.MediaStore
 import android.util.Log
 import android.media.AudioAttributes
 import android.media.AudioFocusRequest
@@ -77,6 +75,14 @@ class PlaybackService : MediaSessionService() {
     private var currentTitle: String? = null
     public var currentArtist: String? = null
     public var currentArtworkUri: Uri? = null
+    private var activeQueueId: Long? = null
+    private var activeQueueTitle: String? = null
+    private var activeQueueItems: List<String> = emptyList()
+    private var shuffledOrder: List<Int> = emptyList()
+    private var shuffledCursor: Int = -1
+    private val playlistRepository: PlaylistRepository by lazy {
+        PlaylistStore.repository(this)
+    }
 
     @Volatile private var loopPositionOverrideMs: Long? = null
     @Volatile private var loopOverrideUntilUptimeMs: Long = 0L
@@ -462,14 +468,14 @@ class PlaybackService : MediaSessionService() {
         val shuffleEnabled = shuffleEnabledSnapshot
         if (!loopEnabled) {
             loopRepeatCount = 0
-            serviceScope.launch { playNextTrackInCurrentFolder(shuffleEnabled) }
+            serviceScope.launch { playNextInQueue(shuffleEnabled) }
             return
         }
 
         val requireLoopMarker = (loopMode == 1 || loopMode == 3)
         if (requireLoopMarker && !lp.hasLoopStartMarker) {
             loopRepeatCount = 0
-            serviceScope.launch { playNextTrackInCurrentFolder(shuffleEnabled) }
+            serviceScope.launch { playNextInQueue(shuffleEnabled) }
             return
         }
 
@@ -632,7 +638,7 @@ class PlaybackService : MediaSessionService() {
         )
         if (!sliding) {
             transitionInProgress.set(false)
-            serviceScope.launch { playNextTrackInCurrentFolder(shuffleEnabled, alreadyLocked = false) }
+            serviceScope.launch { playNextInQueue(shuffleEnabled, alreadyLocked = false) }
             return
         }
 
@@ -642,29 +648,83 @@ class PlaybackService : MediaSessionService() {
             BASS.BASS_ATTRIB_VOL.toLong(),
             BASS.SYNCPROC { _, _, _, _ ->
                 serviceScope.launch {
-                    playNextTrackInCurrentFolder(shuffleEnabled, alreadyLocked = true)
+                    playNextInQueue(shuffleEnabled, alreadyLocked = true)
                 }
             },
             0
         )
     }
 
-    suspend fun playNextTrackInCurrentFolder(shuffleEnabled: Boolean, alreadyLocked: Boolean = false) {
+    fun setTransientQueue(items: List<String>, title: String?, startUri: String? = null): Boolean {
+        val normalized = items.distinct().filter { it.isNotBlank() }
+        if (normalized.isEmpty()) return false
+        activeQueueId = null
+        activeQueueTitle = title?.takeIf { it.isNotBlank() }
+        activeQueueItems = normalized
+        resetShuffleState()
+        currentArtist = activeQueueTitle
+        if (startUri != null && normalized.none { it == startUri }) return false
+        return true
+    }
+
+    fun setActiveQueue(queueId: Long, startUri: String? = null): Boolean {
+        val tracks = runBlocking { playlistRepository.getPlaylistItems(queueId) }
+        val queue = tracks.sortedBy { it.position }.map { it.uriString }.distinct().filter { it.isNotBlank() }
+        if (queue.isEmpty()) return false
+        if (startUri != null && queue.none { it == startUri }) return false
+        activeQueueId = queueId
+        activeQueueTitle = runBlocking { playlistRepository.getPlaylistName(queueId) }
+        activeQueueItems = queue
+        resetShuffleState()
+        currentArtist = activeQueueTitle
+        return true
+    }
+
+    fun enqueueNextInQueue(
+        uriString: String,
+        fallbackItems: List<String> = emptyList(),
+        fallbackTitle: String? = null
+    ): Boolean {
+        val target = uriString.trim()
+        if (target.isBlank()) return false
+        val current = currentUriString ?: return false
+
+        var queue = activeQueueItems
+        if (queue.isEmpty()) {
+            val normalizedFallback = fallbackItems.distinct().filter { it.isNotBlank() }
+            queue = if (normalizedFallback.contains(current)) {
+                activeQueueId = null
+                activeQueueTitle = fallbackTitle?.takeIf { it.isNotBlank() }
+                currentArtist = activeQueueTitle
+                normalizedFallback
+            } else {
+                listOf(current)
+            }
+        }
+
+        val mutable = queue.toMutableList()
+        var currentIndex = mutable.indexOf(current)
+        if (currentIndex < 0) {
+            mutable.add(0, current)
+            currentIndex = 0
+        }
+        mutable.add(currentIndex + 1, target)
+
+        activeQueueItems = mutable
+        resetShuffleState()
+        return true
+    }
+
+    suspend fun playNextInQueue(shuffleEnabled: Boolean, alreadyLocked: Boolean = false) {
         if (!alreadyLocked && !transitionInProgress.compareAndSet(false, true)) return
 
-        val currentUri = currentUriString?.let { Uri.parse(it) }
-        if (currentUri == null) {
+        val nextUriString = findNextUriInActiveQueue(shuffleEnabled)
+        if (nextUriString == null) {
             transitionInProgress.set(false)
             return
         }
 
-        val nextUri = findNextUriInCurrentFolder(currentUri, shuffleEnabled)
-        if (nextUri == null) {
-            transitionInProgress.set(false)
-            return
-        }
-
-        val loaded = loadMidi(nextUri.toString())
+        val loaded = loadMidi(nextUriString)
         if (loaded) {
             mainHandler.post {
                 play()
@@ -673,199 +733,109 @@ class PlaybackService : MediaSessionService() {
             }
         }
         transitionInProgress.set(false)
+    }
+
+    suspend fun playPreviousInQueue(shuffleEnabled: Boolean, alreadyLocked: Boolean = false) {
+        if (!alreadyLocked && !transitionInProgress.compareAndSet(false, true)) return
+
+        val previousUriString = findPreviousUriInActiveQueue(shuffleEnabled)
+        if (previousUriString == null) {
+            transitionInProgress.set(false)
+            return
+        }
+
+        val loaded = loadMidi(previousUriString)
+        if (loaded) {
+            mainHandler.post {
+                play()
+                bassPlayer.invalidateFromBass()
+                triggerNotificationUpdate()
+            }
+        }
+        transitionInProgress.set(false)
+    }
+
+    // Compatibility wrappers for callers not yet migrated.
+    suspend fun playNextTrackInCurrentFolder(shuffleEnabled: Boolean, alreadyLocked: Boolean = false) {
+        playNextInQueue(shuffleEnabled = shuffleEnabled, alreadyLocked = alreadyLocked)
     }
 
     suspend fun playPreviousTrackInCurrentFolder(shuffleEnabled: Boolean, alreadyLocked: Boolean = false) {
-        if (!alreadyLocked && !transitionInProgress.compareAndSet(false, true)) return
+        playPreviousInQueue(shuffleEnabled = shuffleEnabled, alreadyLocked = alreadyLocked)
+    }
 
-        val currentUri = currentUriString?.let { Uri.parse(it) }
-        if (currentUri == null) {
-            transitionInProgress.set(false)
+    private fun findNextUriInActiveQueue(shuffleEnabled: Boolean): String? {
+        val queue = activeQueueItems
+        if (queue.isEmpty()) return null
+        val current = currentUriString
+        val currentIndex = if (current != null) queue.indexOf(current) else -1
+        if (currentIndex < 0) return queue.first()
+
+        if (shuffleEnabled) {
+            return findFromShuffledOrder(queue, currentIndex, forward = true)
+        }
+
+        return queue[(currentIndex + 1) % queue.size]
+    }
+
+    private fun findPreviousUriInActiveQueue(shuffleEnabled: Boolean): String? {
+        val queue = activeQueueItems
+        if (queue.isEmpty()) return null
+        val current = currentUriString
+        val currentIndex = if (current != null) queue.indexOf(current) else -1
+        if (currentIndex < 0) return queue.last()
+
+        if (shuffleEnabled) {
+            return findFromShuffledOrder(queue, currentIndex, forward = false)
+        }
+
+        val previousIndex = if (currentIndex == 0) queue.lastIndex else currentIndex - 1
+        return queue[previousIndex]
+    }
+
+    private fun findFromShuffledOrder(queue: List<String>, currentIndex: Int, forward: Boolean): String {
+        if (queue.size <= 1) return queue.first()
+
+        ensureShuffleOrder(queue, currentIndex)
+        val order = shuffledOrder
+        if (order.isEmpty()) return queue[currentIndex]
+
+        val cursor = if (shuffledCursor in order.indices) shuffledCursor else 0
+        val nextCursor = if (forward) {
+            (cursor + 1) % order.size
+        } else {
+            if (cursor == 0) order.lastIndex else cursor - 1
+        }
+        shuffledCursor = nextCursor
+        return queue[order[nextCursor]]
+    }
+
+    private fun ensureShuffleOrder(queue: List<String>, currentIndex: Int) {
+        val queueSizeChanged = shuffledOrder.size != queue.size
+        val outOfRange = shuffledOrder.any { it !in queue.indices }
+        if (queueSizeChanged || outOfRange || shuffledOrder.isEmpty()) {
+            rebuildShuffleOrder(queue, currentIndex)
             return
         }
 
-        val previousUri = findPreviousUriInCurrentFolder(currentUri, shuffleEnabled)
-        if (previousUri == null) {
-            transitionInProgress.set(false)
-            return
-        }
-
-        val loaded = loadMidi(previousUri.toString())
-        if (loaded) {
-            mainHandler.post {
-                play()
-                bassPlayer.invalidateFromBass()
-                triggerNotificationUpdate()
-            }
-        }
-        transitionInProgress.set(false)
-    }
-
-    private fun findNextUriInCurrentFolder(currentUri: Uri, shuffleEnabled: Boolean): Uri? {
-        val playlist = queryFolderPlaylist(currentUri)
-        if (playlist.isEmpty()) return null
-
-        val currentIndex = playlist.indexOfFirst { it.toString() == currentUri.toString() }
-        if (currentIndex < 0) return playlist.first()
-
-        if (shuffleEnabled) {
-            if (playlist.size <= 1) return playlist.first()
-            var candidate = currentIndex
-            while (candidate == currentIndex) {
-                candidate = random.nextInt(playlist.size)
-            }
-            return playlist[candidate]
-        }
-
-        return playlist[(currentIndex + 1) % playlist.size]
-    }
-
-    private fun findPreviousUriInCurrentFolder(currentUri: Uri, shuffleEnabled: Boolean): Uri? {
-        val playlist = queryFolderPlaylist(currentUri)
-        if (playlist.isEmpty()) return null
-
-        val currentIndex = playlist.indexOfFirst { it.toString() == currentUri.toString() }
-        if (currentIndex < 0) return playlist.last()
-
-        if (shuffleEnabled) {
-            if (playlist.size <= 1) return playlist.first()
-            var candidate = currentIndex
-            while (candidate == currentIndex) {
-                candidate = random.nextInt(playlist.size)
-            }
-            return playlist[candidate]
-        }
-
-        val previousIndex = if (currentIndex == 0) playlist.lastIndex else currentIndex - 1
-        return playlist[previousIndex]
-    }
-
-    private fun queryDemoPlaylist(): List<Uri> {
-        val demoDir = File(filesDir, "demo")
-        if (!demoDir.exists() || !demoDir.isDirectory) {
-            return emptyList()
-        }
-
-        val midiFiles = demoDir.listFiles()?.filter { file ->
-            file.isFile && (file.name.endsWith(".mid", ignoreCase = true) ||
-                    file.name.endsWith(".midi", ignoreCase = true))
-        }?.sortedBy { it.name.lowercase() } ?: emptyList()
-
-        return midiFiles.map { Uri.fromFile(it) }
-    }
-
-    private fun queryFolderPlaylist(currentUri: Uri): List<Uri> {
-        val folderKey = resolveFolderKey(currentUri) ?: return emptyList()
-
-        // Handle demo files separately (they are not in MediaStore)
-        if (folderKey == "assets_demo") {
-            return queryDemoPlaylist()
-        }
-
-        val collection = MediaStore.Files.getContentUri("external")
-        val projection = if (Build.VERSION.SDK_INT >= 29) {
-            arrayOf(
-                MediaStore.Files.FileColumns._ID,
-                MediaStore.Files.FileColumns.DISPLAY_NAME,
-                MediaStore.Files.FileColumns.RELATIVE_PATH,
-                MediaStore.Files.FileColumns.DATA,
-                MediaStore.Files.FileColumns.MIME_TYPE
-            )
+        val located = shuffledOrder.indexOf(currentIndex)
+        if (located >= 0) {
+            shuffledCursor = located
         } else {
-            arrayOf(
-                MediaStore.Files.FileColumns._ID,
-                MediaStore.Files.FileColumns.DISPLAY_NAME,
-                MediaStore.Files.FileColumns.DATA,
-                MediaStore.Files.FileColumns.MIME_TYPE
-            )
+            rebuildShuffleOrder(queue, currentIndex)
         }
-        val selection = (
-            "${MediaStore.Files.FileColumns.MIME_TYPE}=? OR " +
-                "${MediaStore.Files.FileColumns.MIME_TYPE}=? OR " +
-                "${MediaStore.Files.FileColumns.DISPLAY_NAME} LIKE ? OR " +
-                "${MediaStore.Files.FileColumns.DISPLAY_NAME} LIKE ?"
-            )
-        val selectionArgs = arrayOf("audio/midi", "audio/x-midi", "%.mid", "%.midi")
-        val sortOrder = "${MediaStore.Files.FileColumns.DISPLAY_NAME} ASC"
-
-        val rows = mutableListOf<Pair<String, Uri>>()
-        contentResolver.query(collection, projection, selection, selectionArgs, sortOrder)?.use { cursor ->
-            val idColumn = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns._ID)
-            val nameColumn = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns.DISPLAY_NAME)
-            val relativePathColumn = if (Build.VERSION.SDK_INT >= 29) {
-                cursor.getColumnIndex(MediaStore.Files.FileColumns.RELATIVE_PATH)
-            } else {
-                -1
-            }
-            val dataColumn = cursor.getColumnIndex(MediaStore.Files.FileColumns.DATA)
-
-            while (cursor.moveToNext()) {
-                val relativePath = if (relativePathColumn >= 0) cursor.getString(relativePathColumn) else null
-                val dataPath = if (dataColumn >= 0) cursor.getString(dataColumn) else null
-                val itemFolderKey = extractFolderKey(relativePath, dataPath)
-                if (itemFolderKey != folderKey) continue
-
-                val id = cursor.getLong(idColumn)
-                val name = cursor.getString(nameColumn) ?: ""
-                val uri = ContentUris.withAppendedId(collection, id)
-                rows.add(name.lowercase() to uri)
-            }
-        }
-
-        return rows.sortedBy { it.first }.map { it.second }
     }
 
-    private fun resolveFolderKey(uri: Uri): String? {
-        // Handle file:// URIs (e.g., demo files from filesDir)
-        if (uri.scheme == "file") {
-            val path = uri.path ?: return null
-            // Check if this is a demo file
-            if (path.contains("/demo/")) {
-                return "assets_demo"
-            }
-            // Extract folder from file path
-            val parent = path.substringBeforeLast('/', "")
-            return if (parent.isNotBlank()) parent else null
-        }
-
-        // Handle content:// URIs from MediaStore
-        val projection = if (Build.VERSION.SDK_INT >= 29) {
-            arrayOf(
-                MediaStore.Files.FileColumns.RELATIVE_PATH,
-                MediaStore.Files.FileColumns.DATA
-            )
-        } else {
-            arrayOf(
-                MediaStore.Files.FileColumns.DATA
-            )
-        }
-        contentResolver.query(uri, projection, null, null, null)?.use { cursor ->
-            if (!cursor.moveToFirst()) return null
-            val relativePathColumn = if (Build.VERSION.SDK_INT >= 29) {
-                cursor.getColumnIndex(MediaStore.Files.FileColumns.RELATIVE_PATH)
-            } else {
-                -1
-            }
-            val dataColumn = cursor.getColumnIndex(MediaStore.Files.FileColumns.DATA)
-            val relativePath = if (relativePathColumn >= 0) cursor.getString(relativePathColumn) else null
-            val dataPath = if (dataColumn >= 0) cursor.getString(dataColumn) else null
-            val folderKey = extractFolderKey(relativePath, dataPath)
-            return folderKey.ifBlank { null }
-        }
-        return null
+    private fun rebuildShuffleOrder(queue: List<String>, currentIndex: Int) {
+        val others = queue.indices.filter { it != currentIndex }.toMutableList()
+        others.shuffle(random)
+        shuffledOrder = listOf(currentIndex) + others
+        shuffledCursor = 0
     }
 
-    private fun extractFolderKey(relativePath: String?, dataPath: String?): String {
-        relativePath?.let {
-            val trimmed = it.trimEnd('/', '\\')
-            if (trimmed.isNotBlank()) return trimmed.replace('\\', '/')
-        }
-        dataPath?.let {
-            val normalized = it.replace('\\', '/')
-            val parent = normalized.substringBeforeLast('/', "")
-            if (parent.isNotBlank()) return parent
-        }
-        return ""
+    private fun resetShuffleState() {
+        shuffledOrder = emptyList()
+        shuffledCursor = -1
     }
 
     private fun bassInit(): Boolean {
@@ -911,11 +881,9 @@ class PlaybackService : MediaSessionService() {
     }
 
     private fun resolveFolderDisplayName(uri: Uri): String? {
-        val key = resolveFolderKey(uri) ?: return null
-        if (key == "assets_demo") return getString(R.string.folder_demo_name)
-        val normalized = key.trimEnd('/', '\\')
-        val name = normalized.substringAfterLast('/', normalized.substringAfterLast('\\', normalized))
-        return name.takeIf { it.isNotBlank() }
+        activeQueueTitle?.let { if (it.isNotBlank()) return it }
+        val lastSegment = uri.path?.substringBeforeLast('/', "")?.substringAfterLast('/', "")
+        return lastSegment?.takeIf { it.isNotBlank() }
     }
 
     private fun extractEmbeddedMidiMetadata(midiFile: File): EmbeddedMidiMetadata {

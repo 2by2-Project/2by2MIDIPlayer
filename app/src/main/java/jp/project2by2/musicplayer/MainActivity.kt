@@ -71,7 +71,6 @@ import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Audiotrack
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Info
-import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Loop
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Pause
@@ -91,6 +90,8 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
@@ -121,7 +122,6 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
-import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
@@ -138,7 +138,6 @@ import androidx.core.content.ContextCompat
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
-import com.google.common.base.Splitter
 import com.google.common.util.concurrent.MoreExecutors
 import dev.atsushieno.ktmidi.Midi1Music
 import dev.atsushieno.ktmidi.read
@@ -216,6 +215,12 @@ fun MusicPlayerMainScreen(
     var selectedFolderKey by remember { mutableStateOf<String?>(null) }
     var selectedFolderName by remember { mutableStateOf<String?>(null) }
     var selectedFolderCoverUri by remember { mutableStateOf<Uri?>(null) }
+    var rootTab by remember { mutableStateOf(RootTab.Browse) }
+    var selectedPlaylistId by remember { mutableStateOf<Long?>(null) }
+    var selectedPlaylistName by remember { mutableStateOf<String?>(null) }
+    var showCreatePlaylistDialog by remember { mutableStateOf(false) }
+    var playlistRefreshToken by remember { mutableLongStateOf(0L) }
+    var pendingPlaylistCandidate by remember { mutableStateOf<MidiFileItem?>(null) }
     var showNowPlaying by remember { mutableStateOf(false) }
     var pianoRollData by remember { mutableStateOf<PianoRollData?>(null) }
     var miniLiftProgress by remember { mutableFloatStateOf(0f) }
@@ -227,6 +232,7 @@ fun MusicPlayerMainScreen(
 
     var isDemoLoading by remember { mutableStateOf(false) }
     var demoFilesLoaded by remember { mutableStateOf(false) }
+    val playlistRepository = remember(context) { PlaylistStore.repository(context) }
 
     // Media3
     val sessionToken = SessionToken(context, ComponentName(context, PlaybackService::class.java))
@@ -350,11 +356,15 @@ fun MusicPlayerMainScreen(
     }
 
     // Back handler
-    BackHandler(enabled = selectedFolderKey != null || isSearchActive) {
+    BackHandler(enabled = selectedPlaylistId != null || selectedFolderKey != null || isSearchActive) {
         when {
             isSearchActive -> {
                 isSearchActive = false
                 searchQuery = ""
+            }
+            selectedPlaylistId != null -> {
+                selectedPlaylistId = null
+                selectedPlaylistName = null
             }
             selectedFolderKey != null -> {
                 selectedFolderKey = null
@@ -366,7 +376,13 @@ fun MusicPlayerMainScreen(
         showNowPlaying = false
     }
 
-    fun handleMidiTap(uri: Uri) {
+    fun handleMidiTap(
+        uri: Uri,
+        sourceItems: List<MidiFileItem>? = null,
+        sourceTitle: String? = null,
+        sourceCover: Uri? = null,
+        configureTransientQueue: Boolean = true
+    ) {
         val cacheSoundFontFile = File(context.cacheDir, "soundfont.sf2")
         if (!cacheSoundFontFile.exists()) {
             Toast.makeText(context, context.getString(R.string.error_soundfont_not_set), Toast.LENGTH_LONG).show()
@@ -380,8 +396,16 @@ fun MusicPlayerMainScreen(
             Toast.makeText(context, context.getString(R.string.error_playback_service_not_ready), Toast.LENGTH_SHORT).show()
             return
         }
-        service.currentArtist = selectedFolderName
-        service.currentArtworkUri = selectedFolderCoverUri
+        if (configureTransientQueue) {
+            val queueItems = sourceItems?.map { it.uri.toString() } ?: listOf(uri.toString())
+            service.setTransientQueue(
+                items = queueItems,
+                title = sourceTitle ?: selectedFolderName,
+                startUri = uri.toString()
+            )
+        }
+        service.currentArtist = sourceTitle ?: selectedFolderName
+        service.currentArtworkUri = sourceCover ?: selectedFolderCoverUri
 
         scope.launch {
             val ok = withContext(Dispatchers.IO) {
@@ -452,11 +476,29 @@ fun MusicPlayerMainScreen(
         }
     }
 
+    fun queueTrackNext(item: MidiFileItem, sourceItems: List<MidiFileItem>, sourceTitle: String?) {
+        val service = playbackService
+        if (service == null) {
+            Toast.makeText(context, context.getString(R.string.error_playback_service_not_ready), Toast.LENGTH_SHORT).show()
+            return
+        }
+        val queued = service.enqueueNextInQueue(
+            uriString = item.uri.toString(),
+            fallbackItems = sourceItems.map { it.uri.toString() },
+            fallbackTitle = sourceTitle
+        )
+        if (queued) {
+            Toast.makeText(context, context.getString(R.string.info_added_to_next_queue), Toast.LENGTH_SHORT).show()
+        } else {
+            Toast.makeText(context, context.getString(R.string.info_no_active_queue), Toast.LENGTH_SHORT).show()
+        }
+    }
+
     LaunchedEffect(externalOpenUri, playbackService) {
         val uri = externalOpenUri ?: return@LaunchedEffect
         if (playbackService == null) return@LaunchedEffect
-        handleMidiTap(uri)          // 既存の再生処理へ
-        onExternalOpenConsumed()    // 二重再生防止
+        handleMidiTap(uri)          // Route into existing playback flow
+        onExternalOpenConsumed()    // Prevent duplicate playback
     }
 
     LaunchedEffect(selectedMidiFileUri) {
@@ -503,11 +545,16 @@ fun MusicPlayerMainScreen(
                     containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(0.5f)
                 ),
                 navigationIcon = {
-                    if (selectedFolderKey != null) {
+                    if (selectedFolderKey != null || selectedPlaylistId != null) {
                         IconButton(
                             onClick = {
-                                selectedFolderKey = null
-                                selectedFolderName = null
+                                if (selectedPlaylistId != null) {
+                                    selectedPlaylistId = null
+                                    selectedPlaylistName = null
+                                } else {
+                                    selectedFolderKey = null
+                                    selectedFolderName = null
+                                }
                             }
                         ) {
                             Icon(
@@ -518,9 +565,9 @@ fun MusicPlayerMainScreen(
                     }
                 },
                 title = {
-                    if (selectedFolderKey != null) {
+                    if (selectedFolderKey != null || selectedPlaylistId != null) {
                         Text(
-                            text = selectedFolderName ?: stringResource(id = R.string.unknown),
+                            text = selectedFolderName ?: selectedPlaylistName ?: stringResource(id = R.string.unknown),
                             modifier = Modifier.fillMaxWidth()
                                 .clipToBounds()
                                 .basicMarquee(Int.MAX_VALUE),
@@ -540,6 +587,9 @@ fun MusicPlayerMainScreen(
                         onClick = {
                             isSearchActive = !isSearchActive
                             if (!isSearchActive) searchQuery = ""
+                            if (isSearchActive) {
+                                rootTab = RootTab.Browse
+                            }
                         }
                     ) {
                         Surface(
@@ -569,58 +619,98 @@ fun MusicPlayerMainScreen(
             )
         },
         bottomBar = {
-            AnimatedVisibility(
-                visible = selectedMidiFileUri != null,
-                enter = slideInVertically(initialOffsetY = { it }, animationSpec = tween(400)) +
-                        fadeIn(animationSpec = tween(400)),
-                exit = slideOutVertically(targetOffsetY = { it }, animationSpec = tween(400)) +
-                        fadeOut(animationSpec = tween(400))
-            ) {
-                DraggableMiniPlayerContainer(
-                    onExpand = {
-                        skipNowPlayingEnterAnimation = true
-                        showNowPlaying = true
-                        miniLiftProgress = 0f
-                        miniLiftDragPx = 0f
-                    },
-                    onDragProgress = { progress, dragPx ->
-                        miniLiftProgress = progress
-                        miniLiftDragPx = dragPx
-                    }
+            Column {
+                AnimatedVisibility(
+                    visible = selectedMidiFileUri != null,
+                    enter = slideInVertically(initialOffsetY = { it }, animationSpec = tween(400)) +
+                            fadeIn(animationSpec = tween(400)),
+                    exit = slideOutVertically(targetOffsetY = { it }, animationSpec = tween(400)) +
+                            fadeOut(animationSpec = tween(400))
                 ) {
-                    MiniPlayerContainer(
-                        playbackService = playbackService,
-                        selectedMidiFileUri = selectedMidiFileUri,
-                        onPlay = {
-                            controllerFuture.get().play()
-                            skipNowPlayingEnterAnimation = false
+                    DraggableMiniPlayerContainer(
+                        onExpand = {
+                            skipNowPlayingEnterAnimation = true
                             showNowPlaying = true
                             miniLiftProgress = 0f
                             miniLiftDragPx = 0f
                         },
-                        onPause = { controllerFuture.get().pause() },
-                        onSeekToMs = { ms -> controllerFuture.get().seekTo(ms) },
-                        onPrevious = {
-                            scope.launch {
-                                val shuffleEnabled = SettingsDataStore.shuffleEnabledFlow(context).first()
-                                val currentPositionMs = playbackService?.getCurrentPositionMs() ?: 0L
-                                if (currentPositionMs > 3000L) {
-                                    controllerFuture.get().seekTo(0)
-                                } else {
-                                    playbackService?.playPreviousTrackInCurrentFolder(shuffleEnabled)
-                                }
-                            }
-                        },
-                        onNext = {
-                            scope.launch {
-                                val shuffleEnabled = SettingsDataStore.shuffleEnabledFlow(context).first()
-                                playbackService?.playNextTrackInCurrentFolder(shuffleEnabled)
-                            }
-                        },
-                        onExpandRequest = {
-                            skipNowPlayingEnterAnimation = false
-                            showNowPlaying = true
+                        onDragProgress = { progress, dragPx ->
+                            miniLiftProgress = progress
+                            miniLiftDragPx = dragPx
                         }
+                    ) {
+                        MiniPlayerContainer(
+                            playbackService = playbackService,
+                            selectedMidiFileUri = selectedMidiFileUri,
+                            onPlay = {
+                                controllerFuture.get().play()
+                                skipNowPlayingEnterAnimation = false
+                                showNowPlaying = true
+                                miniLiftProgress = 0f
+                                miniLiftDragPx = 0f
+                            },
+                            onPause = { controllerFuture.get().pause() },
+                            onSeekToMs = { ms -> controllerFuture.get().seekTo(ms) },
+                            onPrevious = {
+                                scope.launch {
+                                    val shuffleEnabled = SettingsDataStore.shuffleEnabledFlow(context).first()
+                                    val currentPositionMs = playbackService?.getCurrentPositionMs() ?: 0L
+                                    if (currentPositionMs > 3000L) {
+                                        controllerFuture.get().seekTo(0)
+                                    } else {
+                                        playbackService?.playPreviousInQueue(shuffleEnabled)
+                                    }
+                                }
+                            },
+                            onNext = {
+                                scope.launch {
+                                    val shuffleEnabled = SettingsDataStore.shuffleEnabledFlow(context).first()
+                                    playbackService?.playNextInQueue(shuffleEnabled)
+                                }
+                            },
+                            onExpandRequest = {
+                                skipNowPlayingEnterAnimation = false
+                                showNowPlaying = true
+                            }
+                        )
+                    }
+                }
+                NavigationBar(
+                    modifier = Modifier.height(100.dp)
+                ) {
+                    NavigationBarItem(
+                        selected = rootTab == RootTab.Browse,
+                        onClick = {
+                            rootTab = RootTab.Browse
+                            selectedPlaylistId = null
+                            selectedPlaylistName = null
+                        },
+                        icon = {
+                            Icon(
+                                imageVector = Icons.Default.Folder,
+                                contentDescription = stringResource(id = R.string.browse),
+                                modifier = Modifier.size(20.dp)
+                            )
+                        },
+                        label = { Text(text = stringResource(id = R.string.browse)) }
+                    )
+                    NavigationBarItem(
+                        selected = rootTab == RootTab.Playlists,
+                        onClick = {
+                            rootTab = RootTab.Playlists
+                            isSearchActive = false
+                            searchQuery = ""
+                            selectedFolderKey = null
+                            selectedFolderName = null
+                        },
+                        icon = {
+                            Icon(
+                                imageVector = Icons.Default.MusicNote,
+                                contentDescription = stringResource(id = R.string.playlists),
+                                modifier = Modifier.size(20.dp)
+                            )
+                        },
+                        label = { Text(text = stringResource(id = R.string.playlists)) }
                     )
                 }
             }
@@ -694,77 +784,160 @@ fun MusicPlayerMainScreen(
                     }
                 } else {
                     val isSearching = isSearchActive && searchQuery.isNotBlank()
-                    val screenState: Pair<BrowseScreen, String?> = when {
-                        isSearching -> BrowseScreen.Search to selectedFolderKey
-                        selectedFolderKey == null -> BrowseScreen.Folders to null
-                        else -> BrowseScreen.Files to selectedFolderKey
-                    }
-                    AnimatedContent(
-                        targetState = screenState,
-                        transitionSpec = {
-                            val target = targetState.first
-                            val initial = initialState.first
-                            when {
-                                target == BrowseScreen.Files && initial == BrowseScreen.Folders ->
-                                    slideInHorizontally(
-                                        initialOffsetX = { it },
-                                        animationSpec = tween(220)
-                                    ) + fadeIn(animationSpec = tween(120)) togetherWith
-                                        slideOutHorizontally(
-                                            targetOffsetX = { -it },
-                                            animationSpec = tween(220)
-                                        ) + fadeOut(animationSpec = tween(120))
-                                target == BrowseScreen.Folders && initial == BrowseScreen.Files ->
-                                    slideInHorizontally(
-                                        initialOffsetX = { -it },
-                                        animationSpec = tween(220)
-                                    ) + fadeIn(animationSpec = tween(120)) togetherWith
-                                        slideOutHorizontally(
-                                            targetOffsetX = { it },
-                                            animationSpec = tween(220)
-                                        ) + fadeOut(animationSpec = tween(120))
-                                else ->
-                                    fadeIn(animationSpec = tween(120)) togetherWith
-                                        fadeOut(animationSpec = tween(120))
-                            }
-                        },
-                        label = "BrowseContent"
-                    ) { (screen, folderKey) ->
-                        when (screen) {
-                            BrowseScreen.Folders -> FolderGrid(
-                                items = folderItems,
-                                gridState = folderGridState,
-                                animatedKeys = animatedFolderKeys,
-                                onFolderClick = { folder ->
-                                    selectedFolderKey = folder.key
-                                    selectedFolderName = folder.name
-                                    selectedFolderCoverUri = folder.coverUri
+                    when {
+                        rootTab == RootTab.Playlists && !isSearching && selectedFolderKey == null && selectedPlaylistId == null -> {
+                            PlaylistHome(
+                                repository = playlistRepository,
+                                refreshToken = playlistRefreshToken,
+                                onCreatePlaylist = { showCreatePlaylistDialog = true },
+                                onOpenPlaylist = { summary ->
+                                    selectedPlaylistId = summary.id
+                                    selectedPlaylistName = summary.name
                                 },
-                                onDemoMusicClick = { handleDemoMusicClick() },
-                                isDemoLoading = isDemoLoading
+                                onPlayPlaylist = { summary ->
+                                    scope.launch {
+                                        val items = playlistRepository.getPlaylistItems(summary.id)
+                                        val first = items.firstOrNull()?.uriString ?: return@launch
+                                        val service = playbackService ?: return@launch
+                                        if (!service.setActiveQueue(summary.id, first)) return@launch
+                                        service.currentArtworkUri = null
+                                        service.currentArtist = summary.name
+                                        handleMidiTap(
+                                            uri = Uri.parse(first),
+                                            sourceItems = items.map {
+                                                MidiFileItem(
+                                                    uri = Uri.parse(it.uriString),
+                                                    title = it.title.orEmpty(),
+                                                    folderName = summary.name,
+                                                    folderKey = "playlist_${summary.id}",
+                                                    durationMs = it.durationMs
+                                                )
+                                            },
+                                            sourceTitle = summary.name,
+                                            configureTransientQueue = false
+                                        )
+                                    }
+                                }
                             )
-                            BrowseScreen.Files -> {
-                                val items = midiFiles.filter { it.folderKey == folderKey }
-                                MidiFileList(
-                                    items = items,
-                                    selectedUri = selectedMidiFileUri,
-                                    onItemClick = { handleMidiTap(it) }
-                                )
+                        }
+                        selectedPlaylistId != null -> {
+                            PlaylistTracks(
+                                repository = playlistRepository,
+                                playlistId = selectedPlaylistId!!,
+                                playlistName = selectedPlaylistName.orEmpty(),
+                                selectedUri = selectedMidiFileUri,
+                                onItemClick = { uriString, queue ->
+                                    scope.launch {
+                                        val service = playbackService ?: return@launch
+                                        if (!service.setActiveQueue(selectedPlaylistId!!, uriString)) return@launch
+                                        service.currentArtworkUri = null
+                                        service.currentArtist = selectedPlaylistName
+                                        handleMidiTap(
+                                            uri = Uri.parse(uriString),
+                                            sourceItems = queue,
+                                            sourceTitle = selectedPlaylistName,
+                                            configureTransientQueue = false
+                                        )
+                                    }
+                                },
+                                onQueueNext = { item, queue ->
+                                    queueTrackNext(item, queue, selectedPlaylistName)
+                                }
+                            )
+                        }
+                        else -> {
+                            val screenState: Pair<BrowseScreen, String?> = when {
+                                isSearching -> BrowseScreen.Search to selectedFolderKey
+                                selectedFolderKey == null -> BrowseScreen.Folders to null
+                                else -> BrowseScreen.Files to selectedFolderKey
                             }
-                            BrowseScreen.Search -> {
-                                val baseItems = if (folderKey != null) {
-                                    midiFiles.filter { it.folderKey == folderKey }
-                                } else {
-                                    midiFiles.toList()
+                            AnimatedContent(
+                                targetState = screenState,
+                                transitionSpec = {
+                                    val target = targetState.first
+                                    val initial = initialState.first
+                                    when {
+                                        target == BrowseScreen.Files && initial == BrowseScreen.Folders ->
+                                            slideInHorizontally(
+                                                initialOffsetX = { it },
+                                                animationSpec = tween(220)
+                                            ) + fadeIn(animationSpec = tween(120)) togetherWith
+                                                slideOutHorizontally(
+                                                    targetOffsetX = { -it },
+                                                    animationSpec = tween(220)
+                                                ) + fadeOut(animationSpec = tween(120))
+                                        target == BrowseScreen.Folders && initial == BrowseScreen.Files ->
+                                            slideInHorizontally(
+                                                initialOffsetX = { -it },
+                                                animationSpec = tween(220)
+                                            ) + fadeIn(animationSpec = tween(120)) togetherWith
+                                                slideOutHorizontally(
+                                                    targetOffsetX = { it },
+                                                    animationSpec = tween(220)
+                                                ) + fadeOut(animationSpec = tween(120))
+                                        else ->
+                                            fadeIn(animationSpec = tween(120)) togetherWith
+                                                fadeOut(animationSpec = tween(120))
+                                    }
+                                },
+                                label = "BrowseContent"
+                            ) { (screen, folderKey) ->
+                                when (screen) {
+                                    BrowseScreen.Folders -> FolderGrid(
+                                        items = folderItems,
+                                        gridState = folderGridState,
+                                        animatedKeys = animatedFolderKeys,
+                                        onFolderClick = { folder ->
+                                            rootTab = RootTab.Browse
+                                            selectedFolderKey = folder.key
+                                            selectedFolderName = folder.name
+                                            selectedFolderCoverUri = folder.coverUri
+                                        },
+                                        onDemoMusicClick = { handleDemoMusicClick() },
+                                        isDemoLoading = isDemoLoading
+                                    )
+                                    BrowseScreen.Files -> {
+                                        val items = midiFiles.filter { it.folderKey == folderKey }
+                                        MidiFileList(
+                                            items = items,
+                                            selectedUri = selectedMidiFileUri,
+                                            onItemClick = { tapped ->
+                                                handleMidiTap(
+                                                    uri = tapped,
+                                                    sourceItems = items,
+                                                    sourceTitle = selectedFolderName,
+                                                    sourceCover = selectedFolderCoverUri
+                                                )
+                                            },
+                                            onAddToPlaylist = { pendingPlaylistCandidate = it },
+                                            onQueueNext = { queueTrackNext(it, items, selectedFolderName) }
+                                        )
+                                    }
+                                    BrowseScreen.Search -> {
+                                        val baseItems = if (folderKey != null) {
+                                            midiFiles.filter { it.folderKey == folderKey }
+                                        } else {
+                                            midiFiles.toList()
+                                        }
+                                        val items = baseItems.filter {
+                                            it.title.contains(searchQuery, ignoreCase = true)
+                                        }
+                                        MidiFileList(
+                                            items = items,
+                                            selectedUri = selectedMidiFileUri,
+                                            onItemClick = { tapped ->
+                                                handleMidiTap(
+                                                    uri = tapped,
+                                                    sourceItems = items,
+                                                    sourceTitle = selectedFolderName,
+                                                    sourceCover = selectedFolderCoverUri
+                                                )
+                                            },
+                                            onAddToPlaylist = { pendingPlaylistCandidate = it },
+                                            onQueueNext = { queueTrackNext(it, items, selectedFolderName) }
+                                        )
+                                    }
                                 }
-                                val items = baseItems.filter {
-                                    it.title.contains(searchQuery, ignoreCase = true)
-                                }
-                                MidiFileList(
-                                    items = items,
-                                    selectedUri = selectedMidiFileUri,
-                                    onItemClick = { handleMidiTap(it) }
-                                )
                             }
                         }
                     }
@@ -798,14 +971,14 @@ fun MusicPlayerMainScreen(
                         if (currentPositionMs > 3000L) {
                             controllerFuture.get().seekTo(0)
                         } else {
-                            playbackService?.playPreviousTrackInCurrentFolder(shuffleEnabled)
+                            playbackService?.playPreviousInQueue(shuffleEnabled)
                         }
                     }
                 },
                 onNext = {
                     scope.launch {
                         val shuffleEnabled = SettingsDataStore.shuffleEnabledFlow(context).first()
-                        playbackService?.playNextTrackInCurrentFolder(shuffleEnabled)
+                        playbackService?.playNextInQueue(shuffleEnabled)
                     }
                 },
                 onClose = { showNowPlaying = false }
@@ -833,20 +1006,68 @@ fun MusicPlayerMainScreen(
                         if (currentPositionMs > 3000L) {
                             controllerFuture.get().seekTo(0)
                         } else {
-                            playbackService?.playPreviousTrackInCurrentFolder(shuffleEnabled)
+                            playbackService?.playPreviousInQueue(shuffleEnabled)
                         }
                     }
                 },
                 onNext = {
                     scope.launch {
                         val shuffleEnabled = SettingsDataStore.shuffleEnabledFlow(context).first()
-                        playbackService?.playNextTrackInCurrentFolder(shuffleEnabled)
+                        playbackService?.playNextInQueue(shuffleEnabled)
                     }
                 },
                 onClose = { showNowPlaying = false }
             )
         }
     }
+    }
+
+    if (showCreatePlaylistDialog) {
+        CreatePlaylistDialog(
+            onDismiss = { showCreatePlaylistDialog = false },
+            onCreate = { name ->
+                scope.launch {
+                    runCatching {
+                        playlistRepository.createPlaylist(name)
+                    }.onSuccess {
+                        playlistRefreshToken = System.currentTimeMillis()
+                        showCreatePlaylistDialog = false
+                    }
+                }
+            }
+        )
+    }
+
+    if (!showCreatePlaylistDialog) pendingPlaylistCandidate?.let { candidate ->
+        AddToPlaylistDialog(
+            repository = playlistRepository,
+            refreshToken = playlistRefreshToken,
+            candidate = candidate,
+            onDismiss = { pendingPlaylistCandidate = null },
+            onCreatePlaylist = {
+                showCreatePlaylistDialog = true
+            },
+            onAdd = { playlistId ->
+                scope.launch {
+                    playlistRepository.addItems(
+                        playlistId = playlistId,
+                        tracks = listOf(
+                            PlaylistTrack(
+                                uriString = candidate.uri.toString(),
+                                title = candidate.title,
+                                artist = candidate.folderName,
+                                artworkUri = selectedFolderCoverUri?.toString(),
+                                durationMs = candidate.durationMs,
+                                position = 0
+                            )
+                        )
+                    )
+                    Toast.makeText(context, context.getString(R.string.info_added_to_playlist), Toast.LENGTH_SHORT).show()
+                    playlistRefreshToken = System.currentTimeMillis()
+                    pendingPlaylistCandidate = null
+                }
+            }
+        )
     }
 
     if (showSoundFontDialog) {
@@ -1088,7 +1309,7 @@ private fun NowPlayingPianoRollSheet(
     var isSeeking by remember { mutableStateOf(false) }
     var sliderValue by remember { mutableStateOf(0.0f) }
 
-    // derivedStateOf（局所化）
+    // derivedStateOf・亥ｱ謇蛹厄ｼ・
     val progress by remember(ui?.positionMs, ui?.durationMs) {
         derivedStateOf {
             val duration = ui?.durationMs ?: 0L
@@ -1368,7 +1589,9 @@ private fun calculatePlaybackInitialZoomLevel(
 private fun MidiFileList(
     items: List<MidiFileItem>,
     selectedUri: Uri?,
-    onItemClick: (Uri) -> Unit
+    onItemClick: (Uri) -> Unit,
+    onAddToPlaylist: (MidiFileItem) -> Unit,
+    onQueueNext: (MidiFileItem) -> Unit
 ) {
     if (items.isEmpty()) {
         Text(
@@ -1385,10 +1608,13 @@ private fun MidiFileList(
             MidiFileRow(
                 item = item,
                 isSelected = item.uri == selectedUri,
-                onClick = { onItemClick(item.uri) }
+                onClick = { onItemClick(item.uri) },
+                onAddToPlaylist = { onAddToPlaylist(item) },
+                onQueueNext = { onQueueNext(item) }
             )
         }
     }
+
 }
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -1396,7 +1622,9 @@ private fun MidiFileList(
 private fun MidiFileRow(
     item: MidiFileItem,
     isSelected: Boolean,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    onAddToPlaylist: () -> Unit,
+    onQueueNext: () -> Unit
 ) {
     val context = LocalContext.current
     var showActions by remember { mutableStateOf(false) }
@@ -1455,7 +1683,7 @@ private fun MidiFileRow(
             onDismiss = { showActions = false },
             onPlay = {
                 showActions = false
-                onClick()
+                onQueueNext()
             },
             onShare = {
                 showActions = false
@@ -1476,6 +1704,10 @@ private fun MidiFileRow(
                     addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                 }
                 context.startActivity(intent)
+            },
+            onAddToPlaylist = {
+                showActions = false
+                onAddToPlaylist()
             }
         )
     }
@@ -1488,7 +1720,8 @@ private fun MidiFileActionsDialog(
     onPlay: () -> Unit,
     onShare: () -> Unit,
     onDetails: () -> Unit,
-    onEditLoopPoint: () -> Unit
+    onEditLoopPoint: () -> Unit,
+    onAddToPlaylist: () -> Unit
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -1501,7 +1734,7 @@ private fun MidiFileActionsDialog(
                 ElevatedButton(onClick = onPlay, modifier = Modifier.fillMaxWidth()) {
                     Icon(imageVector = Icons.Filled.PlayArrow, contentDescription = null)
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text(text = stringResource(id = R.string.action_play))
+                    Text(text = stringResource(id = R.string.action_play_in_next_track))
                 }
                 ElevatedButton(onClick = onShare, modifier = Modifier.fillMaxWidth()) {
                     Icon(imageVector = Icons.Filled.Share, contentDescription = null)
@@ -1512,6 +1745,11 @@ private fun MidiFileActionsDialog(
                     Icon(imageVector = Icons.Filled.Info, contentDescription = null)
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(text = stringResource(id = R.string.action_details))
+                }
+                ElevatedButton(onClick = onAddToPlaylist, modifier = Modifier.fillMaxWidth()) {
+                    Icon(imageVector = Icons.Filled.MusicNote, contentDescription = null)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(text = stringResource(id = R.string.action_add_to_playlist))
                 }
                 /*ElevatedButton(onClick = onEditLoopPoint, modifier = Modifier.fillMaxWidth()) {
                     Icon(imageVector = Icons.Filled.LocationOn, contentDescription = null)
@@ -1689,10 +1927,226 @@ private fun DemoMusicButton(
     }
 }
 
+@Composable
+private fun PlaylistHome(
+    repository: PlaylistRepository,
+    refreshToken: Long,
+    onCreatePlaylist: () -> Unit,
+    onOpenPlaylist: (PlaylistSummary) -> Unit,
+    onPlayPlaylist: (PlaylistSummary) -> Unit
+) {
+    val playlists = produceState(initialValue = emptyList<PlaylistSummary>(), refreshToken) {
+        value = withContext(Dispatchers.IO) {
+            repository.listPlaylists()
+        }
+    }.value
+
+    Column(modifier = Modifier.fillMaxSize()) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            //Text(text = stringResource(id = R.string.playlists), style = MaterialTheme.typography.titleMedium)
+            ElevatedButton(
+                modifier = Modifier.fillMaxWidth(),
+                onClick = onCreatePlaylist
+            ) {
+                Text(text = stringResource(id = R.string.action_create_playlist))
+            }
+        }
+        if (playlists.isEmpty()) {
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text(text = stringResource(id = R.string.info_no_playlists_found))
+            }
+        } else {
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(bottom = 72.dp)
+            ) {
+                items(playlists, key = { it.id }) { playlist ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onOpenPlaylist(playlist) }
+                            .padding(horizontal = 16.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(text = playlist.name, maxLines = 1)
+                            Text(
+                                text = "${playlist.itemCount} tracks",
+                                style = MaterialTheme.typography.bodySmall,
+                                modifier = Modifier.alpha(0.7f)
+                            )
+                        }
+                        IconButton(onClick = { onPlayPlaylist(playlist) }) {
+                            Icon(imageVector = Icons.Default.PlayArrow, contentDescription = null)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PlaylistTracks(
+    repository: PlaylistRepository,
+    playlistId: Long,
+    playlistName: String,
+    selectedUri: Uri?,
+    onItemClick: (String, List<MidiFileItem>) -> Unit,
+    onQueueNext: (MidiFileItem, List<MidiFileItem>) -> Unit
+) {
+    val context = LocalContext.current
+    val items = produceState(initialValue = emptyList<MidiFileItem>(), playlistId) {
+        value = withContext(Dispatchers.IO) {
+            repository.getPlaylistItems(playlistId).map {
+                val uri = Uri.parse(it.uriString)
+                val duration = if (it.durationMs > 0L) it.durationMs else resolveDurationMsForUri(context, uri)
+                MidiFileItem(
+                    uri = uri,
+                    title = it.title ?: uri.lastPathSegment.orEmpty(),
+                    folderName = playlistName,
+                    folderKey = "playlist_$playlistId",
+                    durationMs = duration
+                )
+            }
+        }
+    }.value
+
+    MidiFileList(
+        items = items,
+        selectedUri = selectedUri,
+        onItemClick = { uri ->
+            onItemClick(uri.toString(), items)
+        },
+        onAddToPlaylist = {},
+        onQueueNext = { onQueueNext(it, items) }
+    )
+}
+
+private fun resolveDurationMsForUri(context: Context, uri: Uri): Long {
+    if (uri.scheme == "file") {
+        val path = uri.path ?: return 0L
+        val file = File(path)
+        if (!file.exists() || !file.isFile) return 0L
+        return calculateMidiDurationMs(file).coerceAtLeast(0L)
+    }
+
+    return runCatching {
+        context.contentResolver.query(
+            uri,
+            arrayOf(MediaStore.MediaColumns.DURATION),
+            null,
+            null,
+            null
+        )?.use { cursor ->
+            val idx = cursor.getColumnIndex(MediaStore.MediaColumns.DURATION)
+            if (idx >= 0 && cursor.moveToFirst()) {
+                return cursor.getLong(idx).coerceAtLeast(0L)
+            }
+        }
+        0L
+    }.getOrDefault(0L)
+}
+
+@Composable
+private fun CreatePlaylistDialog(
+    onDismiss: () -> Unit,
+    onCreate: (String) -> Unit
+) {
+    val focusRequesterPlaylistNameField = remember { FocusRequester() }
+    var name by remember { mutableStateOf("") }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(text = stringResource(id = R.string.action_create_playlist)) },
+        text = {
+            OutlinedTextField(
+                value = name,
+                onValueChange = { name = it },
+                singleLine = true,
+                placeholder = { Text(stringResource(id = R.string.playlist_name_hint)) },
+                modifier = Modifier.focusRequester(focusRequesterPlaylistNameField)
+            )
+            LaunchedEffect(Unit) {
+                focusRequesterPlaylistNameField.requestFocus()
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onCreate(name) },
+                enabled = name.isNotBlank()
+            ) {
+                Text(text = stringResource(id = R.string.action_create))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text(text = stringResource(id = R.string.cancel))
+            }
+        }
+    )
+}
+
+@Composable
+private fun AddToPlaylistDialog(
+    repository: PlaylistRepository,
+    refreshToken: Long,
+    candidate: MidiFileItem,
+    onDismiss: () -> Unit,
+    onCreatePlaylist: () -> Unit,
+    onAdd: (Long) -> Unit
+) {
+    val playlists = produceState(initialValue = emptyList<PlaylistSummary>(), refreshToken) {
+        value = withContext(Dispatchers.IO) {
+            repository.listPlaylists()
+        }
+    }.value
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(text = candidate.title) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                ElevatedButton(
+                    modifier = Modifier.fillMaxWidth(),
+                    onClick = onCreatePlaylist
+                ) {
+                    Text(text = stringResource(id = R.string.action_create_playlist))
+                }
+                if (playlists.isEmpty()) {
+                    Text(text = stringResource(id = R.string.info_no_playlists_found))
+                } else {
+                    playlists.forEach { playlist ->
+                        TextButton(
+                            modifier = Modifier.fillMaxWidth(),
+                            onClick = { onAdd(playlist.id) }
+                        ) {
+                            Text(text = playlist.name, modifier = Modifier.fillMaxWidth())
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text(text = stringResource(id = R.string.cancel))
+            }
+        }
+    )
+}
+
 private enum class BrowseScreen {
     Folders,
     Files,
     Search
+}
+
+private enum class RootTab {
+    Browse,
+    Playlists
 }
 
 private data class MidiFileItem(
