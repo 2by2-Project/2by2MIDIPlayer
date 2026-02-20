@@ -1021,12 +1021,13 @@ private fun NowPlayingPianoRollSheet(
         while (kotlinx.coroutines.currentCoroutineContext().isActive) {
             val lp = service.getLoopPoint()
             val duration = service.getDurationMs().coerceAtLeast(0L)
+            val loopEnd = lp?.endMs?.takeIf { it > 0L }?.coerceIn(0L, duration) ?: duration
             value = NowPlayingRollUi(
                 isPlaying = service.isPlaying(),
                 positionMs = service.getCurrentPositionMs(),
                 durationMs = duration,
                 loopStartMs = lp?.startMs ?: 0L,
-                loopEndMs = duration
+                loopEndMs = loopEnd
             )
             delay(24)
         }
