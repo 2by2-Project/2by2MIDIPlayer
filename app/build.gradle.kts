@@ -61,7 +61,7 @@ dependencies {
     debugImplementation(libs.androidx.compose.ui.tooling)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
 
-    implementation("dev.atsushieno:ktmidi:+")
+    implementation("dev.atsushieno:ktmidi:0.11.2")
     implementation("androidx.compose.material:material-icons-extended")
     implementation("androidx.compose.material:material")
     implementation("androidx.media:media:1.7.0")

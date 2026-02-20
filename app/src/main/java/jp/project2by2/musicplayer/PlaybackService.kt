@@ -26,11 +26,16 @@ import androidx.media3.session.MediaSessionService
 import com.un4seen.bass.BASS
 import com.un4seen.bass.BASSMIDI
 import dev.atsushieno.ktmidi.Midi1Music
+import dev.atsushieno.ktmidi.Midi1CompoundMessage
 import dev.atsushieno.ktmidi.Midi1Event
 import dev.atsushieno.ktmidi.Midi1SimpleMessage
 import dev.atsushieno.ktmidi.MidiChannelStatus
 import dev.atsushieno.ktmidi.read
 import java.io.File
+import java.nio.ByteBuffer
+import java.nio.charset.CharacterCodingException
+import java.nio.charset.Charset
+import java.nio.charset.CodingErrorAction
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -60,6 +65,7 @@ class PlaybackService : MediaSessionService() {
     @Volatile private var loopEnabledSnapshot: Boolean = false
     @Volatile private var loopModeSnapshot: Int = 0
     @Volatile private var shuffleEnabledSnapshot: Boolean = false
+    private data class EmbeddedMidiMetadata(val title: String?, val artist: String?)
 
     // Media session
     private lateinit var bassPlayer: BassPlayer
@@ -256,7 +262,11 @@ class PlaybackService : MediaSessionService() {
 
         // Current playing
         currentUriString = uriString
-        currentTitle = resolveDisplayName(uri)
+        val fallbackTitle = resolveDisplayName(uri)
+        val fallbackArtist = resolveFolderDisplayName(uri) ?: currentArtist?.takeIf { it.isNotBlank() }
+        val embedded = extractEmbeddedMidiMetadata(cacheMidiFile)
+        currentTitle = embedded.title ?: fallbackTitle
+        currentArtist = embedded.artist ?: fallbackArtist
 
         // Media3
         bassPlayer.setMetadata(currentTitle!!, currentArtist, currentArtworkUri)
@@ -898,6 +908,115 @@ class PlaybackService : MediaSessionService() {
             }
 
         return uri.lastPathSegment?.substringAfterLast('/') ?: getString(R.string.unknown)
+    }
+
+    private fun resolveFolderDisplayName(uri: Uri): String? {
+        val key = resolveFolderKey(uri) ?: return null
+        if (key == "assets_demo") return getString(R.string.folder_demo_name)
+        val normalized = key.trimEnd('/', '\\')
+        val name = normalized.substringAfterLast('/', normalized.substringAfterLast('\\', normalized))
+        return name.takeIf { it.isNotBlank() }
+    }
+
+    private fun extractEmbeddedMidiMetadata(midiFile: File): EmbeddedMidiMetadata {
+        return runCatching {
+            val music = Midi1Music().apply { read(midiFile.readBytes().toList()) }
+            data class Candidate(val trackIndex: Int, val tick: Int, val text: String)
+            val titleCandidates = mutableListOf<Candidate>()
+            val textCandidates = mutableListOf<Candidate>()
+            val artistCandidates = mutableListOf<Candidate>()
+
+            for ((trackIndex, track) in music.tracks.withIndex()) {
+                var tick = 0
+                for (event in track.events) {
+                    tick += event.deltaTime
+                    val msg = event.message
+                    if ((msg.statusByte.toInt() and 0xFF) != 0xFF) continue
+                    val metaType = msg.msb.toInt() and 0xFF
+                    val data = (msg as? Midi1CompoundMessage)?.extraData ?: continue
+                    val text = decodeMidiMetaText(data) ?: continue
+                    val c = Candidate(trackIndex = trackIndex, tick = tick, text = text)
+
+                    when (metaType) {
+                        0x03 -> titleCandidates.add(c) // Sequence/Track Name
+                        0x01 -> {
+                            textCandidates.add(c) // Text Event
+                            if (looksLikeArtistField(text)) artistCandidates.add(c)
+                        }
+                        0x02 -> artistCandidates.add(c) // Copyright
+                    }
+                }
+            }
+
+            val title = titleCandidates
+                .sortedWith(compareBy<Candidate> { it.trackIndex != 0 }.thenBy { it.tick })
+                .firstOrNull()
+                ?.text
+                ?: textCandidates.sortedBy { it.tick }.firstOrNull()?.text
+
+            val artist = artistCandidates.sortedBy { it.tick }.firstOrNull()?.text
+            EmbeddedMidiMetadata(title = title, artist = artist)
+        }.getOrElse {
+            EmbeddedMidiMetadata(title = null, artist = null)
+        }
+    }
+
+    private fun decodeMidiMetaText(data: ByteArray): String? {
+        if (data.isEmpty()) return null
+        val candidates = listOf(
+            decodeWithCharsetOrNull(data, Charsets.UTF_8),
+            decodeWithCharsetOrNull(data, Charset.forName("MS932")),
+            decodeWithCharsetOrNull(data, Charset.forName("EUC-JP")),
+            decodeWithCharsetOrNull(data, Charset.forName("ISO-2022-JP")),
+            decodeWithCharsetOrNull(data, Charsets.ISO_8859_1)
+        ).filterNotNull().map { it.trim().replace('\u0000', ' ') }.filter { it.isNotBlank() }
+
+        if (candidates.isEmpty()) return null
+        return candidates.maxByOrNull { scoreDecodedText(it) }
+    }
+
+    private fun decodeWithCharsetOrNull(data: ByteArray, charset: Charset): String? {
+        return try {
+            val decoder = charset.newDecoder()
+                .onMalformedInput(CodingErrorAction.REPORT)
+                .onUnmappableCharacter(CodingErrorAction.REPORT)
+            decoder.decode(ByteBuffer.wrap(data)).toString()
+        } catch (_: CharacterCodingException) {
+            null
+        }
+    }
+
+    private fun scoreDecodedText(text: String): Int {
+        var score = 0
+        var jpCount = 0
+        var replacementCount = 0
+        var controlCount = 0
+        for (ch in text) {
+            when {
+                ch == '\uFFFD' -> replacementCount++
+                ch.isISOControl() && ch != '\n' && ch != '\r' && ch != '\t' -> controlCount++
+                ch in '\u3040'..'\u30FF' || ch in '\u4E00'..'\u9FFF' -> jpCount++
+            }
+        }
+        score += jpCount * 3
+        score -= replacementCount * 10
+        score -= controlCount * 5
+        if (text.any { it.isLetterOrDigit() }) score += 5
+        return score
+    }
+
+    // Backward compatibility for older ktmidi variants where extraData was List<Byte>.
+    private fun decodeMidiMetaText(data: List<Byte>): String? = decodeMidiMetaText(data.toByteArray())
+
+    private fun looksLikeArtistField(text: String): Boolean {
+        val s = text.lowercase()
+        return s.contains("artist") ||
+            s.contains("composer") ||
+            s.contains("arranger") ||
+            s.contains("author") ||
+            s.contains("music by") ||
+            s.contains("written by") ||
+            s.startsWith("by ")
     }
 
     private val audioManager by lazy { getSystemService(AUDIO_SERVICE) as AudioManager }
