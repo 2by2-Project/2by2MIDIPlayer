@@ -2,6 +2,7 @@ package jp.project2by2.musicplayer
 
 import android.content.Context
 import android.net.Uri
+import android.util.Log
 import kotlin.math.max
 
 private data class RawNote(
@@ -24,6 +25,7 @@ private data class PianoRollIndex(
     val measurePositionsMs: List<Long>,
     val notes: List<PianoRollNote>
 )
+private const val FAST_ROLL_DEBUG_SAMPLE_LIMIT = 24
 
 private object PianoRollIndexCache {
     @Volatile
@@ -210,6 +212,24 @@ private fun parseSmfToPianoRollIndex(bytes: ByteArray): PianoRollIndex? {
         .sortedBy { it.startTick }
         .toList()
     val totalDuration = if (maxTick <= 0) 0L else tickToMs(maxTick)
+    val timeSigSample = timeSigEvents
+        .sortedBy { it.tick }
+        .take(FAST_ROLL_DEBUG_SAMPLE_LIMIT)
+        .joinToString(", ") { "t${it.tick}:${it.numerator}/${it.denominator}" }
+    val measureTickSample = measureTicks
+        .take(FAST_ROLL_DEBUG_SAMPLE_LIMIT)
+        .joinToString(", ")
+    val measureSpanSample = measureTicks
+        .zipWithNext()
+        .take(FAST_ROLL_DEBUG_SAMPLE_LIMIT)
+        .joinToString(", ") { (a, b) -> "${b - a}t" }
+    Log.i(
+        "PlaybackPianoRollTS",
+        "parseSmfToPianoRollIndex: tpq=$ticksPerQuarter tracks=$trackCount maxTick=$maxTick timeSigEvents=${timeSigEvents.size} measureCount=${measureTicks.size} notes=${notes.size}"
+    )
+    Log.d("PlaybackPianoRollTS", "timeSigEvents(sample): $timeSigSample")
+    Log.d("PlaybackPianoRollTS", "measureTicks(sample): $measureTickSample")
+    Log.d("PlaybackPianoRollTS", "measureTickSpans(sample): $measureSpanSample")
 
     return PianoRollIndex(
         totalTicks = maxTick,
@@ -396,6 +416,10 @@ suspend fun loadPianoRollDataFast(context: Context, uri: Uri): PianoRollData {
         measureTickPositions = emptyList(),
         totalTicks = 0,
         tickTimeAnchors = emptyList()
+    )
+    Log.i(
+        "PlaybackPianoRollTS",
+        "loadPianoRollDataFast: uri=$uri notes=${index.notes.size} totalTicks=${index.totalTicks} measureTicks=${index.measureTickPositions.size}"
     )
     return PianoRollData(
         notes = index.notes,
