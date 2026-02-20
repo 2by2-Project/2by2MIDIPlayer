@@ -1,6 +1,7 @@
 package jp.project2by2.musicplayer
 
 import android.content.Context
+import android.graphics.Paint
 import android.net.Uri
 import android.os.SystemClock
 import android.util.Log
@@ -21,11 +22,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.graphics.toArgb
 import dev.atsushieno.ktmidi.Midi1Music
 import dev.atsushieno.ktmidi.MidiChannelStatus
 import dev.atsushieno.ktmidi.Midi1CompoundMessage
 import dev.atsushieno.ktmidi.read
 import java.util.PriorityQueue
+import kotlin.math.roundToInt
+import kotlin.math.roundToLong
 
 private val MidiChannelNeonPalette = listOf(
     Color(0xFFFF5252),
@@ -336,9 +341,17 @@ fun PlaybackPianoRollView(
             val currentDisplayTick = currentTick
             val visibleStart = (currentDisplayTick - half).coerceIn(0, (displayDurationTicks - viewport).coerceAtLeast(0))
             val visibleEnd = visibleStart + viewport
+            val endDisplayTick = msToTick(endPointMs, tickTimeAnchors, durationTicks).coerceIn(0, durationTicks)
+            val drawableEndTick = minOf(visibleEnd, endDisplayTick)
+            val endX = ((endDisplayTick - visibleStart).toFloat() / viewport.toFloat()) * size.width
+            val measureLabelPaint = Paint().apply {
+                color = Color.Gray.copy(alpha = 0.45f).toArgb()
+                textSize = 32f
+                isAntiAlias = true
+            }
 
-            measureTickPositions.forEach { measureDisplayTick ->
-                if (measureDisplayTick !in visibleStart..visibleEnd) return@forEach
+            measureTickPositions.forEachIndexed { index, measureDisplayTick ->
+                if (measureDisplayTick !in visibleStart..drawableEndTick) return@forEachIndexed
                 val x = ((measureDisplayTick - visibleStart).toFloat() / viewport.toFloat()) * size.width
                 drawLine(
                     color = Color.Gray.copy(alpha = 0.45f),
@@ -346,14 +359,18 @@ fun PlaybackPianoRollView(
                     end = Offset(x, size.height),
                     strokeWidth = 1.5f
                 )
+                drawContext.canvas.nativeCanvas.drawText("${index + 1}", x + 10f, 32f, measureLabelPaint)
             }
 
             notes.forEachIndexed { index, note ->
                 val startDisplayTick = note.startTick.coerceIn(0, durationTicks)
-                val endDisplayTick = note.endTick.coerceIn(0, durationTicks)
-                if (startDisplayTick >= visibleEnd || endDisplayTick <= visibleStart) return@forEachIndexed
-                val x = ((startDisplayTick - visibleStart).toFloat() / viewport.toFloat()) * size.width
-                val w = ((endDisplayTick - startDisplayTick).toFloat() / viewport.toFloat()) * size.width
+                val endNoteTick = note.endTick.coerceIn(0, durationTicks)
+                if (startDisplayTick >= drawableEndTick || endNoteTick <= visibleStart) return@forEachIndexed
+                val clippedStartTick = maxOf(startDisplayTick, visibleStart)
+                val clippedEndTick = minOf(endNoteTick, drawableEndTick)
+                if (clippedEndTick <= clippedStartTick) return@forEachIndexed
+                val x = ((clippedStartTick - visibleStart).toFloat() / viewport.toFloat()) * size.width
+                val w = ((clippedEndTick - clippedStartTick).toFloat() / viewport.toFloat()) * size.width
                 val y = ((127 - note.noteNumber).toFloat() / 127f) * size.height
                 val h = size.height / 128f * 2f
                 val channelColor = MidiChannelNeonPalette[note.channel.mod(MidiChannelNeonPalette.size)]
@@ -370,6 +387,7 @@ fun PlaybackPianoRollView(
             fun drawMarker(ms: Long, color: Color, width: Float) {
                 val markerDisplayTick = msToTick(ms, tickTimeAnchors, durationTicks).coerceIn(0, durationTicks)
                 if (markerDisplayTick !in visibleStart..visibleEnd) return
+                if (markerDisplayTick > endDisplayTick && color != Color.Red) return
                 val x = ((markerDisplayTick - visibleStart).toFloat() / viewport.toFloat()) * size.width
                 drawLine(color = color, start = Offset(x, 0f), end = Offset(x, size.height), strokeWidth = width)
             }
@@ -377,6 +395,21 @@ fun PlaybackPianoRollView(
             drawMarker(endPointMs, Color.Red, 5f)
             drawMarker(loopPointMs, Color.Green, 5f)
             drawMarker(currentPositionMs, Color.White, 5f)
+            if (endX < size.width) {
+                drawRect(
+                    color = Color(0xFF161616),
+                    topLeft = Offset(endX.coerceAtLeast(0f), 0f),
+                    size = Size((size.width - endX).coerceAtLeast(0f), size.height)
+                )
+                if (endX in 0f..size.width) {
+                    drawLine(
+                        color = Color.Red,
+                        start = Offset(endX, 0f),
+                        end = Offset(endX, size.height),
+                        strokeWidth = 5f
+                    )
+                }
+            }
         }
     }
 }
@@ -450,7 +483,7 @@ private fun buildTickTimeAnchors(music: Midi1Music, maxTick: Int): List<TickTime
         val tempoTick = tempo.tick.coerceIn(0, maxTick)
         if (tempoTick > currentTick) {
             val deltaTicks = (tempoTick - currentTick).toLong()
-            currentMs += (deltaTicks * currentUsPerQuarter.toLong()) / (tpq.toLong() * 1000L)
+            currentMs += ((deltaTicks.toDouble() * currentUsPerQuarter.toDouble()) / (tpq.toDouble() * 1000.0)).roundToLong()
             currentTick = tempoTick
             anchors.add(TickTimeAnchor(currentTick, currentMs))
         }
@@ -459,7 +492,7 @@ private fun buildTickTimeAnchors(music: Midi1Music, maxTick: Int): List<TickTime
 
     if (maxTick > currentTick) {
         val deltaTicks = (maxTick - currentTick).toLong()
-        currentMs += (deltaTicks * currentUsPerQuarter.toLong()) / (tpq.toLong() * 1000L)
+        currentMs += ((deltaTicks.toDouble() * currentUsPerQuarter.toDouble()) / (tpq.toDouble() * 1000.0)).roundToLong()
         anchors.add(TickTimeAnchor(maxTick, currentMs))
     } else if (anchors.last().tick != maxTick) {
         anchors.add(TickTimeAnchor(maxTick, anchors.last().ms))
@@ -492,6 +525,6 @@ private fun msToTick(ms: Long, anchors: List<TickTimeAnchor>, totalTicks: Int): 
     val b = anchors[right]
     val spanMs = (b.ms - a.ms).coerceAtLeast(1L)
     val ratio = (clampedMs - a.ms).toDouble() / spanMs.toDouble()
-    val tick = a.tick + ((b.tick - a.tick) * ratio).toInt()
+    val tick = a.tick + ((b.tick - a.tick).toDouble() * ratio).roundToInt()
     return tick.coerceIn(0, totalTicks)
 }
