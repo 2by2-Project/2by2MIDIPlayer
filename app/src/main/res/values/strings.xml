@@ -9,11 +9,15 @@
     <string name="unknown">Unknown</string>
     <string name="app_logo">App Logo</string>
     <string name="search">Search</string>
+    <string name="browse">Browse</string>
     <string name="settings">Settings</string>
     <string name="topbar_search_summary">Search by file name</string>
     <string name="info_grant_storage_permission">Please grant storage permission</string>
     <string name="info_no_mid_files_found">No .mid files found</string>
     <string name="info_no_matching_files">No matching files</string>
+    <string name="info_added_to_next_queue">Queued to next track</string>
+    <string name="info_no_active_queue">No active queue. Play something</string>
+    <string name="info_added_to_playlist">Added to playlist</string>
     <string name="duration_placeholder" translatable="false">--:--</string>
     <string name="settings_category_midi_synthesizer">MIDI Synthesizer</string>
     <string name="settings_soundfont_title">SoundFont</string>
@@ -54,10 +58,16 @@
     <string name="button_sample_demo_music">Browse Sample MIDIs</string>
     <string name="folder_demo_name">Sample MIDI musics</string>
     <string name="loading_demo_files">Loading sample MIDI files…</string>
-    <string name="action_play">Play</string>
+    <string name="action_play_in_next_track">Play in next track</string>
     <string name="action_share">Share</string>
     <string name="action_details">Details</string>
     <string name="action_edit_loop_point">Edit Loop Point</string>
+    <string name="action_add_to_playlist">Add to playlist</string>
+    <string name="playlists">Playlists</string>
+    <string name="action_create_playlist">Create playlist</string>
+    <string name="action_create">Create</string>
+    <string name="playlist_name_hint">Playlist name</string>
+    <string name="info_no_playlists_found">No playlists yet</string>
     <string name="file_details_parent_folder">Parent folder</string>
     <string name="file_details_format">Format</string>
     <string name="file_details_duration">Duration</string>
