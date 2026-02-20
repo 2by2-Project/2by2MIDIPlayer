@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import android.util.Log
 import kotlin.math.max
+import kotlin.math.roundToLong
 
 private data class RawNote(
     val noteNumber: Int,
@@ -261,12 +262,12 @@ private fun buildAnchorsFromTempo(
     var currentTempo = 500_000 // us/qn
     var currentTick = 0
     var currentMs = 0L
-    val tpq = max(1, ticksPerQuarter).toLong()
+    val tpq = max(1, ticksPerQuarter).toDouble()
     for (e in sorted) {
         val t = e.tick.coerceIn(0, maxTick)
         if (t > currentTick) {
             val dt = (t - currentTick).toLong()
-            currentMs += (dt * currentTempo.toLong()) / (tpq * 1000L)
+            currentMs += ((dt.toDouble() * currentTempo.toDouble()) / (tpq * 1000.0)).roundToLong()
             currentTick = t
             anchors.add(TickTimeAnchor(currentTick, currentMs))
         }
@@ -274,7 +275,7 @@ private fun buildAnchorsFromTempo(
     }
     if (maxTick > currentTick) {
         val dt = (maxTick - currentTick).toLong()
-        currentMs += (dt * currentTempo.toLong()) / (tpq * 1000L)
+        currentMs += ((dt.toDouble() * currentTempo.toDouble()) / (tpq * 1000.0)).roundToLong()
         anchors.add(TickTimeAnchor(maxTick, currentMs))
     } else if (anchors.last().tick != maxTick) {
         anchors.add(TickTimeAnchor(maxTick, anchors.last().ms))
@@ -345,7 +346,7 @@ private fun tickToMsFast(tick: Int, anchors: List<TickTimeAnchor>): Long {
     val b = anchors[right]
     val dt = (b.tick - a.tick).coerceAtLeast(1)
     val ratio = (tick - a.tick).toDouble() / dt.toDouble()
-    return a.ms + ((b.ms - a.ms) * ratio).toLong()
+    return a.ms + ((b.ms - a.ms).toDouble() * ratio).roundToLong()
 }
 
 private fun lowerBoundStartTickFast(notes: List<PianoRollNote>, tick: Int): Int {
