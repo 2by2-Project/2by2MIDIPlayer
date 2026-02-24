@@ -22,6 +22,9 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.snap
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -36,6 +39,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -58,6 +62,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed as lazyItemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
@@ -72,12 +77,14 @@ import androidx.compose.material.SliderDefaults
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Audiotrack
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Loop
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.RemoveCircle
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Settings
@@ -126,17 +133,20 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
@@ -162,6 +172,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.InputStream
+import kotlin.math.max
 import kotlin.math.roundToInt
 
 class MainActivity : ComponentActivity() {
@@ -240,6 +251,11 @@ fun MusicPlayerMainScreen(
     var miniLiftProgress by remember { mutableFloatStateOf(0f) }
     var miniLiftDragPx by remember { mutableFloatStateOf(0f) }
     var skipNowPlayingEnterAnimation by remember { mutableStateOf(false) }
+
+    // Playlist edit
+    var isPlaylistEditModeActive by remember { mutableStateOf(false) }
+    var playlistNameDraft by remember { mutableStateOf("") }
+    var playlistEditOrderDraft by remember { mutableStateOf<List<MidiFileItem>>(emptyList()) }
 
     val midiFiles = remember { mutableStateListOf<MidiFileItem>() }
     val folderItems = remember { mutableStateListOf<FolderItem>() }
@@ -375,6 +391,12 @@ fun MusicPlayerMainScreen(
         folderViewMode = if (savedMode == 1) FolderViewMode.List else FolderViewMode.Grid
     }
 
+    LaunchedEffect(selectedPlaylistId) {
+        isPlaylistEditModeActive = false
+        playlistNameDraft = selectedPlaylistName.orEmpty()
+        playlistEditOrderDraft = emptyList()
+    }
+
     // Back handler
     BackHandler(enabled = selectedPlaylistId != null || selectedFolderKey != null || isSearchActive) {
         when {
@@ -383,6 +405,9 @@ fun MusicPlayerMainScreen(
                 searchQuery = ""
             }
             selectedPlaylistId != null -> {
+                isPlaylistEditModeActive = false
+                playlistNameDraft = ""
+                playlistEditOrderDraft = emptyList()
                 selectedPlaylistId = null
                 selectedPlaylistName = null
             }
@@ -570,6 +595,9 @@ fun MusicPlayerMainScreen(
                         IconButton(
                             onClick = {
                                 if (selectedPlaylistId != null) {
+                                    isPlaylistEditModeActive = false
+                                    playlistNameDraft = ""
+                                    playlistEditOrderDraft = emptyList()
                                     selectedPlaylistId = null
                                     selectedPlaylistName = null
                                 } else {
@@ -587,13 +615,24 @@ fun MusicPlayerMainScreen(
                 },
                 title = {
                     if (selectedFolderKey != null || selectedPlaylistId != null) {
-                        Text(
-                            text = selectedFolderName ?: selectedPlaylistName ?: stringResource(id = R.string.unknown),
-                            modifier = Modifier.fillMaxWidth()
-                                .clipToBounds()
-                                .basicMarquee(Int.MAX_VALUE),
-                            textAlign = TextAlign.Center
-                        )
+                        if (isPlaylistEditModeActive) {
+                            OutlinedTextField(
+                                value = playlistNameDraft,
+                                onValueChange = { playlistNameDraft = it },
+                                modifier = Modifier,
+                                placeholder = { Text(text = selectedPlaylistName.orEmpty()) },
+                                singleLine = true
+                            )
+                        } else {
+                            Text(
+                                text = selectedFolderName ?: selectedPlaylistName
+                                ?: stringResource(id = R.string.unknown),
+                                modifier = Modifier.fillMaxWidth()
+                                    .clipToBounds()
+                                    .basicMarquee(Int.MAX_VALUE),
+                                textAlign = TextAlign.Center
+                            )
+                        }
                     } else {
                         Image(
                             painter = painterResource(id = R.drawable.logo_image),
@@ -604,24 +643,74 @@ fun MusicPlayerMainScreen(
                     }
                 },
                 actions = {
-                    IconButton(
-                        onClick = {
-                            isSearchActive = !isSearchActive
-                            if (!isSearchActive) searchQuery = ""
-                            if (isSearchActive) {
-                                rootTab = RootTab.Browse
+                    // Search button only should show on browse screen
+                    if (rootTab == RootTab.Browse) {
+                        IconButton(
+                            onClick = {
+                                isSearchActive = !isSearchActive
+                                if (!isSearchActive) searchQuery = ""
+                                if (isSearchActive) {
+                                    rootTab = RootTab.Browse
+                                }
+                            }
+                        ) {
+                            Surface(
+                                shape = RoundedCornerShape(50),
+                                color = if (isSearchActive) {
+                                    MaterialTheme.colorScheme.primaryContainer
+                                } else {
+                                    Color.Transparent
+                                },
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Search,
+                                    contentDescription = stringResource(id = R.string.search),
+                                    modifier = Modifier.padding(8.dp)
+                                )
                             }
                         }
-                    ) {
-                        Surface(
-                            shape = RoundedCornerShape(50),
-                            color = if (isSearchActive) { MaterialTheme.colorScheme.primaryContainer } else { Color.Transparent },
+                    }
+                    // Playlist edit button
+                    if (rootTab == RootTab.Playlists && selectedPlaylistId != null) {
+                        IconButton(
+                            onClick = {
+                                val playlistId = selectedPlaylistId ?: return@IconButton
+                                if (!isPlaylistEditModeActive) {
+                                    playlistNameDraft = selectedPlaylistName.orEmpty()
+                                    playlistEditOrderDraft = emptyList()
+                                    isPlaylistEditModeActive = true
+                                } else {
+                                    val draftName = playlistNameDraft.trim()
+                                    val currentName = selectedPlaylistName.orEmpty()
+                                    val orderedIds = playlistEditOrderDraft.mapNotNull { it.playlistItemId }
+                                    scope.launch {
+                                        if (draftName.isNotEmpty() && draftName != currentName) {
+                                            playlistRepository.renamePlaylist(playlistId, draftName)
+                                            selectedPlaylistName = draftName
+                                        }
+                                        if (orderedIds.isNotEmpty()) {
+                                            playlistRepository.reorderPlaylistItems(playlistId, orderedIds)
+                                        }
+                                        playlistRefreshToken = System.currentTimeMillis()
+                                    }
+                                    isPlaylistEditModeActive = false
+                                }
+                            }
                         ) {
-                            Icon(
-                                imageVector = Icons.Default.Search,
-                                contentDescription = stringResource(id = R.string.search),
-                                modifier = Modifier.padding(8.dp)
-                            )
+                            Surface(
+                                shape = RoundedCornerShape(50),
+                                color = if (isPlaylistEditModeActive) {
+                                    MaterialTheme.colorScheme.primaryContainer
+                                } else {
+                                    Color.Transparent
+                                },
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Edit,
+                                    contentDescription = stringResource(id = R.string.search),
+                                    modifier = Modifier.padding(8.dp)
+                                )
+                            }
                         }
                     }
                     IconButton(
@@ -703,6 +792,9 @@ fun MusicPlayerMainScreen(
                         selected = rootTab == RootTab.Browse,
                         onClick = {
                             rootTab = RootTab.Browse
+                            isPlaylistEditModeActive = false
+                            playlistNameDraft = ""
+                            playlistEditOrderDraft = emptyList()
                             selectedPlaylistId = null
                             selectedPlaylistName = null
                         },
@@ -719,6 +811,7 @@ fun MusicPlayerMainScreen(
                         selected = rootTab == RootTab.Playlists,
                         onClick = {
                             rootTab = RootTab.Playlists
+                            isPlaylistEditModeActive = false
                             isSearchActive = false
                             searchQuery = ""
                             selectedFolderKey = null
@@ -846,7 +939,12 @@ fun MusicPlayerMainScreen(
                                 repository = playlistRepository,
                                 playlistId = selectedPlaylistId!!,
                                 playlistName = selectedPlaylistName.orEmpty(),
+                                refreshToken = playlistRefreshToken,
+                                isEditMode = isPlaylistEditModeActive,
                                 selectedUri = selectedMidiFileUri,
+                                onEditItemsChanged = { editedItems ->
+                                    playlistEditOrderDraft = editedItems
+                                },
                                 onItemClick = { uriString, queue ->
                                     scope.launch {
                                         val service = playbackService ?: return@launch
@@ -1118,6 +1216,13 @@ private data class NowPlayingRollUi(
 )
 
 private const val MINI_PLAYER_EXPAND_THRESHOLD_PX = 1600f
+private const val PLAYLIST_REORDER_DEBUG_LOG = true
+
+private fun logPlaylistReorder(message: String) {
+    if (PLAYLIST_REORDER_DEBUG_LOG) {
+        Log.d("PlaylistReorder", message)
+    }
+}
 
 @Composable
 private fun DraggableMiniPlayerContainer(
@@ -1619,11 +1724,22 @@ private fun calculatePlaybackInitialZoomLevel(
 @Composable
 private fun MidiFileList(
     items: List<MidiFileItem>,
+    isEditMode: Boolean = false,
+    onMoveItem: (Long, Int) -> Unit = { _, _ -> },
+    onRemoveItem: (Long) -> Unit = {},
     selectedUri: Uri?,
     onItemClick: (Uri) -> Unit,
     onAddToPlaylist: (MidiFileItem) -> Unit,
     onQueueNext: (MidiFileItem) -> Unit
 ) {
+    val scope = rememberCoroutineScope()
+    val density = LocalDensity.current
+    val defaultRowHeightPx = with(density) { 72.dp.toPx() }
+    var measuredRowHeightPx by remember { mutableFloatStateOf(defaultRowHeightPx) }
+    var activeDragItemId by remember { mutableStateOf<Long?>(null) }
+    var activeDragOffsetPx by remember { mutableFloatStateOf(0f) }
+    val removingItemIds = remember { mutableStateListOf<Long>() }
+
     if (items.isEmpty()) {
         Text(
             text = stringResource(id = R.string.info_no_matching_files),
@@ -1635,10 +1751,104 @@ private fun MidiFileList(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(bottom = 72.dp)
     ) {
-        items(items, key = { it.uri }) { item ->
+        lazyItemsIndexed(
+            items = items,
+            key = { index, item -> item.playlistItemId ?: "${item.uri}#$index" }
+        ) { index, item ->
+            val itemId = item.playlistItemId
+            val activeId = activeDragItemId
+            val activeIndex = if (activeId != null) {
+                items.indexOfFirst { it.playlistItemId == activeId }
+            } else {
+                -1
+            }
+            val rowHeight = measuredRowHeightPx.coerceAtLeast(1f)
+            val projectedShift = if (activeIndex >= 0) {
+                (activeDragOffsetPx / rowHeight).roundToInt()
+            } else {
+                0
+            }
+            val projectedTargetIndex = if (activeIndex >= 0) {
+                (activeIndex + projectedShift).coerceIn(0, items.lastIndex)
+            } else {
+                -1
+            }
+            val shiftTarget = when {
+                activeIndex < 0 || index == activeIndex -> 0f
+                activeIndex < projectedTargetIndex && index in (activeIndex + 1)..projectedTargetIndex -> -rowHeight
+                activeIndex > projectedTargetIndex && index in projectedTargetIndex until activeIndex -> rowHeight
+                else -> 0f
+            }
+            val animatedShift by animateFloatAsState(
+                targetValue = shiftTarget,
+                animationSpec = if (activeIndex >= 0) tween(durationMillis = 120) else snap(),
+                label = "playlist_neighbor_shift"
+            )
+
             MidiFileRow(
                 item = item,
+                rowModifier = Modifier.graphicsLayer { translationY = animatedShift },
                 isSelected = item.uri == selectedUri,
+                showReorderHandle = isEditMode,
+                isRemoving = itemId != null && removingItemIds.contains(itemId),
+                onDragStart = {
+                    if (!isEditMode || itemId == null) return@MidiFileRow
+                    if (removingItemIds.contains(itemId)) return@MidiFileRow
+                    activeDragItemId = itemId
+                    activeDragOffsetPx = 0f
+                    logPlaylistReorder("dragStart itemId=$itemId index=$index rowHeight=$rowHeight size=${items.size}")
+                },
+                onDragDelta = { dy ->
+                    if (!isEditMode || activeDragItemId != itemId) return@MidiFileRow
+                    activeDragOffsetPx += dy
+                },
+                onDragEnd = {
+                    if (!isEditMode || itemId == null) return@MidiFileRow
+                    val finalOffsetPx = activeDragOffsetPx
+                    val fromIndex = items.indexOfFirst { it.playlistItemId == itemId }
+                    if (fromIndex >= 0) {
+                        val toIndex = (fromIndex + (finalOffsetPx / rowHeight).roundToInt())
+                            .coerceIn(0, items.lastIndex)
+                        val delta = toIndex - fromIndex
+                        logPlaylistReorder(
+                            "dragEnd itemId=$itemId from=$fromIndex to=$toIndex delta=$delta offsetPx=$finalOffsetPx rowHeight=$rowHeight"
+                        )
+                        if (delta != 0) {
+                            // Keep projected state aligned with final drop slot until list reorder is applied.
+                            activeDragOffsetPx = (toIndex - fromIndex) * rowHeight
+                            onMoveItem(itemId, delta)
+                            scope.launch {
+                                withFrameNanos { }
+                                activeDragOffsetPx = 0f
+                                activeDragItemId = null
+                            }
+                        } else {
+                            activeDragOffsetPx = 0f
+                            activeDragItemId = null
+                        }
+                    } else {
+                        logPlaylistReorder("dragEnd itemId=$itemId but fromIndex not found")
+                        activeDragOffsetPx = 0f
+                        activeDragItemId = null
+                    }
+                },
+                onDeleteClick = {
+                    if (!isEditMode || itemId == null) return@MidiFileRow
+                    if (removingItemIds.contains(itemId)) return@MidiFileRow
+                    removingItemIds.add(itemId)
+                    if (activeDragItemId == itemId) {
+                        activeDragItemId = null
+                        activeDragOffsetPx = 0f
+                    }
+                    scope.launch {
+                        delay(220)
+                        onRemoveItem(itemId)
+                        removingItemIds.remove(itemId)
+                    }
+                },
+                onRowHeightMeasured = { h ->
+                    if (h > 1f) measuredRowHeightPx = h
+                },
                 onClick = { onItemClick(item.uri) },
                 onAddToPlaylist = { onAddToPlaylist(item) },
                 onQueueNext = { onQueueNext(item) }
@@ -1652,13 +1862,34 @@ private fun MidiFileList(
 @Composable
 private fun MidiFileRow(
     item: MidiFileItem,
+    rowModifier: Modifier = Modifier,
     isSelected: Boolean,
+    showReorderHandle: Boolean = false,
+    isRemoving: Boolean = false,
+    onDragStart: () -> Unit = {},
+    onDragDelta: (Float) -> Unit = {},
+    onDragEnd: () -> Unit = {},
+    onDeleteClick: () -> Unit = {},
+    onRowHeightMeasured: (Float) -> Unit = {},
     onClick: () -> Unit,
     onAddToPlaylist: () -> Unit,
     onQueueNext: () -> Unit
 ) {
     val context = LocalContext.current
     var showActions by remember { mutableStateOf(false) }
+    var dragVisualOffsetPx by remember(item.playlistItemId, showReorderHandle) { mutableFloatStateOf(0f) }
+    var isDragging by remember(item.playlistItemId, showReorderHandle) { mutableStateOf(false) }
+    var rowWidthPx by remember(item.playlistItemId, showReorderHandle) { mutableFloatStateOf(0f) }
+    val animatedScale by animateFloatAsState(
+        targetValue = if (isDragging) 1.02f else 1f,
+        animationSpec = spring(stiffness = 560f, dampingRatio = 0.9f),
+        label = "playlist_drag_scale"
+    )
+    val dismissProgress by animateFloatAsState(
+        targetValue = if (isRemoving) 1f else 0f,
+        animationSpec = tween(durationMillis = 220),
+        label = "playlist_remove_progress"
+    )
     val background = if (isSelected) {
         MaterialTheme.colorScheme.primaryContainer.copy(0.25f)
     } else {
@@ -1669,20 +1900,94 @@ private fun MidiFileRow(
     } else {
         MaterialTheme.colorScheme.onBackground
     }
-    Row(
+    Box(
         modifier = Modifier
             .fillMaxWidth()
-            .combinedClickable(
-                onClick = { onClick() },
-                onLongClick = { showActions = true }
+            .background(
+                if (dismissProgress > 0f) {
+                    Color(0xFFC62828).copy(alpha = dismissProgress)
+                } else {
+                    Color.Transparent
+                }
             )
-            .padding(horizontal = 0.dp, vertical = 0.dp)
-            .background(background, RoundedCornerShape(4.dp)),
-        verticalAlignment = Alignment.CenterVertically
+            .onSizeChanged {
+                rowWidthPx = it.width.toFloat()
+                onRowHeightMeasured(it.height.toFloat())
+            }
     ) {
-        Column(
-            modifier = Modifier.weight(1f).padding(16.dp)
+        Row(
+            modifier = rowModifier
+                .fillMaxWidth()
+                .zIndex(if (isDragging) 2f else 0f)
+                .graphicsLayer {
+                    translationX = -rowWidthPx * dismissProgress
+                    translationY = dragVisualOffsetPx
+                    scaleX = animatedScale
+                    scaleY = animatedScale
+                }
+                .shadow(
+                    elevation = if (isDragging) 8.dp else 0.dp,
+                    shape = RoundedCornerShape(8.dp),
+                    clip = false
+                )
+                .combinedClickable(
+                    onClick = { if (!isRemoving) onClick() },
+                    onLongClick = {
+                        if (!showReorderHandle && !isRemoving) {
+                            showActions = true
+                        }
+                    }
+                )
+                .then(
+                    if (showReorderHandle && !isRemoving) {
+                        Modifier.pointerInput(item.playlistItemId ?: item.uri) {
+                            detectDragGesturesAfterLongPress(
+                                onDragStart = {
+                                    isDragging = true
+                                    dragVisualOffsetPx = 0f
+                                    onDragStart()
+                                },
+                                onDrag = { change, dragAmount ->
+                                    change.consume()
+                                    val dy = dragAmount.y
+                                    dragVisualOffsetPx += dy
+                                    onDragDelta(dy)
+                                },
+                                onDragEnd = {
+                                    dragVisualOffsetPx = 0f
+                                    isDragging = false
+                                    onDragEnd()
+                                },
+                                onDragCancel = {
+                                    dragVisualOffsetPx = 0f
+                                    isDragging = false
+                                    onDragEnd()
+                                }
+                            )
+                        }
+                    } else {
+                        Modifier
+                    }
+                )
+                .padding(horizontal = 0.dp, vertical = 0.dp)
+                .background(background, RoundedCornerShape(4.dp)),
+            verticalAlignment = Alignment.CenterVertically
         ) {
+            if (showReorderHandle) {
+                IconButton(
+                    onClick = onDeleteClick,
+                    modifier = Modifier.padding(start = 6.dp).size(32.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.RemoveCircle,
+                        contentDescription = null,
+                        tint = Color(0xFFC62828)
+                    )
+                }
+            }
+            Column(
+                modifier = Modifier.weight(1f).padding(16.dp)
+            ) {
             Text(
                 text = item.title,
                 maxLines = 1,
@@ -1699,16 +2004,17 @@ private fun MidiFileRow(
                     color = contentColor
                 )
             }
+            }
+            Text(
+                text = formatDuration(item.durationMs),
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.padding(16.dp),
+                color = contentColor
+            )
         }
-        Text(
-            text = formatDuration(item.durationMs),
-            style = MaterialTheme.typography.bodySmall,
-            modifier = Modifier.padding(16.dp),
-            color = contentColor
-        )
     }
 
-    if (showActions) {
+    if (showActions && !showReorderHandle) {
         MidiFileActionsDialog(
             title = item.title,
             onDismiss = { showActions = false },
@@ -2191,17 +2497,21 @@ private fun PlaylistTracks(
     repository: PlaylistRepository,
     playlistId: Long,
     playlistName: String,
+    refreshToken: Long,
+    isEditMode: Boolean,
     selectedUri: Uri?,
+    onEditItemsChanged: (List<MidiFileItem>) -> Unit,
     onItemClick: (String, List<MidiFileItem>) -> Unit,
     onQueueNext: (MidiFileItem, List<MidiFileItem>) -> Unit
 ) {
     val context = LocalContext.current
-    val items = produceState(initialValue = emptyList<MidiFileItem>(), playlistId) {
+    val loadedItems = produceState(initialValue = emptyList<MidiFileItem>(), playlistId, refreshToken) {
         value = withContext(Dispatchers.IO) {
             repository.getPlaylistItems(playlistId).map {
                 val uri = Uri.parse(it.uriString)
                 val duration = if (it.durationMs > 0L) it.durationMs else resolveDurationMsForUri(context, uri)
                 MidiFileItem(
+                    playlistItemId = it.itemId,
                     uri = uri,
                     title = it.title ?: uri.lastPathSegment.orEmpty(),
                     folderName = playlistName,
@@ -2211,15 +2521,48 @@ private fun PlaylistTracks(
             }
         }
     }.value
+    val editItems = remember(playlistId) { mutableStateListOf<MidiFileItem>() }
+
+    LaunchedEffect(playlistId, isEditMode, loadedItems) {
+        if (isEditMode) {
+            editItems.clear()
+            editItems.addAll(loadedItems)
+            onEditItemsChanged(editItems.toList())
+        } else {
+            onEditItemsChanged(emptyList())
+        }
+    }
+
+    val visibleItems = if (isEditMode) editItems else loadedItems
 
     MidiFileList(
-        items = items,
+        items = visibleItems,
+        isEditMode = isEditMode,
+        onMoveItem = { itemId, delta ->
+            if (!isEditMode) return@MidiFileList
+            val fromIndex = editItems.indexOfFirst { it.playlistItemId == itemId }
+            if (fromIndex < 0) return@MidiFileList
+            val toIndex = (fromIndex + delta).coerceIn(0, editItems.lastIndex)
+            if (toIndex == fromIndex) return@MidiFileList
+            logPlaylistReorder("applyMove itemId=$itemId from=$fromIndex to=$toIndex delta=$delta")
+            val moved = editItems.removeAt(fromIndex)
+            editItems.add(toIndex, moved)
+            onEditItemsChanged(editItems.toList())
+        },
+        onRemoveItem = { itemId ->
+            if (!isEditMode) return@MidiFileList
+            val idx = editItems.indexOfFirst { it.playlistItemId == itemId }
+            if (idx < 0) return@MidiFileList
+            logPlaylistReorder("removeItem itemId=$itemId at=$idx")
+            editItems.removeAt(idx)
+            onEditItemsChanged(editItems.toList())
+        },
         selectedUri = selectedUri,
         onItemClick = { uri ->
-            onItemClick(uri.toString(), items)
+            onItemClick(uri.toString(), visibleItems)
         },
         onAddToPlaylist = {},
-        onQueueNext = { onQueueNext(it, items) }
+        onQueueNext = { onQueueNext(it, visibleItems) }
     )
 }
 
@@ -2351,6 +2694,7 @@ private enum class FolderViewMode {
 }
 
 private data class MidiFileItem(
+    val playlistItemId: Long? = null,
     val uri: Uri,
     val title: String,
     val folderName: String,
@@ -2422,7 +2766,15 @@ private fun queryMidiFiles(context: Context): List<MidiFileItem> {
             val folderKey = extractFolderKey(relativePath, dataPath)
             val folderName = extractFolderName(folderKey)
             val uri = ContentUris.withAppendedId(collection, id)
-            results.add(MidiFileItem(uri, name, folderName, folderKey, duration))
+            results.add(
+                MidiFileItem(
+                    uri = uri,
+                    title = name,
+                    folderName = folderName,
+                    folderKey = folderKey,
+                    durationMs = duration
+                )
+            )
         }
     }
     return results
