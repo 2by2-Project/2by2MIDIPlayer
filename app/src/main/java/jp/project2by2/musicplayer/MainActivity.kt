@@ -697,7 +697,7 @@ fun MusicPlayerMainScreen(
                     }
                 }
                 NavigationBar(
-                    modifier = Modifier.height(100.dp)
+                    modifier = Modifier
                 ) {
                     NavigationBarItem(
                         selected = rootTab == RootTab.Browse,
@@ -1127,7 +1127,7 @@ private fun DraggableMiniPlayerContainer(
 ) {
     var offsetY by remember { mutableFloatStateOf(0f) }
     val scope = rememberCoroutineScope()
-    val expandThreshold = MINI_PLAYER_EXPAND_THRESHOLD_PX / 6
+    val expandThreshold = MINI_PLAYER_EXPAND_THRESHOLD_PX / 8
     var lastSentProgress by remember { mutableFloatStateOf(-1f) }
     var lastSentDragPx by remember { mutableFloatStateOf(-1f) }
 
@@ -2619,7 +2619,7 @@ private fun findCoverImageUri(context: Context, folderKey: String): Uri? {
 }
 
 @Composable
-private fun rememberCoverBitmap(uri: Uri?): androidx.compose.ui.graphics.ImageBitmap? {
+fun rememberCoverBitmap(uri: Uri?): androidx.compose.ui.graphics.ImageBitmap? {
     val context = LocalContext.current
     val bitmapState = produceState<androidx.compose.ui.graphics.ImageBitmap?>(initialValue = null, uri) {
         if (uri == null) {
