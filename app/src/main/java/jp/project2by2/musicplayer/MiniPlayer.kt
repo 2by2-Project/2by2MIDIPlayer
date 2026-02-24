@@ -8,15 +8,19 @@ import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -24,6 +28,7 @@ import androidx.compose.material.Slider
 import androidx.compose.material.SliderDefaults
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Loop
+import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Shuffle
@@ -31,6 +36,7 @@ import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -48,6 +54,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -71,6 +78,8 @@ private data class MiniPlayerUi(
 @Composable
 fun MiniPlayerBar(
     title: String,
+    artist: String? = null,
+    artworkUri: Uri? = null,
     isPlaying: Boolean,
     progress: Float,
     currentPositionMs: Long,
@@ -99,75 +108,62 @@ fun MiniPlayerBar(
         shape = RoundedCornerShape(0.dp),
         tonalElevation = 4.dp,
         color = MaterialTheme.colorScheme.surfaceVariant.copy(0.5f),
-        onClick = { isDetailsExpanded = !isDetailsExpanded }
+        onClick = { onExpandRequest() }
     ) {
         Column(Modifier.fillMaxWidth()) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(16.dp)
-                    .pointerInput(Unit) {
-                        detectVerticalDragGestures(
-                            onVerticalDrag = { change, dragAmount ->
-                                change.consume()
-                                dragAccumY += dragAmount
-                            },
-                            onDragEnd = {
-                                if (dragAccumY < -56f) {
-                                    onExpandRequest()
-                                }
-                                dragAccumY = 0f
-                            },
-                            onDragCancel = {
-                                dragAccumY = 0f
-                            }
-                        )
-                    },
-                contentAlignment = Alignment.Center
-            ) {
-                Surface(
-                    shape = RoundedCornerShape(50),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f)
-                ) {
-                    Spacer(modifier = Modifier.width(36.dp).height(4.dp))
-                }
-            }
-            Slider(
-                value = if (isSeeking) sliderValue else progress,
-                valueRange = 0f..1f,
-                onValueChange = { v ->
-                    isSeeking = true
-                    sliderValue = v
-                },
-                onValueChangeFinished = {
-                    isSeeking = false
-                    onSeekTo(sliderValue)
-                },
-                colors = SliderDefaults.colors(
-                    thumbColor = MaterialTheme.colorScheme.primary,
-                    activeTrackColor = MaterialTheme.colorScheme.primary,
-                    inactiveTrackColor = MaterialTheme.colorScheme.surfaceVariant,
-                ),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(32.dp)
-                    .padding(vertical = 8.dp)
-            )
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                    .padding(horizontal = 12.dp, vertical = 12.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    title,
-                    Modifier
-                        .weight(1f)
-                        .padding(end = 16.dp)
-                        .clipToBounds()
-                        .basicMarquee(iterations = Int.MAX_VALUE),
-                    maxLines = 1
-                )
+                // Artwork
+                val coverBitmap = rememberCoverBitmap(artworkUri)
+                Box(
+                    modifier = Modifier
+                        .requiredSize(48.dp)
+                        .background(MaterialTheme.colorScheme.surfaceVariant),
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (coverBitmap != null) {
+                        Image(
+                            bitmap = coverBitmap,
+                            contentDescription = null,
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier.fillMaxSize()
+                        )
+                    } else {
+                        Icon(
+                            imageVector = Icons.Default.MusicNote,
+                            contentDescription = null,
+                            modifier = Modifier.size(24.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.width(12.dp))
+                // Title and artist
+                Column(
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text(
+                        title,
+                        Modifier
+                            .padding(end = 16.dp)
+                            .clipToBounds()
+                            .basicMarquee(iterations = Int.MAX_VALUE),
+                        maxLines = 1
+                    )
+                    if (artist != null) {
+                        Text(
+                            artist,
+                            Modifier
+                                .padding(end = 16.dp, top = 4.dp),
+                            maxLines = 1,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                }
                 val seconds = currentPositionMs / 1000
                 val minutes = seconds / 60
                 val remainingSeconds = seconds % 60
@@ -176,36 +172,6 @@ fun MiniPlayerBar(
                     style = MaterialTheme.typography.bodySmall,
                     modifier = Modifier.padding(end = 8.dp)
                 )
-            }
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = androidx.compose.foundation.layout.Arrangement.Center,
-            ) {
-                IconButton(
-                    onClick = {
-                        scope.launch {
-                            SettingsDataStore.setShuffleEnabled(context, !shuffleEnabled)
-                        }
-                    }
-                ) {
-                    Surface(
-                        shape = RoundedCornerShape(50),
-                        color = if (shuffleEnabled) { MaterialTheme.colorScheme.primaryContainer } else { Color.Transparent },
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Shuffle,
-                            contentDescription = null,
-                            modifier = Modifier.padding(8.dp).size(48.dp)
-                        )
-                    }
-                }
-                IconButton(onClick = onPrevious) {
-                    Icon(
-                        imageVector = Icons.Default.SkipPrevious,
-                        contentDescription = null,
-                        modifier = Modifier.padding(8.dp).size(48.dp)
-                    )
-                }
                 IconButton(onClick = onPlayPause) {
                     Icon(
                         imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
@@ -213,57 +179,13 @@ fun MiniPlayerBar(
                         modifier = Modifier.padding(8.dp).size(48.dp)
                     )
                 }
-                IconButton(onClick = onNext) {
-                    Icon(
-                        imageVector = Icons.Default.SkipNext,
-                        contentDescription = null,
-                        modifier = Modifier.padding(8.dp).size(48.dp)
-                    )
-                }
-                IconButton(
-                    onClick = {
-                        scope.launch {
-                            SettingsDataStore.setLoopEnabled(context, !loopEnabled)
-                        }
-                    }
-                ) {
-                    Surface(
-                        shape = RoundedCornerShape(50),
-                        color = if (loopEnabled) { MaterialTheme.colorScheme.primaryContainer } else { Color.Transparent },
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Loop,
-                            contentDescription = null,
-                            modifier = Modifier.padding(8.dp).size(48.dp)
-                        )
-                    }
-                }
             }
-            AnimatedVisibility(
-                visible = isDetailsExpanded,
-                enter = expandVertically(animationSpec = tween(200)) + fadeIn(animationSpec = tween(200)),
-                exit = shrinkVertically(animationSpec = tween(200)) + fadeOut(animationSpec = tween(200))
-            ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 4.dp)
-                ) {
-                    Text(
-                        text = stringResource(id = R.string.info_current_time, currentPositionMs),
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                    Text(
-                        text = stringResource(id = R.string.info_loop_point, loopStartMs),
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                    Text(
-                        text = stringResource(id = R.string.info_end_of_track, loopEndMs),
-                        style = MaterialTheme.typography.bodySmall,
-                        modifier = Modifier.padding(bottom = 8.dp)
-                    )
-                }
-            }
+            LinearProgressIndicator(
+                progress = progress,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(4.dp),
+            )
         }
     }
 }
@@ -319,6 +241,8 @@ fun MiniPlayerContainer(
 
     MiniPlayerBar(
         title = uiState.title,
+        artist = playbackService?.currentArtist,
+        artworkUri = playbackService?.currentArtworkUri,
         isPlaying = uiState.isPlaying,
         progress = progress,
         currentPositionMs = uiState.positionMs,
