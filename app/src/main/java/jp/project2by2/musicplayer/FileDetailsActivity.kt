@@ -19,6 +19,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Scaffold
@@ -35,12 +36,17 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import dev.atsushieno.ktmidi.Midi1CompoundMessage
 import dev.atsushieno.ktmidi.Midi1Music
 import dev.atsushieno.ktmidi.read
 import jp.project2by2.musicplayer.ui.theme._2by2MusicPlayerTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.nio.ByteBuffer
+import java.nio.charset.CharacterCodingException
+import java.nio.charset.Charset
+import java.nio.charset.CodingErrorAction
 
 class FileDetailsActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -76,7 +82,14 @@ private data class FileDetailsSnapshot(
     val parentFolder: String,
     val mimeType: String,
     val durationMs: Long,
-    val loopPoint: LoopPoint?
+    val loopPoint: LoopPoint?,
+    val midiTitle: String?,
+    val midiArtist: String?
+)
+
+private data class EmbeddedMidiMetadata(
+    val title: String?,
+    val artist: String?
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -93,7 +106,9 @@ private fun FileDetailsScreen(
                 parentFolder = context.getString(R.string.unknown),
                 mimeType = context.getString(R.string.unknown),
                 durationMs = 0L,
-                loopPoint = null
+                loopPoint = null,
+                midiTitle = null,
+                midiArtist = null
             )
         )
     }
@@ -161,6 +176,23 @@ private fun FileDetailsScreen(
                         value = loopValue
                     )
                 }
+                item {
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
+                }
+                item {
+                    SettingsInfoItem(
+                        title = stringResource(id = R.string.file_details_midi_title),
+                        value = snapshot.midiTitle?.takeIf { it.isNotBlank() }
+                            ?: stringResource(id = R.string.unknown)
+                    )
+                }
+                item {
+                    SettingsInfoItem(
+                        title = stringResource(id = R.string.file_details_midi_artist),
+                        value = snapshot.midiArtist?.takeIf { it.isNotBlank() }
+                            ?: stringResource(id = R.string.unknown)
+                    )
+                }
             }
         }
     }
@@ -183,6 +215,7 @@ private fun loadFileDetails(context: Context, uri: Uri): FileDetailsSnapshot {
     val (file, isTemp) = resolveFile(context, uri)
     val durationMs = file?.let { calculateMidiDurationMs(it) } ?: 0L
     val loopPoint = file?.let { PlaybackService.findLoopPoint(it) }
+    val metadata = file?.let { extractEmbeddedMidiMetadata(it) } ?: EmbeddedMidiMetadata(title = null, artist = null)
     if (isTemp) {
         file?.delete()
     }
@@ -192,7 +225,9 @@ private fun loadFileDetails(context: Context, uri: Uri): FileDetailsSnapshot {
         parentFolder = parentFolder,
         mimeType = mimeType,
         durationMs = durationMs,
-        loopPoint = loopPoint
+        loopPoint = loopPoint,
+        midiTitle = metadata.title,
+        midiArtist = metadata.artist
     )
 }
 
@@ -299,4 +334,104 @@ private fun calculateMidiDurationMs(midiFile: File): Long {
     } catch (_: Exception) {
         0L
     }
+}
+
+private fun extractEmbeddedMidiMetadata(midiFile: File): EmbeddedMidiMetadata {
+    return runCatching {
+        val music = Midi1Music().apply { read(midiFile.readBytes().toList()) }
+        data class Candidate(val trackIndex: Int, val tick: Int, val text: String)
+        val titleCandidates = mutableListOf<Candidate>()
+        val textCandidates = mutableListOf<Candidate>()
+        val artistCandidates = mutableListOf<Candidate>()
+
+        for ((trackIndex, track) in music.tracks.withIndex()) {
+            var tick = 0
+            for (event in track.events) {
+                tick += event.deltaTime
+                val msg = event.message
+                if ((msg.statusByte.toInt() and 0xFF) != 0xFF) continue
+                val metaType = msg.msb.toInt() and 0xFF
+                val data = (msg as? Midi1CompoundMessage)?.extraData ?: continue
+                val text = decodeMidiMetaText(data) ?: continue
+                val candidate = Candidate(trackIndex = trackIndex, tick = tick, text = text)
+
+                when (metaType) {
+                    0x03 -> titleCandidates.add(candidate)
+                    0x01 -> {
+                        textCandidates.add(candidate)
+                        if (looksLikeArtistField(text)) artistCandidates.add(candidate)
+                    }
+                    0x02 -> artistCandidates.add(candidate)
+                }
+            }
+        }
+
+        val title = titleCandidates
+            .sortedWith(compareBy<Candidate> { it.trackIndex != 0 }.thenBy { it.tick })
+            .firstOrNull()
+            ?.text
+            ?: textCandidates.sortedBy { it.tick }.firstOrNull()?.text
+        val artist = artistCandidates.sortedBy { it.tick }.firstOrNull()?.text
+
+        EmbeddedMidiMetadata(title = title, artist = artist)
+    }.getOrElse {
+        EmbeddedMidiMetadata(title = null, artist = null)
+    }
+}
+
+private fun decodeMidiMetaText(data: ByteArray): String? {
+    if (data.isEmpty()) return null
+    val candidates = listOf(
+        decodeWithCharsetOrNull(data, Charsets.UTF_8),
+        decodeWithCharsetOrNull(data, Charset.forName("MS932")),
+        decodeWithCharsetOrNull(data, Charset.forName("EUC-JP")),
+        decodeWithCharsetOrNull(data, Charset.forName("ISO-2022-JP")),
+        decodeWithCharsetOrNull(data, Charsets.ISO_8859_1)
+    ).filterNotNull().map { it.trim().replace('\u0000', ' ') }.filter { it.isNotBlank() }
+
+    if (candidates.isEmpty()) return null
+    return candidates.maxByOrNull { scoreDecodedText(it) }
+}
+
+private fun decodeMidiMetaText(data: List<Byte>): String? = decodeMidiMetaText(data.toByteArray())
+
+private fun decodeWithCharsetOrNull(data: ByteArray, charset: Charset): String? {
+    return try {
+        val decoder = charset.newDecoder()
+            .onMalformedInput(CodingErrorAction.REPORT)
+            .onUnmappableCharacter(CodingErrorAction.REPORT)
+        decoder.decode(ByteBuffer.wrap(data)).toString()
+    } catch (_: CharacterCodingException) {
+        null
+    }
+}
+
+private fun scoreDecodedText(text: String): Int {
+    var score = 0
+    var jpCount = 0
+    var replacementCount = 0
+    var controlCount = 0
+    for (ch in text) {
+        when {
+            ch == '\uFFFD' -> replacementCount++
+            ch.isISOControl() && ch != '\n' && ch != '\r' && ch != '\t' -> controlCount++
+            ch in '\u3040'..'\u30FF' || ch in '\u4E00'..'\u9FFF' -> jpCount++
+        }
+    }
+    score += jpCount * 3
+    score -= replacementCount * 10
+    score -= controlCount * 5
+    if (text.any { it.isLetterOrDigit() }) score += 5
+    return score
+}
+
+private fun looksLikeArtistField(text: String): Boolean {
+    val s = text.lowercase()
+    return s.contains("artist") ||
+        s.contains("composer") ||
+        s.contains("arranger") ||
+        s.contains("author") ||
+        s.contains("music by") ||
+        s.contains("written by") ||
+        s.startsWith("by ")
 }

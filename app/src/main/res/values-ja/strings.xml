@@ -70,4 +70,6 @@
     <string name="file_details_duration">曲の長さ</string>
     <string name="file_details_loop_point">ループ地点</string>
     <string name="file_details_loop_none">なし</string>
+    <string name="file_details_midi_title">トラック名</string>
+    <string name="file_details_midi_artist">著作権</string>
 </resources>
