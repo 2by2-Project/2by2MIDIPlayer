@@ -206,8 +206,17 @@ class MainActivity : ComponentActivity() {
 
         val type = (intent.type ?: contentResolver.getType(uri) ?: "").lowercase()
         val path = uri.toString().lowercase()
-        val isMidi = type in setOf("audio/midi", "audio/x-midi", "application/midi", "application/x-midi")
-                || path.endsWith(".mid") || path.endsWith(".midi")
+        val midiMimeTypes = setOf(
+            "audio/midi",
+            "audio/mid",
+            "audio/x-midi",
+            "audio/x-mid",
+            "audio/sp-midi",
+            "application/midi",
+            "application/x-midi"
+        )
+        val hasMidiExtension = path.endsWith(".mid") || path.endsWith(".midi")
+        val isMidi = type in midiMimeTypes || (type == "application/octet-stream" && hasMidiExtension) || hasMidiExtension
         if (!isMidi) return
 
         externalOpenUri = uri
