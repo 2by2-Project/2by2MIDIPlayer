@@ -24,6 +24,7 @@ object SettingsDataStore {
     private val shuffleEnabledKey = booleanPreferencesKey("shuffle_enabled")
 
     private val demoFilesLoadedKey = booleanPreferencesKey("demo_files_loaded")
+    private val folderViewModeKey = intPreferencesKey("folder_view_mode")
 
     private val maxVoicesKey = intPreferencesKey("max_voices")
 
@@ -63,6 +64,11 @@ object SettingsDataStore {
             .map { it[demoFilesLoadedKey] ?: false }
             .distinctUntilChanged()
 
+    fun folderViewModeFlow(context: Context): Flow<Int> =
+        context.settingsDataStore.data
+            .map { it[folderViewModeKey] ?: 0 }
+            .distinctUntilChanged()
+
     fun maxVoicesFlow(context: Context): Flow<Int> =
         context.settingsDataStore.data
             .map { it[maxVoicesKey] ?: 40 }
@@ -96,6 +102,10 @@ object SettingsDataStore {
 
     suspend fun setDemoFilesLoaded(context: Context, loaded: Boolean) {
         context.settingsDataStore.edit { it[demoFilesLoadedKey] = loaded }
+    }
+
+    suspend fun setFolderViewMode(context: Context, mode: Int) {
+        context.settingsDataStore.edit { it[folderViewModeKey] = mode.coerceIn(0, 1) }
     }
 
     suspend fun setMaxVoices(context: Context, maxVoices: Int) {

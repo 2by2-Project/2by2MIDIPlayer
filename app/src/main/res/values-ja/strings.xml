@@ -11,6 +11,8 @@
     <string name="app_logo">アプリロゴ</string>
     <string name="search">検索</string>
     <string name="browse">ブラウズ</string>
+    <string name="view_grid">グリッド</string>
+    <string name="view_list">リスト</string>
     <string name="settings">設定</string>
     <string name="topbar_search_summary">ファイル名で検索</string>
     <string name="info_grant_storage_permission">ストレージの権限を付与してください</string>

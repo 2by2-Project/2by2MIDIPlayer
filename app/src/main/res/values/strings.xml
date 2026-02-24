@@ -10,6 +10,8 @@
     <string name="app_logo">App Logo</string>
     <string name="search">Search</string>
     <string name="browse">Browse</string>
+    <string name="view_grid">Grid</string>
+    <string name="view_list">List</string>
     <string name="settings">Settings</string>
     <string name="topbar_search_summary">Search by file name</string>
     <string name="info_grant_storage_permission">Please grant storage permission</string>

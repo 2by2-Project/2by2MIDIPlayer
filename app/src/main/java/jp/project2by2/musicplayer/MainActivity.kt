@@ -44,6 +44,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -55,7 +56,9 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -81,6 +84,8 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
+import androidx.compose.material.icons.filled.GridView
+import androidx.compose.material.icons.filled.ViewList
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
@@ -92,6 +97,8 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
+import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
@@ -112,6 +119,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
@@ -120,9 +128,13 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -222,6 +234,8 @@ fun MusicPlayerMainScreen(
     var playlistRefreshToken by remember { mutableLongStateOf(0L) }
     var pendingPlaylistCandidate by remember { mutableStateOf<MidiFileItem?>(null) }
     var showNowPlaying by remember { mutableStateOf(false) }
+    var folderViewModeOrdinal by rememberSaveable { mutableStateOf(0) }
+    var folderViewMode by remember { mutableStateOf(FolderViewMode.Grid) }
     var pianoRollData by remember { mutableStateOf<PianoRollData?>(null) }
     var miniLiftProgress by remember { mutableFloatStateOf(0f) }
     var miniLiftDragPx by remember { mutableFloatStateOf(0f) }
@@ -353,6 +367,12 @@ fun MusicPlayerMainScreen(
         if (!cacheSoundFontFile.exists()) {
             showSoundFontDialog = true
         }
+    }
+
+    LaunchedEffect(Unit) {
+        val savedMode = SettingsDataStore.folderViewModeFlow(context).first().coerceIn(0, 1)
+        folderViewModeOrdinal = savedMode
+        folderViewMode = if (savedMode == 1) FolderViewMode.List else FolderViewMode.Grid
     }
 
     // Back handler
@@ -534,6 +554,7 @@ fun MusicPlayerMainScreen(
     // Focus requester for search bar
     val focusRequesterSearch = remember { FocusRequester() }
     val folderGridState = rememberLazyGridState()
+    val folderListState = rememberLazyListState()
     val animatedFolderKeys = remember { mutableSetOf<String>() }
 
     // Main screen start
@@ -894,7 +915,17 @@ fun MusicPlayerMainScreen(
                                             selectedFolderCoverUri = folder.coverUri
                                         },
                                         onDemoMusicClick = { handleDemoMusicClick() },
-                                        isDemoLoading = isDemoLoading
+                                        isDemoLoading = isDemoLoading,
+                                        viewMode = folderViewMode,
+                                        onViewModeChange = { mode ->
+                                            folderViewMode = mode
+                                            val persisted = if (mode == FolderViewMode.List) 1 else 0
+                                            folderViewModeOrdinal = persisted
+                                            scope.launch {
+                                                SettingsDataStore.setFolderViewMode(context, persisted)
+                                            }
+                                        },
+                                        listState = folderListState
                                     )
                                     BrowseScreen.Files -> {
                                         val items = midiFiles.filter { it.folderKey == folderKey }
@@ -1772,32 +1803,149 @@ private fun MidiFileActionsDialog(
 private fun FolderGrid(
     items: List<FolderItem>,
     gridState: LazyGridState = rememberLazyGridState(),
+    listState: LazyListState = rememberLazyListState(),
     animatedKeys: MutableSet<String> = remember { mutableSetOf() },
     onFolderClick: (FolderItem) -> Unit,
     onDemoMusicClick: () -> Unit,
-    isDemoLoading: Boolean = false
+    isDemoLoading: Boolean = false,
+    viewMode: FolderViewMode,
+    onViewModeChange: (FolderViewMode) -> Unit
 ) {
-    LazyVerticalGrid(
-        columns = GridCells.Fixed(2),
-        modifier = Modifier.fillMaxSize(),
-        state = gridState,
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-        contentPadding = PaddingValues(16.dp)
+    var headerVisible by rememberSaveable { mutableStateOf(true) }
+
+    val headerScrollBehavior = remember {
+        object : NestedScrollConnection {
+            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                when {
+                    available.y > 1f -> headerVisible = true   // 下方向スクロールで表示
+                    available.y < -1f -> headerVisible = false // 上方向スクロールで非表示
+                }
+                return Offset.Zero
+            }
+        }
+    }
+
+    Column(
+        modifier = Modifier.fillMaxSize()
+            .nestedScroll(headerScrollBehavior)
     ) {
-        itemsIndexed(items, key = { _, item -> item.key }) { index, folder ->
-            FolderCardAnimated(
+        AnimatedVisibility(
+            visible = headerVisible,
+            enter = fadeIn() + slideInVertically { -it / 2 },
+            exit = fadeOut() + slideOutVertically { -it / 2 }
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                val folderCount = items.size
+                Text(
+                    text = "$folderCount folders",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(modifier = Modifier.weight(1f))
+                SingleChoiceSegmentedButtonRow {
+                    SegmentedButton(
+                        selected = viewMode == FolderViewMode.Grid,
+                        onClick = { onViewModeChange(FolderViewMode.Grid) },
+                        shape = androidx.compose.material3.SegmentedButtonDefaults.itemShape(index = 0, count = 2),
+                        icon = {},
+                        label = {
+                            Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                                Icon(imageVector = Icons.Default.GridView, contentDescription = stringResource(id = R.string.view_grid))
+                            }
+                        }
+                    )
+                    SegmentedButton(
+                        selected = viewMode == FolderViewMode.List,
+                        onClick = { onViewModeChange(FolderViewMode.List) },
+                        shape = androidx.compose.material3.SegmentedButtonDefaults.itemShape(index = 1, count = 2),
+                        icon = {},
+                        label = {
+                            Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                                Icon(imageVector = Icons.Default.ViewList, contentDescription = stringResource(id = R.string.view_list))
+                            }
+                        }
+                    )
+                }
+            }
+        }
+
+        if (viewMode == FolderViewMode.Grid) {
+            LazyVerticalGrid(
+                columns = GridCells.Fixed(2),
+                modifier = Modifier.fillMaxSize(),
+                state = gridState,
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                contentPadding = PaddingValues(16.dp)
+            ) {
+                itemsIndexed(items, key = { _, item -> item.key }) { index, folder ->
+                    FolderCardAnimated(
+                        folder = folder,
+                        index = index,
+                        animatedKeys = animatedKeys,
+                        onClick = { onFolderClick(folder) }
+                    )
+                }
+
+                item(span = { GridItemSpan(maxLineSpan) }) {
+                    if (isDemoLoading) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 24.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            CircularProgressIndicator(modifier = Modifier.size(32.dp))
+                            androidx.compose.foundation.layout.Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                text = stringResource(id = R.string.loading_demo_files),
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
+                    } else {
+                        DemoMusicButton(
+                            onClick = onDemoMusicClick,
+                            modifier = Modifier.padding(top = 12.dp)
+                        )
+                    }
+                }
+            }
+        } else {
+            FolderList(
+                items = items,
+                listState = listState,
+                onFolderClick = onFolderClick,
+                onDemoMusicClick = onDemoMusicClick,
+                isDemoLoading = isDemoLoading
+            )
+        }
+    }
+}
+
+@Composable
+private fun FolderList(
+    items: List<FolderItem>,
+    listState: LazyListState = rememberLazyListState(),
+    onFolderClick: (FolderItem) -> Unit,
+    onDemoMusicClick: () -> Unit,
+    isDemoLoading: Boolean
+) {
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        state = listState,
+        contentPadding = PaddingValues(bottom = 72.dp)
+    ) {
+        items(items, key = { it.key }) { folder ->
+            FolderListRow(
                 folder = folder,
-                index = index,
-                animatedKeys = animatedKeys,
                 onClick = { onFolderClick(folder) }
             )
         }
-
-        // Demo music button at bottom - spans full width
-        item(
-            span = { GridItemSpan(maxLineSpan) }
-        ) {
+        item {
             if (isDemoLoading) {
                 Column(
                     modifier = Modifier
@@ -1819,6 +1967,54 @@ private fun FolderGrid(
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun FolderListRow(
+    folder: FolderItem,
+    onClick: () -> Unit
+) {
+    val coverBitmap = rememberCoverBitmap(folder.coverUri)
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        if (coverBitmap != null) {
+            Image(
+                bitmap = coverBitmap,
+                contentDescription = null,
+                modifier = Modifier
+                    .size(56.dp)
+                    .clipToBounds(),
+                contentScale = ContentScale.Crop
+            )
+        } else {
+            Box(
+                modifier = Modifier
+                    .size(56.dp)
+                    .background(MaterialTheme.colorScheme.surfaceVariant),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Folder,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+        Spacer(modifier = Modifier.width(12.dp))
+        Text(
+            text = folder.name,
+            modifier = Modifier
+                .weight(1f)
+                .clipToBounds()
+                .basicMarquee(Int.MAX_VALUE),
+            maxLines = 1
+        )
     }
 }
 
@@ -2147,6 +2343,11 @@ private enum class BrowseScreen {
 private enum class RootTab {
     Browse,
     Playlists
+}
+
+private enum class FolderViewMode {
+    Grid,
+    List
 }
 
 private data class MidiFileItem(
