@@ -84,6 +84,32 @@ interface PlaylistDao {
 
     @Query("UPDATE playlists SET updated_at = :updatedAt WHERE id = :playlistId")
     suspend fun touchPlaylist(playlistId: Long, updatedAt: Long)
+
+    @Query("UPDATE playlists SET name = :name, updated_at = :updatedAt WHERE id = :playlistId")
+    suspend fun renamePlaylist(playlistId: Long, name: String, updatedAt: Long)
+
+    @Query("UPDATE playlist_items SET position = :position WHERE id = :itemId AND playlist_id = :playlistId")
+    suspend fun updatePlaylistItemPosition(playlistId: Long, itemId: Long, position: Int)
+
+    @Query("DELETE FROM playlist_items WHERE playlist_id = :playlistId")
+    suspend fun deleteAllPlaylistItems(playlistId: Long)
+
+    @Query("DELETE FROM playlist_items WHERE playlist_id = :playlistId AND id NOT IN (:keepItemIds)")
+    suspend fun deletePlaylistItemsNotIn(playlistId: Long, keepItemIds: List<Long>)
+
+    @Transaction
+    suspend fun reorderPlaylistItems(playlistId: Long, orderedItemIds: List<Long>, updatedAt: Long) {
+        if (orderedItemIds.isEmpty()) {
+            deleteAllPlaylistItems(playlistId)
+            touchPlaylist(playlistId, updatedAt)
+            return
+        }
+        deletePlaylistItemsNotIn(playlistId, orderedItemIds)
+        orderedItemIds.forEachIndexed { index, itemId ->
+            updatePlaylistItemPosition(playlistId, itemId, index)
+        }
+        touchPlaylist(playlistId, updatedAt)
+    }
 }
 
 @Database(
@@ -126,6 +152,7 @@ data class PlaylistSummary(
 )
 
 data class PlaylistTrack(
+    val itemId: Long = 0,
     val uriString: String,
     val title: String?,
     val artist: String?,
@@ -187,6 +214,7 @@ class PlaylistRepository(private val dao: PlaylistDao) {
             .sortedBy { it.position }
             .map {
                 PlaylistTrack(
+                    itemId = it.id,
                     uriString = it.uriString,
                     title = it.titleCache,
                     artist = it.artistCache,
@@ -199,6 +227,17 @@ class PlaylistRepository(private val dao: PlaylistDao) {
 
     suspend fun getPlaylistName(playlistId: Long): String? {
         return dao.getPlaylistWithItems(playlistId)?.playlist?.name
+    }
+
+    suspend fun renamePlaylist(playlistId: Long, newName: String) {
+        val trimmed = newName.trim()
+        if (trimmed.isEmpty()) return
+        dao.renamePlaylist(playlistId, trimmed, System.currentTimeMillis())
+    }
+
+    suspend fun reorderPlaylistItems(playlistId: Long, orderedItemIds: List<Long>) {
+        if (orderedItemIds.isEmpty()) return
+        dao.reorderPlaylistItems(playlistId, orderedItemIds, System.currentTimeMillis())
     }
 }
 
