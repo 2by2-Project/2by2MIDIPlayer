@@ -75,6 +75,8 @@
     <string name="file_details_duration">Duration</string>
     <string name="file_details_loop_point">Loop point</string>
     <string name="file_details_loop_none">None</string>
+    <string name="file_details_midi_title">Track Name</string>
+    <string name="file_details_midi_artist">Copyright</string>
     <string name="edit_loop_point_title">Edit Loop Point</string>
     <string name="set_loop_point">Set Loop Point</string>
     <string name="save">Save</string>

@@ -92,6 +92,7 @@ import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material.icons.filled.GridView
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.ViewList
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
@@ -245,6 +246,7 @@ fun MusicPlayerMainScreen(
     var playlistRefreshToken by remember { mutableLongStateOf(0L) }
     var pendingPlaylistCandidate by remember { mutableStateOf<MidiFileItem?>(null) }
     var showNowPlaying by remember { mutableStateOf(false) }
+    var showNowPlayingActions by remember { mutableStateOf(false) }
     var folderViewModeOrdinal by rememberSaveable { mutableStateOf(0) }
     var folderViewMode by remember { mutableStateOf(FolderViewMode.Grid) }
     var pianoRollData by remember { mutableStateOf<PianoRollData?>(null) }
@@ -1092,6 +1094,8 @@ fun MusicPlayerMainScreen(
                 fileUri = selectedMidiFileUri,
                 playbackService = playbackService,
                 pianoRollData = pianoRollData,
+                showActions = true,
+                onActionsClick = { showNowPlayingActions = true },
                 onSeekToMs = { ms -> controllerFuture.get().seekTo(ms) },
                 onPrevious = {
                     scope.launch {
@@ -1127,6 +1131,8 @@ fun MusicPlayerMainScreen(
                 fileUri = selectedMidiFileUri,
                 playbackService = playbackService,
                 pianoRollData = pianoRollData,
+                showActions = true,
+                onActionsClick = { showNowPlayingActions = true },
                 onSeekToMs = { ms -> controllerFuture.get().seekTo(ms) },
                 onPrevious = {
                     scope.launch {
@@ -1195,6 +1201,50 @@ fun MusicPlayerMainScreen(
                     playlistRefreshToken = System.currentTimeMillis()
                     pendingPlaylistCandidate = null
                 }
+            }
+        )
+    }
+
+    if (showNowPlayingActions && selectedMidiFileUri != null) {
+        val currentUri = selectedMidiFileUri!!
+        val currentTitle = playbackService?.getCurrentTitle()
+            ?.takeIf { it.isNotBlank() }
+            ?: currentUri.lastPathSegment?.substringAfterLast('/')
+            ?: context.getString(R.string.unknown)
+        MidiFileActionsDialog(
+            title = currentTitle,
+            onDismiss = { showNowPlayingActions = false },
+            showPlayAction = false,
+            onPlay = {},
+            onShare = {
+                showNowPlayingActions = false
+                shareMidiFile(context, currentUri)
+            },
+            onDetails = {
+                showNowPlayingActions = false
+                val intent = Intent(context, FileDetailsActivity::class.java).apply {
+                    putExtra(FileDetailsActivity.EXTRA_URI, currentUri)
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+                context.startActivity(intent)
+            },
+            onEditLoopPoint = {
+                showNowPlayingActions = false
+                val intent = Intent(context, EditLoopPointActivity::class.java).apply {
+                    putExtra(EditLoopPointActivity.EXTRA_URI, currentUri)
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+                context.startActivity(intent)
+            },
+            onAddToPlaylist = {
+                showNowPlayingActions = false
+                pendingPlaylistCandidate = MidiFileItem(
+                    uri = currentUri,
+                    title = currentTitle,
+                    folderName = playbackService?.currentArtist.orEmpty(),
+                    durationMs = playbackService?.getDurationMs() ?: 0L,
+                    folderKey = ""
+                )
             }
         )
     }
@@ -1367,6 +1417,8 @@ private fun NowPlayingPianoRollSheet(
     fileUri: Uri?,
     playbackService: PlaybackService?,
     pianoRollData: PianoRollData?,
+    showActions: Boolean = false,
+    onActionsClick: () -> Unit = {},
     onSeekToMs: (Long) -> Unit,
     onPrevious: () -> Unit,
     onNext: () -> Unit,
@@ -1444,8 +1496,6 @@ private fun NowPlayingPianoRollSheet(
     // For seekbar slider
     var isSeeking by remember { mutableStateOf(false) }
     var sliderValue by remember { mutableStateOf(0.0f) }
-
-    // derivedStateOf・亥ｱ謇蛹厄ｼ・
     val progress by remember(ui?.positionMs, ui?.durationMs) {
         derivedStateOf {
             val duration = ui?.durationMs ?: 0L
@@ -1517,6 +1567,15 @@ private fun NowPlayingPianoRollSheet(
                         maxLines = 1,
                         style = MaterialTheme.typography.bodyMedium,
                     )
+                }
+                if (showActions) {
+                    IconButton(onClick = onActionsClick) {
+                        Icon(
+                            imageVector = Icons.Default.MoreVert,
+                            contentDescription = null,
+                            modifier = Modifier.padding(8.dp)
+                        )
+                    }
                 }
             }
             when {
@@ -2054,6 +2113,7 @@ private fun MidiFileRow(
 private fun MidiFileActionsDialog(
     title: String,
     onDismiss: () -> Unit,
+    showPlayAction: Boolean = true,
     onPlay: () -> Unit,
     onShare: () -> Unit,
     onDetails: () -> Unit,
@@ -2068,10 +2128,12 @@ private fun MidiFileActionsDialog(
                 modifier = Modifier.fillMaxWidth(),
                 verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
-                ElevatedButton(onClick = onPlay, modifier = Modifier.fillMaxWidth()) {
-                    Icon(imageVector = Icons.Filled.PlayArrow, contentDescription = null)
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(text = stringResource(id = R.string.action_play_in_next_track))
+                if (showPlayAction) {
+                    ElevatedButton(onClick = onPlay, modifier = Modifier.fillMaxWidth()) {
+                        Icon(imageVector = Icons.Filled.PlayArrow, contentDescription = null)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(text = stringResource(id = R.string.action_play_in_next_track))
+                    }
                 }
                 ElevatedButton(onClick = onShare, modifier = Modifier.fillMaxWidth()) {
                     Icon(imageVector = Icons.Filled.Share, contentDescription = null)
