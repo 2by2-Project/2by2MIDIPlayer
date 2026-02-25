@@ -93,6 +93,7 @@ import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.QueueMusic
 import androidx.compose.material.icons.filled.ViewList
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
@@ -864,7 +865,7 @@ fun MusicPlayerMainScreen(
                         },
                         icon = {
                             Icon(
-                                imageVector = Icons.Default.MusicNote,
+                                imageVector = Icons.Default.QueueMusic,
                                 contentDescription = stringResource(id = R.string.playlists),
                                 modifier = Modifier.size(20.dp)
                             )
@@ -2198,7 +2199,7 @@ private fun MidiFileActionsDialog(
                     Text(text = stringResource(id = R.string.action_details))
                 }
                 ElevatedButton(onClick = onAddToPlaylist, modifier = Modifier.fillMaxWidth()) {
-                    Icon(imageVector = Icons.Filled.MusicNote, contentDescription = null)
+                    Icon(imageVector = Icons.Default.QueueMusic, contentDescription = null)
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(text = stringResource(id = R.string.action_add_to_playlist))
                 }
