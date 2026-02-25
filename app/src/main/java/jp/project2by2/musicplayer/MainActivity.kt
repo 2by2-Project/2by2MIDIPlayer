@@ -124,6 +124,7 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -269,11 +270,44 @@ fun MusicPlayerMainScreen(
     var playlistEditOrderDraft by remember { mutableStateOf<List<MidiFileItem>>(emptyList()) }
 
     val midiFiles = remember { mutableStateListOf<MidiFileItem>() }
+    val midiMetadataCache = remember { mutableStateMapOf<String, MidiMetadata>() }
+    val midiMetadataLoading = remember { mutableStateMapOf<String, Boolean>() }
     val folderItems = remember { mutableStateListOf<FolderItem>() }
+    val midiParser = remember(context) { MidiParser(context.contentResolver) }
 
     var isDemoLoading by remember { mutableStateOf(false) }
     var demoFilesLoaded by remember { mutableStateOf(false) }
     val playlistRepository = remember(context) { PlaylistStore.repository(context) }
+
+    fun applyMidiMetadata(uri: Uri, metadata: MidiMetadata) {
+        val metadataTitle = metadata.title?.takeIf { it.isNotBlank() }
+        val metadataArtist = metadata.copyright?.takeIf { it.isNotBlank() }
+        val index = midiFiles.indexOfFirst { it.uri == uri }
+        if (index < 0) return
+        val current = midiFiles[index]
+        if (current.metadataTitle == metadataTitle && current.metadataArtist == metadataArtist) return
+        midiFiles[index] = current.copy(
+            metadataTitle = metadataTitle,
+            metadataArtist = metadataArtist
+        )
+    }
+
+    fun requestMidiMetadata(item: MidiFileItem) {
+        val key = item.uri.toString()
+        if (item.metadataTitle != null || item.metadataArtist != null) return
+        midiMetadataCache[key]?.let {
+            applyMidiMetadata(item.uri, it)
+            return
+        }
+        if (midiMetadataLoading[key] == true) return
+        midiMetadataLoading[key] = true
+        scope.launch {
+            val metadata = withContext(Dispatchers.IO) { midiParser.getMetadata(item.uri) }
+            midiMetadataCache[key] = metadata
+            applyMidiMetadata(item.uri, metadata)
+            midiMetadataLoading.remove(key)
+        }
+    }
 
     // Media3
     val sessionToken = SessionToken(context, ComponentName(context, PlaybackService::class.java))
@@ -932,7 +966,7 @@ fun MusicPlayerMainScreen(
                                             sourceItems = items.map {
                                                 MidiFileItem(
                                                     uri = Uri.parse(it.uriString),
-                                                    title = it.title.orEmpty(),
+                                                    fileName = it.title.orEmpty(),
                                                     folderName = summary.name,
                                                     folderKey = "playlist_${summary.id}",
                                                     durationMs = it.durationMs
@@ -1041,6 +1075,7 @@ fun MusicPlayerMainScreen(
                                         MidiFileList(
                                             items = items,
                                             selectedUri = selectedMidiFileUri,
+                                            onItemVisible = { requestMidiMetadata(it) },
                                             onItemClick = { tapped ->
                                                 handleMidiTap(
                                                     uri = tapped,
@@ -1060,11 +1095,12 @@ fun MusicPlayerMainScreen(
                                             midiFiles.toList()
                                         }
                                         val items = baseItems.filter {
-                                            it.title.contains(searchQuery, ignoreCase = true)
+                                            it.matchesSearch(searchQuery)
                                         }
                                         MidiFileList(
                                             items = items,
                                             selectedUri = selectedMidiFileUri,
+                                            onItemVisible = { requestMidiMetadata(it) },
                                             onItemClick = { tapped ->
                                                 handleMidiTap(
                                                     uri = tapped,
@@ -1198,8 +1234,8 @@ fun MusicPlayerMainScreen(
                         tracks = listOf(
                             PlaylistTrack(
                                 uriString = candidate.uri.toString(),
-                                title = candidate.title,
-                                artist = candidate.folderName,
+                                title = candidate.displayTitle(),
+                                artist = candidate.metadataArtist ?: candidate.folderName,
                                 artworkUri = selectedFolderCoverUri?.toString(),
                                 durationMs = candidate.durationMs,
                                 position = 0
@@ -1249,7 +1285,9 @@ fun MusicPlayerMainScreen(
                 showNowPlayingActions = false
                 pendingPlaylistCandidate = MidiFileItem(
                     uri = currentUri,
-                    title = currentTitle,
+                    fileName = currentTitle,
+                    metadataTitle = currentTitle,
+                    metadataArtist = playbackService?.currentArtist,
                     folderName = playbackService?.currentArtist.orEmpty(),
                     durationMs = playbackService?.getDurationMs() ?: 0L,
                     folderKey = ""
@@ -1796,6 +1834,7 @@ private fun MidiFileList(
     onMoveItem: (Long, Int) -> Unit = { _, _ -> },
     onRemoveItem: (Long) -> Unit = {},
     selectedUri: Uri?,
+    onItemVisible: (MidiFileItem) -> Unit = {},
     onItemClick: (Uri) -> Unit,
     onAddToPlaylist: (MidiFileItem) -> Unit,
     onQueueNext: (MidiFileItem) -> Unit
@@ -1823,6 +1862,9 @@ private fun MidiFileList(
             items = items,
             key = { index, item -> item.playlistItemId ?: "${item.uri}#$index" }
         ) { index, item ->
+            LaunchedEffect(item.uri) {
+                onItemVisible(item)
+            }
             val itemId = item.playlistItemId
             val activeId = activeDragItemId
             val activeIndex = if (activeId != null) {
@@ -2057,15 +2099,16 @@ private fun MidiFileRow(
                 modifier = Modifier.weight(1f).padding(16.dp)
             ) {
             Text(
-                text = item.title,
+                text = item.displayTitle(),
                 maxLines = 1,
                 color = contentColor,
                 modifier = Modifier.clipToBounds()
                     .basicMarquee(Int.MAX_VALUE)
             )
-            if (item.folderName.isNotBlank()) {
+            val secondaryText = item.displaySecondaryText()
+            if (!secondaryText.isNullOrBlank()) {
                 Text(
-                    text = item.folderName,
+                    text = secondaryText,
                     style = MaterialTheme.typography.bodySmall,
                     modifier = Modifier.alpha(0.5f),
                     maxLines = 1,
@@ -2084,7 +2127,7 @@ private fun MidiFileRow(
 
     if (showActions && !showReorderHandle) {
         MidiFileActionsDialog(
-            title = item.title,
+            title = item.displayTitle(),
             onDismiss = { showActions = false },
             onPlay = {
                 showActions = false
@@ -2576,6 +2619,10 @@ private fun PlaylistTracks(
     onQueueNext: (MidiFileItem, List<MidiFileItem>) -> Unit
 ) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val midiParser = remember(context) { MidiParser(context.contentResolver) }
+    val metadataCache = remember(playlistId) { mutableStateMapOf<String, MidiMetadata>() }
+    val metadataLoading = remember(playlistId) { mutableStateMapOf<String, Boolean>() }
     val loadedItems = produceState(initialValue = emptyList<MidiFileItem>(), playlistId, refreshToken) {
         value = withContext(Dispatchers.IO) {
             repository.getPlaylistItems(playlistId).map {
@@ -2584,7 +2631,7 @@ private fun PlaylistTracks(
                 MidiFileItem(
                     playlistItemId = it.itemId,
                     uri = uri,
-                    title = it.title ?: uri.lastPathSegment.orEmpty(),
+                    fileName = it.title ?: uri.lastPathSegment.orEmpty(),
                     folderName = playlistName,
                     folderKey = "playlist_$playlistId",
                     durationMs = duration
@@ -2592,19 +2639,68 @@ private fun PlaylistTracks(
             }
         }
     }.value
+    val loadedItemsState = remember(playlistId) { mutableStateListOf<MidiFileItem>() }
     val editItems = remember(playlistId) { mutableStateListOf<MidiFileItem>() }
+
+    fun applyMetadata(uri: Uri, metadata: MidiMetadata) {
+        val metadataTitle = metadata.title?.takeIf { it.isNotBlank() }
+        val metadataArtist = metadata.copyright?.takeIf { it.isNotBlank() }
+        val loadedIndex = loadedItemsState.indexOfFirst { it.uri == uri }
+        if (loadedIndex >= 0) {
+            val current = loadedItemsState[loadedIndex]
+            if (current.metadataTitle != metadataTitle || current.metadataArtist != metadataArtist) {
+                loadedItemsState[loadedIndex] = current.copy(
+                    metadataTitle = metadataTitle,
+                    metadataArtist = metadataArtist
+                )
+            }
+        }
+        val editIndex = editItems.indexOfFirst { it.uri == uri }
+        if (editIndex >= 0) {
+            val current = editItems[editIndex]
+            if (current.metadataTitle != metadataTitle || current.metadataArtist != metadataArtist) {
+                editItems[editIndex] = current.copy(
+                    metadataTitle = metadataTitle,
+                    metadataArtist = metadataArtist
+                )
+                onEditItemsChanged(editItems.toList())
+            }
+        }
+    }
+
+    fun requestMetadata(item: MidiFileItem) {
+        if (item.metadataTitle != null || item.metadataArtist != null) return
+        val key = item.uri.toString()
+        metadataCache[key]?.let {
+            applyMetadata(item.uri, it)
+            return
+        }
+        if (metadataLoading[key] == true) return
+        metadataLoading[key] = true
+        scope.launch {
+            val metadata = withContext(Dispatchers.IO) { midiParser.getMetadata(item.uri) }
+            metadataCache[key] = metadata
+            applyMetadata(item.uri, metadata)
+            metadataLoading.remove(key)
+        }
+    }
+
+    LaunchedEffect(loadedItems) {
+        loadedItemsState.clear()
+        loadedItemsState.addAll(loadedItems)
+    }
 
     LaunchedEffect(playlistId, isEditMode, loadedItems) {
         if (isEditMode) {
             editItems.clear()
-            editItems.addAll(loadedItems)
+            editItems.addAll(loadedItemsState)
             onEditItemsChanged(editItems.toList())
         } else {
             onEditItemsChanged(emptyList())
         }
     }
 
-    val visibleItems = if (isEditMode) editItems else loadedItems
+    val visibleItems = if (isEditMode) editItems else loadedItemsState
 
     MidiFileList(
         items = visibleItems,
@@ -2629,6 +2725,7 @@ private fun PlaylistTracks(
             onEditItemsChanged(editItems.toList())
         },
         selectedUri = selectedUri,
+        onItemVisible = { requestMetadata(it) },
         onItemClick = { uri ->
             onItemClick(uri.toString(), visibleItems)
         },
@@ -2716,7 +2813,7 @@ private fun AddToPlaylistDialog(
     }.value
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(text = candidate.title) },
+        title = { Text(text = candidate.displayTitle()) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 ElevatedButton(
@@ -2767,11 +2864,35 @@ private enum class FolderViewMode {
 private data class MidiFileItem(
     val playlistItemId: Long? = null,
     val uri: Uri,
-    val title: String,
+    val fileName: String,
+    val metadataTitle: String? = null,
+    val metadataArtist: String? = null,
     val folderName: String,
     val folderKey: String,
     val durationMs: Long
 )
+
+private fun MidiFileItem.displayTitle(): String {
+    return metadataTitle?.takeIf { it.isNotBlank() } ?: fileName
+}
+
+private fun MidiFileItem.displaySecondaryText(): String? {
+    if (metadataTitle.isNullOrBlank()) {
+        return folderName.takeIf { it.isNotBlank() }
+    }
+    val artist = metadataArtist?.takeIf { it.isNotBlank() }
+    return if (artist != null) {
+        "$fileName - $artist"
+    } else {
+        fileName
+    }
+}
+
+private fun MidiFileItem.matchesSearch(query: String): Boolean {
+    return fileName.contains(query, ignoreCase = true) ||
+        (metadataTitle?.contains(query, ignoreCase = true) == true) ||
+        (metadataArtist?.contains(query, ignoreCase = true) == true)
+}
 
 private data class FolderItem(
     val key: String,
@@ -2840,7 +2961,7 @@ private fun queryMidiFiles(context: Context): List<MidiFileItem> {
             results.add(
                 MidiFileItem(
                     uri = uri,
-                    title = name,
+                    fileName = name,
                     folderName = folderName,
                     folderKey = folderKey,
                     durationMs = duration
@@ -2910,7 +3031,7 @@ private suspend fun queryDemoMidiFiles(context: Context): List<MidiFileItem> = w
 
             results.add(MidiFileItem(
                 uri = uri,
-                title = fileName,
+                fileName = fileName,
                 folderName = demoFolderName,
                 folderKey = "assets_demo",
                 durationMs = durationMs
@@ -2920,7 +3041,7 @@ private suspend fun queryDemoMidiFiles(context: Context): List<MidiFileItem> = w
         e.printStackTrace()
     }
 
-    return@withContext results.sortedBy { it.title.lowercase() }
+    return@withContext results.sortedBy { it.fileName.lowercase() }
 }
 
 private fun extractFolderKey(relativePath: String?, dataPath: String?): String {
