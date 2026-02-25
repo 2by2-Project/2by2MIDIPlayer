@@ -14,7 +14,7 @@
     <string name="view_grid">グリッド</string>
     <string name="view_list">リスト</string>
     <string name="settings">設定</string>
-    <string name="topbar_search_summary">ファイル名で検索</string>
+    <string name="topbar_search_summary">ファイル名・曲名・アーティストで検索</string>
     <string name="info_grant_storage_permission">ストレージの権限を付与してください</string>
     <string name="info_no_mid_files_found">MIDIファイルがありません</string>
     <string name="info_no_matching_files">一致するファイルが見つかりませんでした</string>
