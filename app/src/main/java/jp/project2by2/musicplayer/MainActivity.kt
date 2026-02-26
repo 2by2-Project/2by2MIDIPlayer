@@ -22,6 +22,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.spring
@@ -1944,14 +1945,10 @@ private fun MidiFileList(
                             "dragEnd itemId=$itemId from=$fromIndex to=$toIndex delta=$delta offsetPx=$finalOffsetPx rowHeight=$rowHeight"
                         )
                         if (delta != 0) {
-                            // Keep projected state aligned with final drop slot until list reorder is applied.
-                            activeDragOffsetPx = (toIndex - fromIndex) * rowHeight
+                            // Clear drag projection before applying reorder so non-dragged rows don't keep sliding.
+                            activeDragOffsetPx = 0f
+                            activeDragItemId = null
                             onMoveItem(itemId, delta)
-                            scope.launch {
-                                withFrameNanos { }
-                                activeDragOffsetPx = 0f
-                                activeDragItemId = null
-                            }
                         } else {
                             activeDragOffsetPx = 0f
                             activeDragItemId = null
@@ -2019,6 +2016,16 @@ private fun MidiFileRow(
         targetValue = if (isRemoving) 1f else 0f,
         animationSpec = tween(durationMillis = 220),
         label = "playlist_remove_progress"
+    )
+    val editLeadingWidth by animateDpAsState(
+        targetValue = if (showReorderHandle) 44.dp else 0.dp,
+        animationSpec = tween(durationMillis = 220),
+        label = "playlist_edit_leading_width"
+    )
+    val deleteButtonAlpha by animateFloatAsState(
+        targetValue = if (showReorderHandle) 1f else 0f,
+        animationSpec = tween(durationMillis = 220),
+        label = "playlist_delete_fade"
     )
     val background = if (isSelected) {
         MaterialTheme.colorScheme.primaryContainer.copy(0.25f)
@@ -2103,16 +2110,25 @@ private fun MidiFileRow(
                 .background(background, RoundedCornerShape(4.dp)),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            if (showReorderHandle) {
-                IconButton(
-                    onClick = onDeleteClick,
-                    modifier = Modifier.padding(start = 6.dp).size(32.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.RemoveCircle,
-                        contentDescription = null,
-                        tint = Color(0xFFC62828)
-                    )
+            Box(
+                modifier = Modifier
+                    .width(editLeadingWidth)
+                    .padding(start = if (showReorderHandle) 6.dp else 0.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                if (showReorderHandle || deleteButtonAlpha > 0f) {
+                    IconButton(
+                        onClick = onDeleteClick,
+                        modifier = Modifier
+                            .size(32.dp)
+                            .graphicsLayer { alpha = deleteButtonAlpha }
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.RemoveCircle,
+                            contentDescription = null,
+                            tint = Color(0xFFC62828)
+                        )
+                    }
                 }
             }
             Column(
