@@ -112,7 +112,6 @@ class EditLoopPointActivity : ComponentActivity() {
 
     // Save original settings to restore on exit
     private var originalLoopEnabled = false
-    private var originalLoopMode = 0
 
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
@@ -124,14 +123,12 @@ class EditLoopPointActivity : ComponentActivity() {
                 playbackService?.pause()
             }
 
-            // Save original loop settings and force enable loop
+            // Save original loop setting and force enable loop
             lifecycleScope.launch {
                 originalLoopEnabled = SettingsDataStore.loopEnabledFlow(this@EditLoopPointActivity).first()
-                originalLoopMode = SettingsDataStore.loopModeFlow(this@EditLoopPointActivity).first()
 
-                // Force enable loop with infinite mode for editing
+                // Force enable loop for editing
                 SettingsDataStore.setLoopEnabled(this@EditLoopPointActivity, true)
-                SettingsDataStore.setLoopMode(this@EditLoopPointActivity, 0)
             }
         }
         override fun onServiceDisconnected(name: ComponentName?) {
@@ -189,10 +186,9 @@ class EditLoopPointActivity : ComponentActivity() {
     override fun onPause() {
         super.onPause()
 
-        // Restore original loop settings when pausing
+        // Restore original loop setting when pausing
         lifecycleScope.launch {
             SettingsDataStore.setLoopEnabled(this@EditLoopPointActivity, originalLoopEnabled)
-            SettingsDataStore.setLoopMode(this@EditLoopPointActivity, originalLoopMode)
         }
     }
 

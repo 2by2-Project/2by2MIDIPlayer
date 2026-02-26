@@ -128,7 +128,6 @@ private fun SettingsScreen(playbackService: PlaybackService?) {
     var reverbStrength by remember { mutableStateOf(1f) }
 
     val loopEnabled by SettingsDataStore.loopEnabledFlow(context).collectAsState(initial = false)
-    val loopMode by SettingsDataStore.loopModeFlow(context).collectAsState(initial = 0)
     val shuffleEnabled by SettingsDataStore.shuffleEnabledFlow(context).collectAsState(initial = false)
 
     var showSoundFontDialog by remember { mutableStateOf(false) }
@@ -293,64 +292,6 @@ private fun SettingsScreen(playbackService: PlaybackService?) {
                             }
                         }
                     )
-                }
-                item {
-                    AnimatedVisibility(
-                        visible = loopEnabled,
-                        enter = expandVertically(expandFrom = Alignment.Top) + fadeIn(),
-                        exit = shrinkVertically(shrinkTowards = Alignment.Top) + fadeOut()
-                    ) {
-                        Surface(
-                            modifier = Modifier.padding(horizontal = 16.dp).fillMaxWidth(),
-                            color = MaterialTheme.colorScheme.surfaceVariant.copy(0.5f),
-                            shape = MaterialTheme.shapes.small
-                        ) {
-                            Column(
-                                modifier = Modifier.padding(8.dp)
-                            ) {
-                                SettingsRadioItem(
-                                    text = stringResource(id = R.string.settings_playback_loop_play_indefinitely),
-                                    enabled = loopEnabled,
-                                    selected = loopMode == 0,
-                                    onClick = {
-                                        scope.launch {
-                                            SettingsDataStore.setLoopMode(context, 0)
-                                        }
-                                    }
-                                )
-                                SettingsRadioItem(
-                                    text = stringResource(id = R.string.settings_playback_loop_play_indefinitely_when_detected),
-                                    enabled = loopEnabled,
-                                    selected = loopMode == 1,
-                                    onClick = {
-                                        scope.launch {
-                                            SettingsDataStore.setLoopMode(context, 1)
-                                        }
-                                    }
-                                )
-                                SettingsRadioItem(
-                                    text = stringResource(id = R.string.settings_playback_loop_loop_and_fade),
-                                    enabled = loopEnabled,
-                                    selected = loopMode == 2,
-                                    onClick = {
-                                        scope.launch {
-                                            SettingsDataStore.setLoopMode(context, 2)
-                                        }
-                                    }
-                                )
-                                SettingsRadioItem(
-                                    text = stringResource(id = R.string.settings_playback_loop_loop_and_fade_when_detected),
-                                    enabled = loopEnabled,
-                                    selected = loopMode == 3,
-                                    onClick = {
-                                        scope.launch {
-                                            SettingsDataStore.setLoopMode(context, 3)
-                                        }
-                                    }
-                                )
-                            }
-                        }
-                    }
                 }
                 item {
                     SettingsSwitchItem(
