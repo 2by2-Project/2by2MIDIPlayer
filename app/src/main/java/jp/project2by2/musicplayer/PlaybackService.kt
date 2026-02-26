@@ -456,12 +456,14 @@ class PlaybackService : MediaSessionService() {
 
     fun setTemporaryLoopPoint(loopMs: Long?) {
         temporaryLoopPointMs = loopMs
+        applyLoopRuntimeFlags()
     }
 
     fun getTemporaryLoopPoint(): Long? = temporaryLoopPointMs
 
     fun setTemporaryEndPoint(endMs: Long?) {
         temporaryEndPointMs = endMs?.coerceAtLeast(0L)
+        applyLoopRuntimeFlags()
         refreshBoundarySync()
     }
 
@@ -646,16 +648,20 @@ class PlaybackService : MediaSessionService() {
     private fun applyLoopRuntimeFlags() {
         val h = handles ?: return
         val lp = loopPoint
-        BASS.BASS_ChannelFlags(h.stream, BASS.BASS_SAMPLE_LOOP, BASS.BASS_SAMPLE_LOOP)
+        val hasTemporaryLoop = temporaryLoopPointMs != null || temporaryEndPointMs != null
+        val enableSampleLoop = loopEnabledSnapshot || hasTemporaryLoop
+        val sampleLoopFlags = if (enableSampleLoop) BASS.BASS_SAMPLE_LOOP else 0
+        BASS.BASS_ChannelFlags(h.stream, sampleLoopFlags, BASS.BASS_SAMPLE_LOOP)
 
-        val enableDecay = lp?.hasLoopStartMarker == true
+        val enableDecay = enableSampleLoop && lp?.hasLoopStartMarker == true
         val decayMask = BASSMIDI.BASS_MIDI_DECAYSEEK or BASSMIDI.BASS_MIDI_DECAYEND
         val decayFlags = if (enableDecay) decayMask else 0
         BASS.BASS_ChannelFlags(h.stream, decayFlags, decayMask)
         if (LOOP_DIAG) {
             Log.d(
                 LOOP_TAG,
-                "applyLoopRuntimeFlags loopEnabled=$loopEnabledSnapshot hasLoopMarker=${lp?.hasLoopStartMarker} autoSampleLoop=false " +
+                "applyLoopRuntimeFlags loopEnabled=$loopEnabledSnapshot hasTemporaryLoop=$hasTemporaryLoop " +
+                    "hasLoopMarker=${lp?.hasLoopStartMarker} sampleLoopEnabled=$enableSampleLoop " +
                     "decayEnabled=$enableDecay flags=${BASS.BASS_ChannelFlags(h.stream, 0, 0)}"
             )
         }
@@ -1024,6 +1030,8 @@ class PlaybackService : MediaSessionService() {
 
     private fun setLoopEnabledFromController(enabled: Boolean) {
         loopEnabledSnapshot = enabled
+        applyLoopRuntimeFlags()
+        refreshBoundarySync()
         runBlocking {
             SettingsDataStore.setLoopEnabled(this@PlaybackService, enabled)
         }
