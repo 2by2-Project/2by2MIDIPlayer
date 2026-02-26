@@ -56,7 +56,6 @@ class PlaybackService : MediaSessionService() {
     private var loopRepeatCount: Int = 0
     private val transitionInProgress = AtomicBoolean(false)
     @Volatile private var loopEnabledSnapshot: Boolean = false
-    @Volatile private var loopModeSnapshot: Int = 0
     @Volatile private var shuffleEnabledSnapshot: Boolean = false
     private val midiParser by lazy { MidiParser(contentResolver) }
 
@@ -138,12 +137,6 @@ class PlaybackService : MediaSessionService() {
             SettingsDataStore.loopEnabledFlow(this@PlaybackService).collectLatest {
                 loopEnabledSnapshot = it
                 applyLoopRuntimeFlags()
-                refreshBoundarySync()
-            }
-        }
-        serviceScope.launch {
-            SettingsDataStore.loopModeFlow(this@PlaybackService).collectLatest {
-                loopModeSnapshot = it.coerceIn(0, 3)
                 refreshBoundarySync()
             }
         }
@@ -479,7 +472,7 @@ class PlaybackService : MediaSessionService() {
             Log.d(
                 LOOP_TAG,
                 "boundary fired curTick=$currentTick curMs=$curMs loopStartTick=${lp.startTick} " +
-                    "loopEndTick=${lp.endTick} tempEndMs=$temporaryEndPointMs loopMode=$loopModeSnapshot loopEnabled=$loopEnabledSnapshot"
+                    "loopEndTick=${lp.endTick} tempEndMs=$temporaryEndPointMs loopEnabled=$loopEnabledSnapshot"
             )
         }
 
@@ -498,34 +491,27 @@ class PlaybackService : MediaSessionService() {
             return
         }
 
-        val loopEnabled = loopEnabledSnapshot
-        val loopMode = loopModeSnapshot
         val shuffleEnabled = shuffleEnabledSnapshot
-        if (!loopEnabled) {
+        if (loopEnabledSnapshot) {
+            loopRepeatCount = 0
+            seekToLoopStart(streamHandle, lp)
+            return
+        }
+
+        if (!lp.hasLoopStartMarker) {
             loopRepeatCount = 0
             serviceScope.launch { playNextInQueue(shuffleEnabled) }
             return
         }
 
-        val requireLoopMarker = (loopMode == 1 || loopMode == 3)
-        if (requireLoopMarker && !lp.hasLoopStartMarker) {
-            loopRepeatCount = 0
-            serviceScope.launch { playNextInQueue(shuffleEnabled) }
+        if (loopRepeatCount < LOOP_REPEAT_BEFORE_FADE_COUNT) {
+            loopRepeatCount += 1
+            seekToLoopStart(streamHandle, lp)
             return
         }
 
-        if (loopMode == 2 || loopMode == 3) {
-            if (loopRepeatCount < LOOP_REPEAT_BEFORE_FADE_COUNT) {
-                loopRepeatCount += 1
-                seekToLoopStart(streamHandle, lp)
-                return
-            }
-            loopRepeatCount = 0
-            fadeOutFromLoopStartThenPlayNext(streamHandle, lp, shuffleEnabled)
-            return
-        }
-
-        seekToLoopStart(streamHandle, lp)
+        loopRepeatCount = 0
+        fadeOutFromLoopStartThenPlayNext(streamHandle, lp, shuffleEnabled)
     }
 
     private fun seekToLoopStart(streamHandle: Int, lp: LoopPoint) {
@@ -580,7 +566,7 @@ class PlaybackService : MediaSessionService() {
             syncType = BASS.BASS_SYNC_POS or BASS.BASS_SYNC_MIXTIME
             syncParam = endBytes
             syncLabel = "TEMP_END_MS"
-        } else if (loopEnabledSnapshot && lp.hasLoopStartMarker) {
+        } else if (lp.hasLoopStartMarker) {
             val effectiveEndTick = getEffectiveLoopEndTick(h.stream, lp)
             val earlyEndTick = (effectiveEndTick - LOOP_SYNC_EARLY_TICKS).coerceAtLeast(lp.startTick.toLong().coerceAtLeast(1L))
             syncType = BASS.BASS_SYNC_POS or BASS.BASS_SYNC_MIXTIME or BASSMIDI.BASS_POS_MIDI_TICK
@@ -599,7 +585,7 @@ class PlaybackService : MediaSessionService() {
             syncProc,
             0
         )
-        if (syncHandle == 0 && loopEnabledSnapshot && lp.hasLoopStartMarker) {
+        if (syncHandle == 0 && lp.hasLoopStartMarker) {
             // Fallback path if tick+mixtime sync is not accepted on this runtime.
             val bytes = BASS.BASS_ChannelGetLength(h.stream, BASS.BASS_POS_BYTE)
             syncHandle = BASS.BASS_ChannelSetSync(
@@ -635,7 +621,7 @@ class PlaybackService : MediaSessionService() {
         val lp = loopPoint
         BASS.BASS_ChannelFlags(h.stream, BASS.BASS_SAMPLE_LOOP, BASS.BASS_SAMPLE_LOOP)
 
-        val enableDecay = loopEnabledSnapshot && (lp?.hasLoopStartMarker == true)
+        val enableDecay = lp?.hasLoopStartMarker == true
         val decayMask = BASSMIDI.BASS_MIDI_DECAYSEEK or BASSMIDI.BASS_MIDI_DECAYEND
         val decayFlags = if (enableDecay) decayMask else 0
         BASS.BASS_ChannelFlags(h.stream, decayFlags, decayMask)
