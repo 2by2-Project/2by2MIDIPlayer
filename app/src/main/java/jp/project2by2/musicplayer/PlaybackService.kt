@@ -13,14 +13,22 @@ import android.util.Log
 import android.media.AudioAttributes
 import android.media.AudioFocusRequest
 import android.media.AudioManager
+import android.graphics.Bitmap
+import android.graphics.Color
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
+import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.session.CommandButton
 import androidx.media3.session.DefaultMediaNotificationProvider
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
+import androidx.media3.session.SessionCommand
+import androidx.media3.session.SessionResult
+import com.google.common.util.concurrent.Futures
+import com.google.common.util.concurrent.ListenableFuture
 import com.un4seen.bass.BASS
 import com.un4seen.bass.BASSMIDI
 import dev.atsushieno.ktmidi.Midi1Music
@@ -42,6 +50,7 @@ import kotlin.random.Random
 
 @UnstableApi
 class PlaybackService : MediaSessionService() {
+    private val commandToggleLoop = SessionCommand(CUSTOM_COMMAND_TOGGLE_LOOP, android.os.Bundle.EMPTY)
     private val binder = LocalBinder()
 
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -86,6 +95,7 @@ class PlaybackService : MediaSessionService() {
     // Temporary loop point for editing mode
     private var temporaryLoopPointMs: Long? = null
     private var temporaryEndPointMs: Long? = null
+    private var notificationPlaceholderArtworkUri: Uri? = null
 
     inner class LocalBinder : Binder() {
         fun getService(): PlaybackService = this@PlaybackService
@@ -99,15 +109,26 @@ class PlaybackService : MediaSessionService() {
         bassPlayer = BassPlayer(
             looper = Looper.getMainLooper(),
             initialTitle = getString(R.string.app_name),
+            initialArtworkUri = getOrCreateNotificationPlaceholderArtworkUri(),
             onPlay = { playInternalFromController() },
             onPause = { pauseInternalFromController(releaseFocus = true) },
             onSeek = { ms -> seekInternalFromController(ms) },
+            onSeekToPrevious = { seekInternalFromController(0L) },
+            onSeekToNext = {
+                serviceScope.launch { playNextInQueue(shuffleEnabledSnapshot) }
+            },
+            onSetLoopEnabled = { enabled ->
+                serviceScope.launch { setLoopEnabledFromController(enabled) }
+            },
+            onSetShuffleEnabled = { enabled ->
+                serviceScope.launch { setShuffleEnabledFromController(enabled) }
+            },
             queryPositionMs = { getSessionPositionMs() },
             queryDurationMs = { getDurationMs() },
             queryIsPlaying = { isPlaying() },
+            queryLoopEnabled = { loopEnabledSnapshot },
+            queryShuffleEnabled = { shuffleEnabledSnapshot },
         )
-        mediaSession = MediaSession.Builder(this, bassPlayer).build()
-
         val contentIntent = PendingIntent.getActivity(
             this,
             0,
@@ -120,6 +141,7 @@ class PlaybackService : MediaSessionService() {
         mediaSession = MediaSession.Builder(this, bassPlayer)
             .setId(getString(R.string.playback_session_id))
             .setSessionActivity(contentIntent)
+            .setCallback(mediaSessionCallback)
             .build()
 
         notificationProvider = DefaultMediaNotificationProvider.Builder(this)
@@ -130,6 +152,7 @@ class PlaybackService : MediaSessionService() {
                 provider.setSmallIcon(R.drawable.notification_icon)
             }
         setMediaNotificationProvider(notificationProvider)
+        updateNotificationControls()
     }
 
     private fun observePlaybackSettings() {
@@ -138,10 +161,14 @@ class PlaybackService : MediaSessionService() {
                 loopEnabledSnapshot = it
                 applyLoopRuntimeFlags()
                 refreshBoundarySync()
+                refreshPlayerUiAndNotification()
             }
         }
         serviceScope.launch {
-            SettingsDataStore.shuffleEnabledFlow(this@PlaybackService).collectLatest { shuffleEnabledSnapshot = it }
+            SettingsDataStore.shuffleEnabledFlow(this@PlaybackService).collectLatest {
+                shuffleEnabledSnapshot = it
+                refreshPlayerUiAndNotification()
+            }
         }
     }
 
@@ -265,7 +292,7 @@ class PlaybackService : MediaSessionService() {
         currentArtist = metadata.copyright ?: fallbackArtist
 
         // Media3
-        bassPlayer.setMetadata(currentTitle!!, currentArtist, currentArtworkUri)
+        bassPlayer.setMetadata(currentTitle!!, currentArtist, artworkUriForMetadata(currentArtworkUri))
         bassPlayer.invalidateFromBass()
 
         loopPoint = precomputedLoopPoint ?: findLoopPoint(cacheMidiFile)
@@ -995,6 +1022,137 @@ class PlaybackService : MediaSessionService() {
         }
     }
 
+    private fun setLoopEnabledFromController(enabled: Boolean) {
+        loopEnabledSnapshot = enabled
+        runBlocking {
+            SettingsDataStore.setLoopEnabled(this@PlaybackService, enabled)
+        }
+        refreshPlayerUiAndNotification()
+    }
+
+    private fun setShuffleEnabledFromController(enabled: Boolean) {
+        shuffleEnabledSnapshot = enabled
+        runBlocking {
+            SettingsDataStore.setShuffleEnabled(this@PlaybackService, enabled)
+        }
+        refreshPlayerUiAndNotification()
+    }
+
+    private fun updateNotificationControls() {
+        val apply = {
+            val buttons = buildNotificationButtons()
+            mediaSession.setMediaButtonPreferences(buttons)
+        }
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            apply()
+        } else {
+            mainHandler.post(apply)
+        }
+    }
+
+    private fun refreshPlayerUiAndNotification() {
+        val apply = {
+            updateNotificationControls()
+            bassPlayer.invalidateFromBass()
+            triggerNotificationUpdate()
+        }
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            apply()
+        } else {
+            mainHandler.post(apply)
+        }
+    }
+
+    private fun buildNotificationButtons(): List<CommandButton> {
+        val loopIcon = if (loopEnabledSnapshot) CommandButton.ICON_REPEAT_ALL else CommandButton.ICON_REPEAT_OFF
+        val loopLabel = if (loopEnabledSnapshot) "Loop on" else "Loop off"
+        val shuffleIcon = if (shuffleEnabledSnapshot) CommandButton.ICON_SHUFFLE_ON else CommandButton.ICON_SHUFFLE_OFF
+        val shuffleLabel = if (shuffleEnabledSnapshot) "Shuffle on" else "Shuffle off"
+        return listOf(
+            CommandButton.Builder(CommandButton.ICON_PREVIOUS)
+                .setPlayerCommand(Player.COMMAND_SEEK_TO_PREVIOUS)
+                .setDisplayName("Back to start")
+                .setSlots(CommandButton.SLOT_BACK)
+                .build(),
+            CommandButton.Builder(CommandButton.ICON_NEXT)
+                .setPlayerCommand(Player.COMMAND_SEEK_TO_NEXT)
+                .setDisplayName("Next track")
+                .setSlots(CommandButton.SLOT_FORWARD)
+                .build(),
+            CommandButton.Builder(loopIcon)
+                .setSessionCommand(commandToggleLoop)
+                .setDisplayName(loopLabel)
+                .setSlots(CommandButton.SLOT_OVERFLOW)
+                .build(),
+            CommandButton.Builder(shuffleIcon)
+                .setPlayerCommand(Player.COMMAND_SET_SHUFFLE_MODE)
+                .setDisplayName(shuffleLabel)
+                .setSlots(CommandButton.SLOT_BACK_SECONDARY, CommandButton.SLOT_OVERFLOW)
+                .build()
+        )
+    }
+
+    private fun artworkUriForMetadata(sourceArtworkUri: Uri?): Uri? {
+        return sourceArtworkUri ?: getOrCreateNotificationPlaceholderArtworkUri()
+    }
+
+    private fun getOrCreateNotificationPlaceholderArtworkUri(): Uri? {
+        notificationPlaceholderArtworkUri?.let { return it }
+        val output = File(cacheDir, "notification_placeholder_art.png")
+        if (!output.exists()) {
+            runCatching {
+                val bmp = Bitmap.createBitmap(256, 256, Bitmap.Config.ARGB_8888)
+                bmp.eraseColor(Color.parseColor("#9E9E9E"))
+                output.outputStream().use { stream ->
+                    bmp.compress(Bitmap.CompressFormat.PNG, 100, stream)
+                    stream.flush()
+                }
+                bmp.recycle()
+            }.onFailure {
+                return null
+            }
+        }
+        return Uri.fromFile(output).also { notificationPlaceholderArtworkUri = it }
+    }
+
+    private val mediaSessionCallback = object : MediaSession.Callback {
+        override fun onConnect(
+            session: MediaSession,
+            controller: MediaSession.ControllerInfo
+        ): MediaSession.ConnectionResult {
+            val sessionCommands = MediaSession.ConnectionResult.DEFAULT_SESSION_COMMANDS
+                .buildUpon()
+                .add(commandToggleLoop)
+                .build()
+            val playerCommands = MediaSession.ConnectionResult.DEFAULT_PLAYER_COMMANDS
+                .buildUpon()
+                .add(Player.COMMAND_SEEK_TO_PREVIOUS)
+                .add(Player.COMMAND_SEEK_TO_NEXT)
+                .add(Player.COMMAND_SET_SHUFFLE_MODE)
+                .build()
+            return MediaSession.ConnectionResult.AcceptedResultBuilder(session)
+                .setAvailableSessionCommands(sessionCommands)
+                .setAvailablePlayerCommands(playerCommands)
+                .setMediaButtonPreferences(buildNotificationButtons())
+                .build()
+        }
+
+        override fun onCustomCommand(
+            session: MediaSession,
+            controller: MediaSession.ControllerInfo,
+            customCommand: SessionCommand,
+            args: android.os.Bundle
+        ): ListenableFuture<SessionResult> {
+            return when (customCommand.customAction) {
+                CUSTOM_COMMAND_TOGGLE_LOOP -> {
+                    serviceScope.launch { setLoopEnabledFromController(!loopEnabledSnapshot) }
+                    Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
+                }
+                else -> Futures.immediateFuture(SessionResult(SessionResult.RESULT_ERROR_NOT_SUPPORTED))
+            }
+        }
+    }
+
     companion object {
         private const val NOTIFICATION_CHANNEL_ID = "playback"
         private const val NOTIFICATION_ID = 1001
@@ -1002,7 +1160,7 @@ class PlaybackService : MediaSessionService() {
         private const val SOUND_FONT_FILE = "soundfont.sf2"
         private const val LOOP_REPEAT_BEFORE_FADE_COUNT = 1
         private const val FADE_OUT_DURATION_MS = 8000
-
+        private const val CUSTOM_COMMAND_TOGGLE_LOOP = "jp.project2by2.musicplayer.command.TOGGLE_LOOP"
         private class SmfReader(private val bytes: ByteArray) {
             var pos: Int = 0
             fun canRead(n: Int): Boolean = pos + n <= bytes.size
