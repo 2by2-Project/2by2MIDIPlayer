@@ -670,9 +670,13 @@ fun MusicPlayerMainScreen(
                                 singleLine = true
                             )
                         } else {
+                            val topTitle = if (selectedPlaylistId != null) {
+                                selectedPlaylistName
+                            } else {
+                                selectedFolderName
+                            } ?: stringResource(id = R.string.unknown)
                             Text(
-                                text = selectedFolderName ?: selectedPlaylistName
-                                ?: stringResource(id = R.string.unknown),
+                                text = topTitle,
                                 modifier = Modifier.fillMaxWidth()
                                     .clipToBounds()
                                     .basicMarquee(Int.MAX_VALUE),
@@ -729,15 +733,20 @@ fun MusicPlayerMainScreen(
                                     val draftName = playlistNameDraft.trim()
                                     val currentName = selectedPlaylistName.orEmpty()
                                     val orderedIds = playlistEditOrderDraft.mapNotNull { it.playlistItemId }
+                                    val shouldRename = draftName.isNotEmpty() && draftName != currentName
+                                    if (shouldRename) {
+                                        // Reflect the new name immediately after finishing edit mode.
+                                        selectedPlaylistName = draftName
+                                    }
                                     scope.launch {
-                                        if (draftName.isNotEmpty() && draftName != currentName) {
+                                        if (shouldRename) {
                                             playlistRepository.renamePlaylist(playlistId, draftName)
-                                            selectedPlaylistName = draftName
                                         }
                                         if (orderedIds.isNotEmpty()) {
                                             playlistRepository.reorderPlaylistItems(playlistId, orderedIds)
                                         }
                                         playlistRefreshToken = System.currentTimeMillis()
+                                        playlistNameDraft = selectedPlaylistName.orEmpty()
                                     }
                                     isPlaylistEditModeActive = false
                                 }
@@ -838,6 +847,11 @@ fun MusicPlayerMainScreen(
                         selected = rootTab == RootTab.Browse,
                         onClick = {
                             rootTab = RootTab.Browse
+                            isSearchActive = false
+                            searchQuery = ""
+                            selectedFolderKey = null
+                            selectedFolderName = null
+                            selectedFolderCoverUri = null
                             isPlaylistEditModeActive = false
                             playlistNameDraft = ""
                             playlistEditOrderDraft = emptyList()
@@ -858,10 +872,15 @@ fun MusicPlayerMainScreen(
                         onClick = {
                             rootTab = RootTab.Playlists
                             isPlaylistEditModeActive = false
+                            playlistNameDraft = ""
+                            playlistEditOrderDraft = emptyList()
+                            selectedPlaylistId = null
+                            selectedPlaylistName = null
                             isSearchActive = false
                             searchQuery = ""
                             selectedFolderKey = null
                             selectedFolderName = null
+                            selectedFolderCoverUri = null
                         },
                         icon = {
                             Icon(
@@ -1863,7 +1882,7 @@ private fun MidiFileList(
             items = items,
             key = { index, item -> item.playlistItemId ?: "${item.uri}#$index" }
         ) { index, item ->
-            LaunchedEffect(item.uri) {
+            LaunchedEffect(item.uri, item.metadataTitle, item.metadataArtist) {
                 onItemVisible(item)
             }
             val itemId = item.playlistItemId
@@ -2688,7 +2707,16 @@ private fun PlaylistTracks(
 
     LaunchedEffect(loadedItems) {
         loadedItemsState.clear()
-        loadedItemsState.addAll(loadedItems)
+        loadedItemsState.addAll(
+            loadedItems.map { item ->
+                metadataCache[item.uri.toString()]?.let { metadata ->
+                    item.copy(
+                        metadataTitle = metadata.title?.takeIf { it.isNotBlank() },
+                        metadataArtist = metadata.copyright?.takeIf { it.isNotBlank() }
+                    )
+                } ?: item
+            }
+        )
     }
 
     LaunchedEffect(playlistId, isEditMode, loadedItems) {
