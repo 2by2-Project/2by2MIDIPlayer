@@ -85,6 +85,7 @@ import androidx.compose.material.icons.filled.Loop
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Repeat
 import androidx.compose.material.icons.filled.RemoveCircle
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Share
@@ -95,6 +96,7 @@ import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.QueueMusic
+import androidx.compose.material.icons.filled.Repeat
 import androidx.compose.material.icons.filled.ViewList
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
@@ -284,13 +286,19 @@ fun MusicPlayerMainScreen(
     fun applyMidiMetadata(uri: Uri, metadata: MidiMetadata) {
         val metadataTitle = metadata.title?.takeIf { it.isNotBlank() }
         val metadataArtist = metadata.copyright?.takeIf { it.isNotBlank() }
+        val loopPointMs = metadata.loopPointMs
         val index = midiFiles.indexOfFirst { it.uri == uri }
         if (index < 0) return
         val current = midiFiles[index]
-        if (current.metadataTitle == metadataTitle && current.metadataArtist == metadataArtist) return
+        if (
+            current.metadataTitle == metadataTitle &&
+            current.metadataArtist == metadataArtist &&
+            current.loopPointMs == loopPointMs
+        ) return
         midiFiles[index] = current.copy(
             metadataTitle = metadataTitle,
-            metadataArtist = metadataArtist
+            metadataArtist = metadataArtist,
+            loopPointMs = loopPointMs
         )
     }
 
@@ -1095,6 +1103,7 @@ fun MusicPlayerMainScreen(
                                         val items = midiFiles.filter { it.folderKey == folderKey }
                                         MidiFileList(
                                             items = items,
+                                            showLoopMarkers = true,
                                             selectedUri = selectedMidiFileUri,
                                             onItemVisible = { requestMidiMetadata(it) },
                                             onItemClick = { tapped ->
@@ -1120,6 +1129,7 @@ fun MusicPlayerMainScreen(
                                         }
                                         MidiFileList(
                                             items = items,
+                                            showLoopMarkers = true,
                                             selectedUri = selectedMidiFileUri,
                                             onItemVisible = { requestMidiMetadata(it) },
                                             onItemClick = { tapped ->
@@ -1809,7 +1819,7 @@ private fun NowPlayingPianoRollSheet(
                     ) {
                         Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
                             Icon(
-                                imageVector = Icons.Default.Loop,
+                                imageVector = Icons.Default.Repeat,
                                 contentDescription = null,
                                 modifier = Modifier.size(sideControlIconSize)
                             )
@@ -1854,6 +1864,7 @@ private fun MidiFileList(
     isEditMode: Boolean = false,
     onMoveItem: (Long, Int) -> Unit = { _, _ -> },
     onRemoveItem: (Long) -> Unit = {},
+    showLoopMarkers: Boolean = false,
     selectedUri: Uri?,
     onItemVisible: (MidiFileItem) -> Unit = {},
     onItemClick: (Uri) -> Unit,
@@ -1973,6 +1984,7 @@ private fun MidiFileList(
                         removingItemIds.remove(itemId)
                     }
                 },
+                showLoopMarker = showLoopMarkers && item.loopPointMs != null,
                 onRowHeightMeasured = { h ->
                     if (h > 1f) measuredRowHeightPx = h
                 },
@@ -1991,6 +2003,7 @@ private fun MidiFileRow(
     item: MidiFileItem,
     rowModifier: Modifier = Modifier,
     isSelected: Boolean,
+    showLoopMarker: Boolean = false,
     showReorderHandle: Boolean = false,
     isRemoving: Boolean = false,
     onDragStart: () -> Unit = {},
@@ -2152,12 +2165,24 @@ private fun MidiFileRow(
                 )
             }
             }
-            Text(
-                text = formatDuration(item.durationMs),
-                style = MaterialTheme.typography.bodySmall,
-                modifier = Modifier.padding(16.dp),
-                color = contentColor
-            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                if (showLoopMarker) {
+                    Icon(
+                        imageVector = Icons.Default.Repeat,
+                        contentDescription = null,
+                        modifier = Modifier.size(16.dp),
+                        tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                    )
+                }
+                Text(
+                    text = formatDuration(item.durationMs),
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.padding(16.dp),
+                    color = contentColor
+                )
+            }
         }
     }
 
@@ -2912,6 +2937,7 @@ private data class MidiFileItem(
     val fileName: String,
     val metadataTitle: String? = null,
     val metadataArtist: String? = null,
+    val loopPointMs: Long? = null,
     val folderName: String,
     val folderKey: String,
     val durationMs: Long
