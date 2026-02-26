@@ -29,6 +29,7 @@ class BassPlayer(
     private var title: String = initialTitle
     private var artist: String? = null
     private var artworkUri: Uri? = null
+    private var pendingDiscontinuityPositionMs: Long? = null
 
     private val mediaId = "midi"
 
@@ -49,6 +50,17 @@ class BassPlayer(
     fun invalidateFromBass() {
         val update = {
             invalidateState()
+        }
+        if (Looper.myLooper() == applicationLooper) {
+            update()
+        } else {
+            playerHandler.post(update)
+        }
+    }
+
+    fun notifyLoopDiscontinuity(positionMs: Long) {
+        val update = {
+            pendingDiscontinuityPositionMs = positionMs
         }
         if (Looper.myLooper() == applicationLooper) {
             update()
@@ -89,14 +101,20 @@ class BassPlayer(
             .add(Player.COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM)
             .build()
 
-        return State.Builder()
+        val pendingDiscontinuity = pendingDiscontinuityPositionMs
+        pendingDiscontinuityPositionMs = null
+
+        val stateBuilder = State.Builder()
             .setAvailableCommands(commands)
             .setPlaylist(listOf(itemData))
             .setCurrentMediaItemIndex(0)
             .setPlaybackState(Player.STATE_READY)
             .setPlayWhenReady(isPlaying, Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST)
             .setContentPositionMs(posMs)
-            .build()
+        if (pendingDiscontinuity != null) {
+            stateBuilder.setPositionDiscontinuity(Player.DISCONTINUITY_REASON_SEEK, pendingDiscontinuity)
+        }
+        return stateBuilder.build()
     }
 
     override fun handleSetPlayWhenReady(playWhenReady: Boolean): ListenableFuture<*> {

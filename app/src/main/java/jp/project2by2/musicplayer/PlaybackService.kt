@@ -79,8 +79,10 @@ class PlaybackService : MediaSessionService() {
         PlaylistStore.repository(this)
     }
 
-    @Volatile private var loopPositionOverrideMs: Long? = null
-    @Volatile private var loopOverrideUntilUptimeMs: Long = 0L
+    @Volatile private var sessionPositionAnchorMs: Long = 0L
+    @Volatile private var sessionAnchorUptimeMs: Long = 0L
+    @Volatile private var sessionAnchorValid: Boolean = false
+    @Volatile private var sessionLastLoopUptimeMs: Long = 0L
 
     // Temporary loop point for editing mode
     private var temporaryLoopPointMs: Long? = null
@@ -101,7 +103,7 @@ class PlaybackService : MediaSessionService() {
             onPlay = { playInternalFromController() },
             onPause = { pauseInternalFromController(releaseFocus = true) },
             onSeek = { ms -> seekInternalFromController(ms) },
-            queryPositionMs = { getCurrentPositionMs() },
+            queryPositionMs = { getSessionPositionMs() },
             queryDurationMs = { getDurationMs() },
             queryIsPlaying = { isPlaying() },
         )
@@ -294,6 +296,7 @@ class PlaybackService : MediaSessionService() {
         }
 
         refreshBoundarySync()
+        setSessionPositionAnchor(positionMs = 0L)
 
         return true
     }
@@ -305,10 +308,12 @@ class PlaybackService : MediaSessionService() {
         registerNoisyReceiver()
 
         handles?.let { BASS.BASS_ChannelPlay(it.stream, false) }
+        setSessionPositionAnchor(readRawPositionMs())
         bassPlayer.invalidateFromBass()
     }
 
     fun pauseInternal(releaseFocus: Boolean) {
+        setSessionPositionAnchor(getSessionPositionMs())
         unregisterNoisyReceiver()
         if (releaseFocus) {
             abandonAudioFocus()
@@ -327,23 +332,58 @@ class PlaybackService : MediaSessionService() {
             BASS.BASS_ChannelPause(it.stream)
             BASS.BASS_ChannelSetPosition(it.stream, 0, BASS.BASS_POS_BYTE)
         }
+        setSessionPositionAnchor(0L)
         bassPlayer.invalidateFromBass()
     }
 
     fun getCurrentPositionMs(): Long {
+        return readRawPositionMs()
+    }
+
+    private fun readRawPositionMs(): Long {
         val h = handles ?: return 0L
         val bytes = BASS.BASS_ChannelGetPosition(h.stream, BASS.BASS_POS_BYTE)
         val secs = BASS.BASS_ChannelBytes2Seconds(h.stream, bytes)
-        val rawMs = (secs * 1000.0).toLong()
+        return (secs * 1000.0).toLong()
+    }
 
+    private fun getSessionPositionMs(): Long {
         val now = SystemClock.uptimeMillis()
-        val override = loopPositionOverrideMs
-        if (override != null && now < loopOverrideUntilUptimeMs) {
-            // Use override only during the immediate loop edge; once raw has caught up, trust raw.
-            return if (rawMs >= override + 30L) rawMs else override
+        val rawMs = readRawPositionMs()
+        if (!sessionAnchorValid) {
+            setSessionPositionAnchor(rawMs, now)
         }
 
-        return rawMs
+        val elapsedMs = (now - sessionAnchorUptimeMs).coerceAtLeast(0L)
+        var predictedMs = if (isPlayingBass()) {
+            sessionPositionAnchorMs + elapsedMs
+        } else {
+            sessionPositionAnchorMs
+        }
+
+        val loopWindow = getActiveLoopWindowMs()
+        if (loopWindow != null) {
+            predictedMs = wrapPositionInLoopWindow(predictedMs, loopWindow.first, loopWindow.second)
+        }
+
+        val durationMs = getDurationMs()
+        if (durationMs > 0L) {
+            predictedMs = predictedMs.coerceIn(0L, durationMs)
+        } else {
+            predictedMs = predictedMs.coerceAtLeast(0L)
+        }
+
+        // Away from loop edges, snap back to raw if drift grows unexpectedly.
+        val elapsedSinceLoop = now - sessionLastLoopUptimeMs
+        if (elapsedSinceLoop > 500L && kotlin.math.abs(predictedMs - rawMs) > 1000L) {
+            setSessionPositionAnchor(rawMs, now)
+            if (LOOP_DIAG) {
+                Log.d(LOOP_TAG, "sessionPos drift snap predicted=$predictedMs raw=$rawMs")
+            }
+            return rawMs
+        }
+
+        return predictedMs
     }
 
     fun setCurrentPositionMs(ms: Long) {
@@ -351,6 +391,7 @@ class PlaybackService : MediaSessionService() {
         val secs = ms.coerceAtLeast(0L).toDouble() / 1000.0
         val bytes = BASS.BASS_ChannelSeconds2Bytes(h.stream, secs)
         BASS.BASS_ChannelSetPosition(h.stream, bytes, BASS.BASS_POS_BYTE)
+        setSessionPositionAnchor(ms.coerceAtLeast(0L))
         bassPlayer.invalidateFromBass()
     }
 
@@ -395,7 +436,6 @@ class PlaybackService : MediaSessionService() {
 
     fun setTemporaryLoopPoint(loopMs: Long?) {
         temporaryLoopPointMs = loopMs
-        // Keep loopPositionOverrideMs untouched; it is only for notifyLooped() smoothing.
     }
 
     fun getTemporaryLoopPoint(): Long? = temporaryLoopPointMs
@@ -1245,10 +1285,12 @@ class PlaybackService : MediaSessionService() {
         }
         registerNoisyReceiver()
         handles?.let { BASS.BASS_ChannelPlay(it.stream, false) }
+        setSessionPositionAnchor(readRawPositionMs())
         bassPlayer.invalidateFromBass()
     }
 
     private fun pauseInternalFromController(releaseFocus: Boolean) {
+        setSessionPositionAnchor(getSessionPositionMs())
         handles?.let { BASS.BASS_ChannelPause(it.stream) }
         unregisterNoisyReceiver()
         if (releaseFocus) abandonAudioFocus()
@@ -1261,13 +1303,46 @@ class PlaybackService : MediaSessionService() {
     }
 
     private fun notifyLooped(startMs: Long) {
-        loopPositionOverrideMs = startMs
-        loopOverrideUntilUptimeMs = SystemClock.uptimeMillis() + 120L
+        val now = SystemClock.uptimeMillis()
+        sessionLastLoopUptimeMs = now
+        setSessionPositionAnchor(startMs, now)
+        if (LOOP_DIAG) {
+            Log.d(LOOP_TAG, "notifyLooped anchor=$startMs raw=${readRawPositionMs()}")
+        }
 
         mainHandler.post {
+            bassPlayer.notifyLoopDiscontinuity(startMs)
             bassPlayer.invalidateFromBass()
             triggerNotificationUpdate()
         }
+    }
+
+    private fun setSessionPositionAnchor(positionMs: Long, uptimeMs: Long = SystemClock.uptimeMillis()) {
+        sessionPositionAnchorMs = positionMs.coerceAtLeast(0L)
+        sessionAnchorUptimeMs = uptimeMs
+        sessionAnchorValid = true
+    }
+
+    private fun getActiveLoopWindowMs(): Pair<Long, Long>? {
+        val tempEnd = temporaryEndPointMs
+        if (tempEnd != null && tempEnd > 0L) {
+            val start = (temporaryLoopPointMs ?: loopPoint?.startMs ?: 0L).coerceIn(0L, tempEnd - 1L)
+            val end = tempEnd.coerceAtLeast(start + 1L)
+            return start to end
+        }
+
+        if (!loopEnabledSnapshot) return null
+        val lp = loopPoint ?: return null
+        if (!lp.hasLoopStartMarker) return null
+        if (lp.endMs <= lp.startMs) return null
+        return lp.startMs to lp.endMs
+    }
+
+    private fun wrapPositionInLoopWindow(positionMs: Long, startMs: Long, endMs: Long): Long {
+        val length = (endMs - startMs).coerceAtLeast(1L)
+        if (positionMs < startMs) return startMs
+        val delta = (positionMs - startMs) % length
+        return startMs + delta
     }
 }
 
