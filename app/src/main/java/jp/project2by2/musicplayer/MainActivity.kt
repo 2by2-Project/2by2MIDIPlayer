@@ -78,7 +78,11 @@ import androidx.compose.material.SliderDefaults
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Audiotrack
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Done
+import androidx.compose.material.icons.filled.DriveFileRenameOutline
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.EditNote
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Loop
@@ -94,6 +98,7 @@ import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material.icons.filled.GridView
+import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.QueueMusic
 import androidx.compose.material.icons.filled.Repeat
@@ -259,6 +264,10 @@ fun MusicPlayerMainScreen(
     var showCreatePlaylistDialog by remember { mutableStateOf(false) }
     var playlistRefreshToken by remember { mutableLongStateOf(0L) }
     var pendingPlaylistCandidate by remember { mutableStateOf<MidiFileItem?>(null) }
+    var activePlaylistActions by remember { mutableStateOf<PlaylistSummary?>(null) }
+    var renamePlaylistTarget by remember { mutableStateOf<PlaylistSummary?>(null) }
+    var deletePlaylistTarget by remember { mutableStateOf<PlaylistSummary?>(null) }
+    var openPlaylistInEditMode by remember { mutableStateOf(false) }
     var showNowPlaying by remember { mutableStateOf(false) }
     var showNowPlayingActions by remember { mutableStateOf(false) }
     var folderViewModeOrdinal by rememberSaveable { mutableStateOf(0) }
@@ -447,9 +456,10 @@ fun MusicPlayerMainScreen(
     }
 
     LaunchedEffect(selectedPlaylistId) {
-        isPlaylistEditModeActive = false
+        isPlaylistEditModeActive = openPlaylistInEditMode && selectedPlaylistId != null
         playlistNameDraft = selectedPlaylistName.orEmpty()
         playlistEditOrderDraft = emptyList()
+        openPlaylistInEditMode = false
     }
 
     // Back handler
@@ -670,28 +680,18 @@ fun MusicPlayerMainScreen(
                 },
                 title = {
                     if (selectedFolderKey != null || selectedPlaylistId != null) {
-                        if (isPlaylistEditModeActive) {
-                            OutlinedTextField(
-                                value = playlistNameDraft,
-                                onValueChange = { playlistNameDraft = it },
-                                modifier = Modifier,
-                                placeholder = { Text(text = selectedPlaylistName.orEmpty()) },
-                                singleLine = true
-                            )
+                        val topTitle = if (selectedPlaylistId != null) {
+                            selectedPlaylistName
                         } else {
-                            val topTitle = if (selectedPlaylistId != null) {
-                                selectedPlaylistName
-                            } else {
-                                selectedFolderName
-                            } ?: stringResource(id = R.string.unknown)
-                            Text(
-                                text = topTitle,
-                                modifier = Modifier.fillMaxWidth()
-                                    .clipToBounds()
-                                    .basicMarquee(Int.MAX_VALUE),
-                                textAlign = TextAlign.Center
-                            )
-                        }
+                            selectedFolderName
+                        } ?: stringResource(id = R.string.unknown)
+                        Text(
+                            text = topTitle,
+                            modifier = Modifier.fillMaxWidth()
+                                .clipToBounds()
+                                .basicMarquee(Int.MAX_VALUE),
+                            textAlign = TextAlign.Center
+                        )
                     } else {
                         Image(
                             painter = painterResource(id = R.drawable.logo_image),
@@ -729,64 +729,67 @@ fun MusicPlayerMainScreen(
                             }
                         }
                     }
-                    // Playlist edit button
-                    if (rootTab == RootTab.Playlists && selectedPlaylistId != null) {
-                        IconButton(
-                            onClick = {
-                                val playlistId = selectedPlaylistId ?: return@IconButton
-                                if (!isPlaylistEditModeActive) {
+                    if (!isPlaylistEditModeActive) {
+                        // Playlist edit start button
+                        if (rootTab == RootTab.Playlists && selectedPlaylistId != null) {
+                            IconButton(
+                                onClick = {
                                     playlistNameDraft = selectedPlaylistName.orEmpty()
                                     playlistEditOrderDraft = emptyList()
                                     isPlaylistEditModeActive = true
-                                } else {
-                                    val draftName = playlistNameDraft.trim()
-                                    val currentName = selectedPlaylistName.orEmpty()
-                                    val orderedIds = playlistEditOrderDraft.mapNotNull { it.playlistItemId }
-                                    val shouldRename = draftName.isNotEmpty() && draftName != currentName
-                                    if (shouldRename) {
-                                        // Reflect the new name immediately after finishing edit mode.
-                                        selectedPlaylistName = draftName
-                                    }
-                                    scope.launch {
-                                        if (shouldRename) {
-                                            playlistRepository.renamePlaylist(playlistId, draftName)
-                                        }
-                                        if (orderedIds.isNotEmpty()) {
-                                            playlistRepository.reorderPlaylistItems(playlistId, orderedIds)
-                                        }
-                                        playlistRefreshToken = System.currentTimeMillis()
-                                        playlistNameDraft = selectedPlaylistName.orEmpty()
-                                    }
-                                    isPlaylistEditModeActive = false
                                 }
-                            }
-                        ) {
-                            Surface(
-                                shape = RoundedCornerShape(50),
-                                color = if (isPlaylistEditModeActive) {
-                                    MaterialTheme.colorScheme.primaryContainer
-                                } else {
-                                    Color.Transparent
-                                },
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.Edit,
-                                    contentDescription = stringResource(id = R.string.search),
+                                    contentDescription = stringResource(id = R.string.action_done),
                                     modifier = Modifier.padding(8.dp)
                                 )
                             }
                         }
-                    }
-                    IconButton(
-                        onClick = {
-                            context.startActivity(Intent(context, SettingsActivity::class.java))
+                        // Settings button
+                        IconButton(
+                            onClick = {
+                                context.startActivity(Intent(context, SettingsActivity::class.java))
+                            }
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Settings,
+                                contentDescription = stringResource(id = R.string.settings),
+                                modifier = Modifier.padding(8.dp)
+                            )
                         }
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Settings,
-                            contentDescription = stringResource(id = R.string.settings),
-                            modifier = Modifier.padding(8.dp)
-                        )
+                    } else {
+                        // Playlist edit end button
+                        IconButton(
+                            onClick = {
+                                val playlistId = selectedPlaylistId ?: return@IconButton
+                                val draftName = playlistNameDraft.trim()
+                                val currentName = selectedPlaylistName.orEmpty()
+                                val orderedIds = playlistEditOrderDraft.mapNotNull { it.playlistItemId }
+                                val shouldRename = draftName.isNotEmpty() && draftName != currentName
+                                if (shouldRename) {
+                                    // Reflect the new name immediately after finishing edit mode.
+                                    selectedPlaylistName = draftName
+                                }
+                                scope.launch {
+                                    if (shouldRename) {
+                                        playlistRepository.renamePlaylist(playlistId, draftName)
+                                    }
+                                    if (orderedIds.isNotEmpty()) {
+                                        playlistRepository.reorderPlaylistItems(playlistId, orderedIds)
+                                    }
+                                    playlistRefreshToken = System.currentTimeMillis()
+                                    playlistNameDraft = selectedPlaylistName.orEmpty()
+                                }
+                                isPlaylistEditModeActive = false
+                            }
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Done,
+                                contentDescription = stringResource(id = R.string.action_done),
+                                modifier = Modifier.padding(8.dp)
+                            )
+                        }
                     }
                 },
                 modifier = Modifier.zIndex(1f),
@@ -981,6 +984,9 @@ fun MusicPlayerMainScreen(
                                 onOpenPlaylist = { summary ->
                                     selectedPlaylistId = summary.id
                                     selectedPlaylistName = summary.name
+                                },
+                                onShowPlaylistActions = { summary ->
+                                    activePlaylistActions = summary
                                 },
                                 onPlayPlaylist = { summary ->
                                     scope.launch {
@@ -1244,6 +1250,66 @@ fun MusicPlayerMainScreen(
                         playlistRefreshToken = System.currentTimeMillis()
                         showCreatePlaylistDialog = false
                     }
+                }
+            }
+        )
+    }
+
+    activePlaylistActions?.let { playlist ->
+        PlaylistActionsDialog(
+            title = playlist.name,
+            onDismiss = { activePlaylistActions = null },
+            onEdit = {
+                activePlaylistActions = null
+                openPlaylistInEditMode = true
+                selectedPlaylistId = playlist.id
+                selectedPlaylistName = playlist.name
+            },
+            onRename = {
+                activePlaylistActions = null
+                renamePlaylistTarget = playlist
+            },
+            onDelete = {
+                activePlaylistActions = null
+                deletePlaylistTarget = playlist
+            }
+        )
+    }
+
+    renamePlaylistTarget?.let { playlist ->
+        RenamePlaylistDialog(
+            initialName = playlist.name,
+            onDismiss = { renamePlaylistTarget = null },
+            onRename = { newName ->
+                scope.launch {
+                    playlistRepository.renamePlaylist(playlist.id, newName)
+                    if (selectedPlaylistId == playlist.id) {
+                        selectedPlaylistName = newName.trim()
+                        playlistNameDraft = newName.trim()
+                    }
+                    playlistRefreshToken = System.currentTimeMillis()
+                    renamePlaylistTarget = null
+                }
+            }
+        )
+    }
+
+    deletePlaylistTarget?.let { playlist ->
+        ConfirmDeletePlaylistDialog(
+            playlistName = playlist.name,
+            onDismiss = { deletePlaylistTarget = null },
+            onConfirm = {
+                scope.launch {
+                    playlistRepository.deletePlaylist(playlist.id)
+                    if (selectedPlaylistId == playlist.id) {
+                        isPlaylistEditModeActive = false
+                        playlistNameDraft = ""
+                        playlistEditOrderDraft = emptyList()
+                        selectedPlaylistId = null
+                        selectedPlaylistName = null
+                    }
+                    playlistRefreshToken = System.currentTimeMillis()
+                    deletePlaylistTarget = null
                 }
             }
         )
@@ -2264,7 +2330,7 @@ private fun MidiFileActionsDialog(
                     Text(text = stringResource(id = R.string.action_add_to_playlist))
                 }
                 /*ElevatedButton(onClick = onEditLoopPoint, modifier = Modifier.fillMaxWidth()) {
-                    Icon(imageVector = Icons.Filled.LocationOn, contentDescription = null)
+                    Icon(imageVector = Icons.Filled.Edit, contentDescription = null)
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(text = stringResource(id = R.string.action_edit_loop_point))
                 }*/
@@ -2610,6 +2676,7 @@ private fun PlaylistHome(
     refreshToken: Long,
     onCreatePlaylist: () -> Unit,
     onOpenPlaylist: (PlaylistSummary) -> Unit,
+    onShowPlaylistActions: (PlaylistSummary) -> Unit,
     onPlayPlaylist: (PlaylistSummary) -> Unit
 ) {
     val playlists = produceState(initialValue = emptyList<PlaylistSummary>(), refreshToken) {
@@ -2645,7 +2712,10 @@ private fun PlaylistHome(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clickable { onOpenPlaylist(playlist) }
+                            .combinedClickable(
+                                onClick = { onOpenPlaylist(playlist) },
+                                onLongClick = { onShowPlaylistActions(playlist) }
+                            )
                             .padding(horizontal = 16.dp, vertical = 12.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
@@ -2665,6 +2735,112 @@ private fun PlaylistHome(
             }
         }
     }
+}
+
+@Composable
+private fun PlaylistActionsDialog(
+    title: String,
+    onDismiss: () -> Unit,
+    onEdit: () -> Unit,
+    onRename: () -> Unit,
+    onDelete: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(text = title) },
+        text = {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                ElevatedButton(onClick = onEdit, modifier = Modifier.fillMaxWidth()) {
+                    Icon(imageVector = Icons.Filled.EditNote, contentDescription = null)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(text = stringResource(id = R.string.action_edit))
+                }
+                ElevatedButton(onClick = onRename, modifier = Modifier.fillMaxWidth()) {
+                    Icon(imageVector = Icons.Filled.DriveFileRenameOutline, contentDescription = null)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(text = stringResource(id = R.string.action_rename))
+                }
+                ElevatedButton(onClick = onDelete, modifier = Modifier.fillMaxWidth()) {
+                    Icon(imageVector = Icons.Filled.Delete, contentDescription = null)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(text = stringResource(id = R.string.action_delete))
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text(text = stringResource(id = R.string.cancel))
+            }
+        }
+    )
+}
+
+@Composable
+private fun RenamePlaylistDialog(
+    initialName: String,
+    onDismiss: () -> Unit,
+    onRename: (String) -> Unit
+) {
+    val focusRequesterPlaylistNameField = remember { FocusRequester() }
+    var name by remember(initialName) { mutableStateOf(initialName) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(text = stringResource(id = R.string.action_rename_playlist)) },
+        text = {
+            OutlinedTextField(
+                value = name,
+                onValueChange = { name = it },
+                singleLine = true,
+                placeholder = { Text(stringResource(id = R.string.playlist_name_hint)) },
+                modifier = Modifier.focusRequester(focusRequesterPlaylistNameField)
+            )
+            LaunchedEffect(Unit) {
+                focusRequesterPlaylistNameField.requestFocus()
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onRename(name) },
+                enabled = name.isNotBlank()
+            ) {
+                Text(text = stringResource(id = R.string.save))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text(text = stringResource(id = R.string.cancel))
+            }
+        }
+    )
+}
+
+@Composable
+private fun ConfirmDeletePlaylistDialog(
+    playlistName: String,
+    onDismiss: () -> Unit,
+    onConfirm: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(text = stringResource(id = R.string.action_delete_playlist)) },
+        text = {
+            Text(text = stringResource(id = R.string.confirm_delete_playlist_message, playlistName))
+        },
+        confirmButton = {
+            TextButton(onClick = onConfirm) {
+                Text(text = stringResource(id = R.string.action_delete))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text(text = stringResource(id = R.string.cancel))
+            }
+        }
+    )
 }
 
 @Composable

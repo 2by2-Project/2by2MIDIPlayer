@@ -65,11 +65,17 @@
     <string name="action_details">Details</string>
     <string name="action_edit_loop_point">Edit Loop Point</string>
     <string name="action_add_to_playlist">Add to playlist</string>
+    <string name="action_edit">Edit</string>
+    <string name="action_rename">Rename</string>
+    <string name="action_delete">Delete</string>
     <string name="playlists">Playlists</string>
     <string name="action_create_playlist">Create playlist</string>
+    <string name="action_rename_playlist">Rename playlist</string>
+    <string name="action_delete_playlist">Delete playlist</string>
     <string name="action_create">Create</string>
     <string name="playlist_name_hint">Playlist name</string>
     <string name="info_no_playlists_found">No playlists yet</string>
+    <string name="confirm_delete_playlist_message">Delete %1$s? This operation cannot be undone.</string>
     <string name="file_details_parent_folder">Parent folder</string>
     <string name="file_details_format">Format</string>
     <string name="file_details_duration">Duration</string>
@@ -80,4 +86,5 @@
     <string name="edit_loop_point_title">Edit Loop Point</string>
     <string name="set_loop_point">Set Loop Point</string>
     <string name="save">Save</string>
+    <string name="action_done">Done</string>
 </resources>

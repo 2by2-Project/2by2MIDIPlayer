@@ -88,6 +88,9 @@ interface PlaylistDao {
     @Query("UPDATE playlists SET name = :name, updated_at = :updatedAt WHERE id = :playlistId")
     suspend fun renamePlaylist(playlistId: Long, name: String, updatedAt: Long)
 
+    @Query("DELETE FROM playlists WHERE id = :playlistId")
+    suspend fun deletePlaylist(playlistId: Long)
+
     @Query("UPDATE playlist_items SET position = :position WHERE id = :itemId AND playlist_id = :playlistId")
     suspend fun updatePlaylistItemPosition(playlistId: Long, itemId: Long, position: Int)
 
@@ -233,6 +236,10 @@ class PlaylistRepository(private val dao: PlaylistDao) {
         val trimmed = newName.trim()
         if (trimmed.isEmpty()) return
         dao.renamePlaylist(playlistId, trimmed, System.currentTimeMillis())
+    }
+
+    suspend fun deletePlaylist(playlistId: Long) {
+        dao.deletePlaylist(playlistId)
     }
 
     suspend fun reorderPlaylistItems(playlistId: Long, orderedItemIds: List<Long>) {
