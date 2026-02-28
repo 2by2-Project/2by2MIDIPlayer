@@ -59,12 +59,16 @@
     <string name="action_play_in_next_track">次に再生</string>
     <string name="action_share">シェアする</string>
     <string name="action_details">ファイルの詳細</string>
+    <string name="action_edit_loop_point">ループポイントの編集</string>
     <string name="action_add_to_playlist">プレイリストに追加</string>
+    <string name="action_delete">削除</string>
     <string name="playlists">プレイリスト</string>
     <string name="action_create_playlist">プレイリストを作成</string>
+    <string name="action_delete_playlist">プレイリストを削除</string>
     <string name="action_create">作成</string>
     <string name="playlist_name_hint">プレイリスト名</string>
     <string name="info_no_playlists_found">プレイリストがありません</string>
+    <string name="confirm_delete_playlist_message">%1$s を削除してもよろしいですか？この操作は元に戻せません。</string>
     <string name="file_details_parent_folder">親フォルダ</string>
     <string name="file_details_format">種類</string>
     <string name="file_details_duration">曲の長さ</string>
@@ -72,4 +76,11 @@
     <string name="file_details_loop_none">なし</string>
     <string name="file_details_midi_title">トラック名</string>
     <string name="file_details_midi_artist">著作権</string>
+    <string name="action_edit">編集</string>
+    <string name="action_rename">名前の変更</string>
+    <string name="action_rename_playlist">プレイリストの名前を変更</string>
+    <string name="edit_loop_point_title">ループポイントの編集</string>
+    <string name="set_loop_point">ループポイントを設定</string>
+    <string name="save">保存</string>
+    <string name="action_done">完了</string>
 </resources>
