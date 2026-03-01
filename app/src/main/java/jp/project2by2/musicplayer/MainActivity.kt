@@ -1374,7 +1374,7 @@ fun MusicPlayerMainScreen(
                 showNowPlayingActions = false
                 val intent = Intent(context, EditLoopPointActivity::class.java).apply {
                     putExtra(EditLoopPointActivity.EXTRA_URI, currentUri)
-                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
                 }
                 context.startActivity(intent)
             },
@@ -2276,7 +2276,7 @@ private fun MidiFileRow(
                 showActions = false
                 val intent = Intent(context, EditLoopPointActivity::class.java).apply {
                     putExtra(EditLoopPointActivity.EXTRA_URI, item.uri)
-                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
                 }
                 context.startActivity(intent)
             },
@@ -2329,11 +2329,11 @@ private fun MidiFileActionsDialog(
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(text = stringResource(id = R.string.action_add_to_playlist))
                 }
-                /*ElevatedButton(onClick = onEditLoopPoint, modifier = Modifier.fillMaxWidth()) {
+                ElevatedButton(onClick = onEditLoopPoint, modifier = Modifier.fillMaxWidth()) {
                     Icon(imageVector = Icons.Filled.Edit, contentDescription = null)
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(text = stringResource(id = R.string.action_edit_loop_point))
-                }*/
+                }
             }
         },
         confirmButton = {},

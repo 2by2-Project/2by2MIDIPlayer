@@ -16,7 +16,10 @@
       "Bash(ls:*)",
       "Bash(\"/c/Program Files/Android/Android Studio/jbr/bin/java\" -version)",
       "Bash(export JAVA_HOME=\"/c/Program Files/Android/Android Studio/jbr\":*)",
-      "Bash(./gradlew clean:*)"
+      "Bash(./gradlew clean:*)",
+      "Bash(export JAVA_HOME=\"/home/kailua/android-studio/jbr\" && ./gradlew assembleDebug 2>&1 | tail -50)",
+      "Bash(export JAVA_HOME=\"/home/kailua/android-studio/jbr\" && ./gradlew assembleDebug)",
+      "Bash(export JAVA_HOME=\"/home/kailua/android-studio/jbr\" && ./gradlew assembleDebug 2>&1 | tail -10)"
     ]
   }
 }
