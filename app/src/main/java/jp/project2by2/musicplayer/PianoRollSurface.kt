@@ -21,7 +21,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
 import dev.atsushieno.ktmidi.Midi1Music
@@ -51,6 +53,12 @@ private val MidiChannelNeonPalette = listOf(
     Color(0xFFFF4081)
 )
 private const val PIANO_ROLL_DEBUG_SAMPLE_LIMIT = 24
+private const val ACTIVE_NOTE_FADE_OUT_MS = 400f
+private const val ACTIVE_NOTE_WHITE_MIX = 0.25f
+private const val ACTIVE_NOTE_OVERLAY_ALPHA = 0.75f
+private const val ACTIVE_NOTE_GLOW_ALPHA = 0.15f
+private const val ACTIVE_NOTE_GLOW_EXPAND_X = 4f
+private const val ACTIVE_NOTE_GLOW_EXPAND_Y = 4f
 
 data class PianoRollNote(
     val noteNumber: Int,
@@ -377,11 +385,40 @@ fun PlaybackPianoRollView(
                 val reveal = if (index >= chunkStartIndex) chunkReveal.value else 1f
                 val animatedWidth = (w.coerceAtLeast(2f) * reveal).coerceAtLeast(2f)
                 val animatedAlpha = 0.15f + (0.60f * reveal)
+                val highlightStrength = when {
+                    currentPositionMs < note.startMs -> 0f
+                    currentPositionMs <= note.endMs -> 1f
+                    else -> {
+                        val elapsedSinceOff = (currentPositionMs - note.endMs).toFloat()
+                        (1f - (elapsedSinceOff / ACTIVE_NOTE_FADE_OUT_MS)).coerceIn(0f, 1f)
+                    }
+                }
+                val noteColor = lerp(channelColor, Color.White, highlightStrength * ACTIVE_NOTE_WHITE_MIX)
+                if (highlightStrength > 0f) {
+                    drawRect(
+                        color = lerp(channelColor, Color.White, 0.35f).copy(
+                            alpha = highlightStrength * ACTIVE_NOTE_GLOW_ALPHA
+                        ),
+                        topLeft = Offset(x - ACTIVE_NOTE_GLOW_EXPAND_X, y - ACTIVE_NOTE_GLOW_EXPAND_Y),
+                        size = Size(
+                            animatedWidth + ACTIVE_NOTE_GLOW_EXPAND_X * 2f,
+                            h + ACTIVE_NOTE_GLOW_EXPAND_Y * 2f
+                        ),
+                        blendMode = BlendMode.Plus
+                    )
+                }
                 drawRect(
-                    color = channelColor.copy(alpha = animatedAlpha),
+                    color = noteColor.copy(alpha = animatedAlpha),
                     topLeft = Offset(x, y),
                     size = Size(animatedWidth, h)
                 )
+                if (highlightStrength > 0f) {
+                    drawRect(
+                        color = Color.White.copy(alpha = highlightStrength * ACTIVE_NOTE_OVERLAY_ALPHA),
+                        topLeft = Offset(x, y),
+                        size = Size(animatedWidth, h)
+                    )
+                }
             }
 
             fun drawMarker(ms: Long, color: Color, width: Float) {
