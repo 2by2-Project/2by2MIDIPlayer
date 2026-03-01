@@ -68,6 +68,12 @@ data class TickTimeAnchor(
     val ms: Long
 )
 
+data class TimeSignature(
+    val tick: Int,
+    val numerator: Int,
+    val denominator: Int
+)
+
 data class PianoRollData(
     val notes: List<PianoRollNote>,
     val totalDurationMs: Long,
@@ -76,6 +82,23 @@ data class PianoRollData(
     val totalTicks: Int,
     val tickTimeAnchors: List<TickTimeAnchor>
 )
+
+fun buildPianoRollData(music: Midi1Music): PianoRollData {
+    val maxTick = music.tracks.maxOfOrNull { t -> t.events.sumOf { it.deltaTime } } ?: 0
+    val duration = music.getTimePositionInMillisecondsForTick(maxTick).toLong().coerceAtLeast(1L)
+    val measures = calculateMeasurePositions(music, duration)
+    val measureTicks = calculateMeasureTickPositions(music)
+    val anchors = buildTickTimeAnchors(music, maxTick)
+    val notes = extractPianoRollNotes(music).sortedBy { it.startTick }
+    return PianoRollData(
+        notes = notes,
+        totalDurationMs = duration,
+        measurePositions = measures,
+        measureTickPositions = measureTicks,
+        totalTicks = maxTick,
+        tickTimeAnchors = anchors
+    )
+}
 
 suspend fun loadPianoRollData(context: Context, uri: Uri): PianoRollData {
     val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes().asList() } ?: return PianoRollData(
@@ -87,30 +110,19 @@ suspend fun loadPianoRollData(context: Context, uri: Uri): PianoRollData {
         tickTimeAnchors = emptyList()
     )
     val music = Midi1Music().apply { read(bytes) }
-    val maxTick = music.tracks.maxOfOrNull { t -> t.events.sumOf { it.deltaTime } } ?: 0
-    val duration = music.getTimePositionInMillisecondsForTick(maxTick).toLong().coerceAtLeast(1L)
-    val measures = calculateMeasurePositions(music, duration)
-    val measureTicks = calculateMeasureTickPositions(music)
-    val anchors = buildTickTimeAnchors(music, maxTick)
-    val notes = extractPianoRollNotes(music)
+    val data = buildPianoRollData(music)
+    val measureTicks = data.measureTickPositions
     val tickSample = measureTicks.take(PIANO_ROLL_DEBUG_SAMPLE_LIMIT).joinToString(", ")
     val tickSpanSample = measureTicks.zipWithNext()
         .take(PIANO_ROLL_DEBUG_SAMPLE_LIMIT)
         .joinToString(", ") { (a, b) -> "${b - a}t" }
     Log.i(
         "PlaybackPianoRollTS",
-        "loadPianoRollData: uri=$uri notes=${notes.size} maxTick=$maxTick measureTicks=${measureTicks.size} anchors=${anchors.size}"
+        "loadPianoRollData: uri=$uri notes=${data.notes.size} maxTick=${data.totalTicks} measureTicks=${measureTicks.size} anchors=${data.tickTimeAnchors.size}"
     )
     Log.d("PlaybackPianoRollTS", "measureTicks(sample): $tickSample")
     Log.d("PlaybackPianoRollTS", "measureTickSpans(sample): $tickSpanSample")
-    return PianoRollData(
-        notes = notes,
-        totalDurationMs = duration,
-        measurePositions = measures,
-        measureTickPositions = measureTicks,
-        totalTicks = maxTick,
-        tickTimeAnchors = anchors
-    )
+    return data
 }
 
 suspend fun loadPianoRollDataProgressive(
@@ -414,6 +426,81 @@ fun PlaybackPianoRollView(
     }
 }
 
+internal fun androidx.compose.ui.graphics.drawscope.DrawScope.drawSharedPianoRoll(
+    notes: List<PianoRollNote>,
+    measureTickPositions: List<Int>,
+    tickTimeAnchors: List<TickTimeAnchor>,
+    currentPositionMs: Long,
+    loopPointMs: Long,
+    endPointMs: Long,
+    totalTicks: Int,
+    visibleStartTick: Int,
+    visibleEndTick: Int,
+    backgroundColor: Color = Color(0xFF161616),
+    clipAtEndPoint: Boolean = true
+) {
+    val durationTicks = totalTicks.coerceAtLeast(1)
+    val safeVisibleStart = visibleStartTick.coerceIn(0, (durationTicks - 1).coerceAtLeast(0))
+    val safeVisibleEnd = visibleEndTick.coerceIn(safeVisibleStart + 1, durationTicks)
+    val viewport = (safeVisibleEnd - safeVisibleStart).coerceAtLeast(1)
+    val endDisplayTick = msToTick(endPointMs, tickTimeAnchors, durationTicks).coerceIn(0, durationTicks)
+    val drawableEndTick = if (clipAtEndPoint) minOf(safeVisibleEnd, endDisplayTick) else safeVisibleEnd
+    val endX = ((endDisplayTick - safeVisibleStart).toFloat() / viewport.toFloat()) * size.width
+    val measureLabelPaint = Paint().apply {
+        color = Color.Gray.copy(alpha = 0.45f).toArgb()
+        textSize = 32f
+        isAntiAlias = true
+    }
+
+    measureTickPositions.forEachIndexed { index, measureDisplayTick ->
+        if (measureDisplayTick !in safeVisibleStart..drawableEndTick) return@forEachIndexed
+        val x = ((measureDisplayTick - safeVisibleStart).toFloat() / viewport.toFloat()) * size.width
+        drawLine(Color.Gray.copy(alpha = 0.45f), Offset(x, 0f), Offset(x, size.height), 1.5f)
+        drawContext.canvas.nativeCanvas.drawText("${index + 1}", x + 10f, 32f, measureLabelPaint)
+    }
+
+    notes.forEach { note ->
+        val startDisplayTick = note.startTick.coerceIn(0, durationTicks)
+        val endNoteTick = note.endTick.coerceIn(0, durationTicks)
+        if (startDisplayTick >= drawableEndTick || endNoteTick <= safeVisibleStart) return@forEach
+        val clippedStartTick = maxOf(startDisplayTick, safeVisibleStart)
+        val clippedEndTick = minOf(endNoteTick, drawableEndTick)
+        if (clippedEndTick <= clippedStartTick) return@forEach
+        val x = ((clippedStartTick - safeVisibleStart).toFloat() / viewport.toFloat()) * size.width
+        val w = ((clippedEndTick - clippedStartTick).toFloat() / viewport.toFloat()) * size.width
+        val y = ((127 - note.noteNumber).toFloat() / 127f) * size.height
+        val h = size.height / 128f * 2f
+        val channelColor = MidiChannelNeonPalette[note.channel.mod(MidiChannelNeonPalette.size)]
+        drawRect(
+            color = channelColor.copy(alpha = 0.75f),
+            topLeft = Offset(x, y),
+            size = Size(w.coerceAtLeast(2f), h)
+        )
+    }
+
+    fun drawMarker(ms: Long, color: Color, width: Float) {
+        val markerDisplayTick = msToTick(ms, tickTimeAnchors, durationTicks).coerceIn(0, durationTicks)
+        if (markerDisplayTick !in safeVisibleStart..safeVisibleEnd) return
+        if (clipAtEndPoint && markerDisplayTick > endDisplayTick && color != Color.Red) return
+        val x = ((markerDisplayTick - safeVisibleStart).toFloat() / viewport.toFloat()) * size.width
+        drawLine(color, Offset(x, 0f), Offset(x, size.height), width)
+    }
+
+    drawMarker(endPointMs, Color.Red, 5f)
+    drawMarker(loopPointMs, Color.Green, 5f)
+    drawMarker(currentPositionMs, Color.White, 5f)
+    if (clipAtEndPoint && endX < size.width) {
+        drawRect(
+            color = backgroundColor,
+            topLeft = Offset(endX.coerceAtLeast(0f), 0f),
+            size = Size((size.width - endX).coerceAtLeast(0f), size.height)
+        )
+        if (endX in 0f..size.width) {
+            drawLine(Color.Red, Offset(endX, 0f), Offset(endX, size.height), 5f)
+        }
+    }
+}
+
 private fun calculateMeasureTickPositions(music: Midi1Music): List<Int> {
     val signatures = extractTimeSignatures(music)
     val ticksPerQuarterNote = music.deltaTimeSpec
@@ -443,6 +530,62 @@ private fun calculateMeasureTickPositions(music: Midi1Music): List<Int> {
         Log.d("PlaybackPianoRollTS", "measureSpansTick(sample): $spans")
     }
     return measures
+}
+
+fun calculateMeasurePositions(music: Midi1Music, totalDurationMs: Long): List<Long> {
+    val signatures = extractTimeSignatures(music)
+    val ticksPerQuarterNote = music.deltaTimeSpec
+    val measures = mutableListOf<Long>()
+    val tickMsCache = HashMap<Int, Long>(2048)
+    var currentTick = 0
+    val maxTick = music.tracks.maxOfOrNull { track -> track.events.sumOf { it.deltaTime } } ?: 0
+
+    while (currentTick < maxTick) {
+        val ms = tickMsCache.getOrPut(currentTick) {
+            music.getTimePositionInMillisecondsForTick(currentTick).toLong()
+        }
+        measures.add(ms)
+        val currentSig = signatures.lastOrNull { it.tick <= currentTick } ?: signatures.first()
+        val ticksPerMeasure = (currentSig.numerator * 4 * ticksPerQuarterNote) / currentSig.denominator
+        currentTick += ticksPerMeasure.coerceAtLeast(1)
+    }
+
+    if (measures.isEmpty()) measures.add(totalDurationMs.coerceAtLeast(0L))
+    return measures
+}
+
+fun extractTimeSignatures(music: Midi1Music): List<TimeSignature> {
+    val raw = mutableListOf<TimeSignature>()
+    for (track in music.tracks) {
+        var tick = 0
+        for (event in track.events) {
+            tick += event.deltaTime
+            val msg = event.message
+            if ((msg.statusByte.toInt() and 0xFF) == 0xFF && (msg.msb.toInt() and 0xFF) == 0x58) {
+                val data = (msg as? Midi1CompoundMessage)?.extraData ?: continue
+                if (data.size >= 2) {
+                    val numerator = data[0].toInt() and 0xFF
+                    val denominatorPow = data[1].toInt() and 0xFF
+                    if (numerator > 0 && denominatorPow in 0..7) {
+                        raw.add(TimeSignature(tick.coerceAtLeast(0), numerator, 1 shl denominatorPow))
+                    }
+                }
+            }
+        }
+    }
+    if (raw.none { it.tick == 0 }) {
+        raw.add(TimeSignature(0, 4, 4))
+    }
+    return raw
+        .sortedBy { it.tick }
+        .fold(mutableListOf<TimeSignature>()) { acc, sig ->
+            if (acc.isNotEmpty() && acc.last().tick == sig.tick) {
+                acc[acc.lastIndex] = sig
+            } else if (acc.isEmpty() || acc.last().numerator != sig.numerator || acc.last().denominator != sig.denominator) {
+                acc.add(sig)
+            }
+            acc
+        }
 }
 
 private fun buildTickTimeAnchors(music: Midi1Music, maxTick: Int): List<TickTimeAnchor> {
@@ -501,7 +644,7 @@ private fun buildTickTimeAnchors(music: Midi1Music, maxTick: Int): List<TickTime
     return anchors
 }
 
-private fun msToTick(ms: Long, anchors: List<TickTimeAnchor>, totalTicks: Int): Int {
+internal fun msToTick(ms: Long, anchors: List<TickTimeAnchor>, totalTicks: Int): Int {
     if (anchors.isEmpty()) return 0
     val clampedMs = ms.coerceAtLeast(0L)
     if (clampedMs <= anchors.first().ms) return anchors.first().tick
