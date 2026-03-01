@@ -893,11 +893,11 @@ class PlaybackService : MediaSessionService() {
     }
 
     private fun bassInit(): Boolean {
-        return BASS.BASS_Init(-1, 44100, 0)
+        return BassRuntime.acquire()
     }
 
     private fun bassTerminate() {
-        BASS.BASS_Free()
+        BassRuntime.release()
     }
 
     private fun bassLoadMidiWithSoundFont(midiPath: String, sf2Path: String): MidiHandles {

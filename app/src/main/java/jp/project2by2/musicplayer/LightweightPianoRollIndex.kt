@@ -24,7 +24,12 @@ private data class PianoRollIndex(
     val tickTimeAnchors: List<TickTimeAnchor>,
     val measureTickPositions: List<Int>,
     val measurePositionsMs: List<Long>,
-    val notes: List<PianoRollNote>
+    val notes: List<PianoRollNote>,
+    val loopPointTick: Int?
+)
+data class LoopEditorInitialData(
+    val pianoRollData: PianoRollData,
+    val loopPointMs: Long
 )
 private const val FAST_ROLL_DEBUG_SAMPLE_LIMIT = 24
 
@@ -89,6 +94,7 @@ private fun parseSmfToPianoRollIndex(bytes: ByteArray): PianoRollIndex? {
     val tempoEvents = ArrayList<TempoEvent>(64)
     val timeSigEvents = ArrayList<TimeSigEvent>(32)
     var maxTick = 0
+    var loopPointTick: Int? = null
 
     repeat(trackCount) { trackIndex ->
         if (!r.canRead(8)) return@repeat
@@ -182,6 +188,8 @@ private fun parseSmfToPianoRollIndex(bytes: ByteArray): PianoRollIndex? {
                                 )
                             }
                         }
+                    } else if (eventType == 0xB0 && d1 == 111) {
+                        loopPointTick = loopPointTick?.let { minOf(it, tick) } ?: tick
                     }
                 }
                 else -> {
@@ -238,7 +246,8 @@ private fun parseSmfToPianoRollIndex(bytes: ByteArray): PianoRollIndex? {
         tickTimeAnchors = anchors,
         measureTickPositions = measureTicks,
         measurePositionsMs = measureMs,
-        notes = notes
+        notes = notes,
+        loopPointTick = loopPointTick
     )
 }
 
@@ -325,7 +334,7 @@ private fun buildMeasureTicks(
     return result
 }
 
-private fun tickToMsFast(tick: Int, anchors: List<TickTimeAnchor>): Long {
+internal fun tickToMsFast(tick: Int, anchors: List<TickTimeAnchor>): Long {
     if (anchors.isEmpty()) return 0L
     if (tick <= anchors.first().tick) return anchors.first().ms
     if (tick >= anchors.last().tick) return anchors.last().ms
@@ -429,5 +438,25 @@ suspend fun loadPianoRollDataFast(context: Context, uri: Uri): PianoRollData {
         measureTickPositions = index.measureTickPositions,
         totalTicks = index.totalTicks,
         tickTimeAnchors = index.tickTimeAnchors
+    )
+}
+
+suspend fun loadLoopEditorInitialDataFast(context: Context, uri: Uri): LoopEditorInitialData? {
+    val index = getOrBuildPianoRollIndex(context, uri) ?: return null
+    val pianoRollData = PianoRollData(
+        notes = index.notes,
+        totalDurationMs = index.totalDurationMs,
+        measurePositions = index.measurePositionsMs,
+        measureTickPositions = index.measureTickPositions,
+        totalTicks = index.totalTicks,
+        tickTimeAnchors = index.tickTimeAnchors
+    )
+    val loopPointMs = index.loopPointTick
+        ?.let { tickToMsFast(it, index.tickTimeAnchors) }
+        ?.coerceIn(0L, (index.totalDurationMs - 1L).coerceAtLeast(0L))
+        ?: 0L
+    return LoopEditorInitialData(
+        pianoRollData = pianoRollData,
+        loopPointMs = loopPointMs
     )
 }
