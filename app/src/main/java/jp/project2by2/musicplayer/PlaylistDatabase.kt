@@ -116,12 +116,13 @@ interface PlaylistDao {
 }
 
 @Database(
-    entities = [PlaylistEntity::class, PlaylistItemEntity::class],
-    version = 2,
+    entities = [PlaylistEntity::class, PlaylistItemEntity::class, MidiMetadataCacheEntity::class],
+    version = 3,
     exportSchema = false
 )
 abstract class PlaylistDatabase : RoomDatabase() {
     abstract fun playlistDao(): PlaylistDao
+    abstract fun midiMetadataCacheDao(): MidiMetadataCacheDao
 
     companion object {
         @Volatile
@@ -133,7 +134,7 @@ abstract class PlaylistDatabase : RoomDatabase() {
                     context.applicationContext,
                     PlaylistDatabase::class.java,
                     "playlist.db"
-                ).addMigrations(MIGRATION_1_2).build().also { INSTANCE = it }
+                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3).build().also { INSTANCE = it }
             }
         }
 
@@ -141,6 +142,27 @@ abstract class PlaylistDatabase : RoomDatabase() {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL(
                     "ALTER TABLE playlist_items ADD COLUMN duration_ms INTEGER NOT NULL DEFAULT 0"
+                )
+            }
+        }
+
+        private val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS midi_metadata_cache (
+                        uri_string TEXT NOT NULL,
+                        title TEXT,
+                        copyright TEXT,
+                        loop_point_ms INTEGER,
+                        duration_ms INTEGER,
+                        updated_at INTEGER NOT NULL,
+                        PRIMARY KEY(uri_string)
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_midi_metadata_cache_updated_at ON midi_metadata_cache(updated_at)"
                 )
             }
         }
