@@ -3127,6 +3127,7 @@ private fun PlaylistTracks(
     }.value
     val loadedItemsState = remember(playlistId) { mutableStateListOf<MidiFileItem>() }
     val editItems = remember(playlistId) { mutableStateListOf<MidiFileItem>() }
+    var isEditItemsPrepared by remember(playlistId) { mutableStateOf(false) }
 
     fun applyMetadata(uri: Uri, metadata: MidiMetadata) {
         val metadataTitle = metadata.title?.takeIf { it.isNotBlank() }
@@ -3187,19 +3188,25 @@ private fun PlaylistTracks(
             requestMetadata(item)
             onPrimeItem(item)
         }
+        if (!isEditMode) {
+            isEditItemsPrepared = false
+        }
     }
 
     LaunchedEffect(playlistId, isEditMode, loadedItems) {
         if (isEditMode) {
             editItems.clear()
             editItems.addAll(loadedItemsState)
+            isEditItemsPrepared = true
             onEditItemsChanged(editItems.toList())
         } else {
+            isEditItemsPrepared = false
             onEditItemsChanged(emptyList())
         }
     }
 
-    val visibleItems = if (isEditMode) editItems else loadedItemsState
+    // Keep showing the loaded list until the edit buffer is ready to avoid a first-frame empty swap.
+    val visibleItems = if (isEditMode && isEditItemsPrepared) editItems else loadedItemsState
 
     MidiFileList(
         items = visibleItems,
