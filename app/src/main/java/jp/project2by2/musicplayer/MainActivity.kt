@@ -180,6 +180,7 @@ import dev.atsushieno.ktmidi.read
 import jp.project2by2.musicplayer.ui.theme._2by2MusicPlayerTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -187,6 +188,8 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileNotFoundException
 import java.io.InputStream
+import java.text.Normalizer
+import kotlin.coroutines.coroutineContext
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
@@ -249,6 +252,8 @@ fun MusicPlayerMainScreen(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val midiParser = remember(context) { MidiParser(context.contentResolver) }
+    val metadataCacheRepository = remember(context) { MidiMetadataCacheStore.repository(context) }
 
     var selectedMidiFileUri by remember { mutableStateOf<Uri?>(null) }
 
@@ -299,8 +304,10 @@ fun MusicPlayerMainScreen(
     var isBrowseRefreshing by remember { mutableStateOf(false) }
     var hasCompletedInitialBrowseLoad by remember { mutableStateOf(false) }
     var isFolderPreparing by remember { mutableStateOf(false) }
+    var isSearchLoading by remember { mutableStateOf(false) }
     var browseAnimationToken by remember { mutableLongStateOf(0L) }
     val playlistRepository = remember(context) { PlaylistStore.repository(context) }
+    val searchResults = remember { mutableStateListOf<MidiFileItem>() }
 
     fun applyFolderItems(items: List<MidiFileItem>) {
         val rebuilt = buildFolderItems(context, items)
@@ -376,6 +383,25 @@ fun MusicPlayerMainScreen(
         )
     }
 
+    fun MidiFileItem.withMetadata(metadata: MidiMetadata?): MidiFileItem {
+        if (metadata == null) return this
+        return copy(
+            metadataTitle = metadata.title?.takeIf { it.isNotBlank() },
+            metadataArtist = metadata.copyright?.takeIf { it.isNotBlank() },
+            loopPointMs = metadata.loopPointMs
+        )
+    }
+
+    fun applyPersistedMetadata(entries: Map<String, MidiMetadata>) {
+        if (entries.isEmpty()) return
+        midiMetadataCache.putAll(entries)
+        for (index in midiFiles.indices) {
+            val item = midiFiles[index]
+            val metadata = entries[item.uri.toString()] ?: continue
+            midiFiles[index] = item.withMetadata(metadata)
+        }
+    }
+
     suspend fun updateMidiAvailability(
         item: MidiFileItem,
         forceRefresh: Boolean = false
@@ -398,15 +424,74 @@ fun MusicPlayerMainScreen(
 
     suspend fun prepareFolderContents(folderKey: String) {
         val itemsInFolder = midiFiles.filter { item -> item.folderKey == folderKey }
+        val uriStrings = itemsInFolder.map { it.uri.toString() }
+        val persistedMetadata = metadataCacheRepository.getByUris(uriStrings)
+        applyPersistedMetadata(persistedMetadata)
         for (item in itemsInFolder) {
             val key = item.uri.toString()
             if (midiMetadataCache[key] == null) {
-                val metadata = withContext(Dispatchers.IO) { MidiParser(context.contentResolver).getMetadata(item.uri) }
+                val metadata = withContext(Dispatchers.IO) { midiParser.getMetadata(item.uri) }
                 midiMetadataCache[key] = metadata
+                metadataCacheRepository.put(key, metadata)
                 applyMidiMetadata(item.uri, metadata)
             }
             updateMidiAvailability(item, forceRefresh = true)
         }
+    }
+
+    suspend fun performSearch(query: String, folderKey: String?) {
+        val baseItems = if (folderKey != null) {
+            midiFiles.filter { it.folderKey == folderKey }
+        } else {
+            midiFiles.toList()
+        }
+        val uriStrings = baseItems.map { it.uri.toString() }
+        val persistedMetadata = metadataCacheRepository.getByUris(uriStrings)
+        applyPersistedMetadata(persistedMetadata)
+
+        val missingMetadataItems = baseItems.filter { item ->
+            midiMetadataCache[item.uri.toString()] == null
+        }
+        val loadedMetadata = if (missingMetadataItems.isNotEmpty()) {
+            withContext(Dispatchers.IO) {
+                missingMetadataItems.associate { item ->
+                    item.uri.toString() to midiParser.getMetadata(item.uri)
+                }
+            }
+        } else {
+            emptyMap()
+        }
+        coroutineContext.ensureActive()
+
+        loadedMetadata.forEach { (uriString, metadata) ->
+            midiMetadataCache[uriString] = metadata
+            applyMidiMetadata(Uri.parse(uriString), metadata)
+        }
+        metadataCacheRepository.putAll(loadedMetadata)
+
+        val metadataSnapshot = midiMetadataCache.toMap()
+        val availabilitySnapshot = midiAvailability.toMap()
+        val matchedItems = withContext(Dispatchers.Default) {
+            baseItems
+                .map { item ->
+                    item.withMetadata(
+                        metadataSnapshot[item.uri.toString()] ?: loadedMetadata[item.uri.toString()]
+                    )
+                }
+                .filter { item ->
+                    item.matchesSearch(query) &&
+                        availabilitySnapshot[item.uri.toString()] != MidiFileAvailability.Missing
+                }
+        }
+        coroutineContext.ensureActive()
+
+        searchResults.clear()
+        searchResults.addAll(matchedItems)
+    }
+
+    fun clearSearchState() {
+        isSearchLoading = false
+        searchResults.clear()
     }
 
     fun handleMissingItem(item: MidiFileItem, listContext: MidiListContext) {
@@ -471,6 +556,10 @@ fun MusicPlayerMainScreen(
         isBrowseRefreshing = true
         try {
             val snapshot = loadBrowseLibrary(context, demoFilesLoaded)
+            val persistedMetadata = metadataCacheRepository.getByUris(
+                snapshot.midiFiles.map { it.uri.toString() }
+            )
+            midiMetadataCache.putAll(persistedMetadata)
             applyBrowseSnapshot(snapshot, animateItems = true)
             hasCompletedInitialBrowseLoad = true
         } catch (_: Exception) {
@@ -533,6 +622,25 @@ fun MusicPlayerMainScreen(
         refreshBrowseLibrary(isInitialLoad = !hasCompletedInitialBrowseLoad)
     }
 
+    LaunchedEffect(isSearchActive, searchQuery, selectedFolderKey, browseAnimationToken) {
+        if (!isSearchActive || searchQuery.isBlank()) {
+            clearSearchState()
+            return@LaunchedEffect
+        }
+        delay(180)
+        isSearchLoading = true
+        try {
+            performSearch(
+                query = searchQuery,
+                folderKey = selectedFolderKey
+            )
+        } finally {
+            if (isActive) {
+                isSearchLoading = false
+            }
+        }
+    }
+
     LaunchedEffect(selectedFolderKey, browseAnimationToken) {
         val folderKey = selectedFolderKey ?: return@LaunchedEffect
         if (browseAnimationToken == 0L) return@LaunchedEffect
@@ -582,6 +690,7 @@ fun MusicPlayerMainScreen(
             isSearchActive -> {
                 isSearchActive = false
                 searchQuery = ""
+                clearSearchState()
             }
             selectedPlaylistId != null -> {
                 isPlaylistEditModeActive = false
@@ -851,7 +960,10 @@ fun MusicPlayerMainScreen(
                         IconButton(
                             onClick = {
                                 isSearchActive = !isSearchActive
-                                if (!isSearchActive) searchQuery = ""
+                                if (!isSearchActive) {
+                                    searchQuery = ""
+                                    clearSearchState()
+                                }
                                 if (isSearchActive) {
                                     rootTab = RootTab.Browse
                                 }
@@ -1005,6 +1117,7 @@ fun MusicPlayerMainScreen(
                             rootTab = RootTab.Browse
                             isSearchActive = false
                             searchQuery = ""
+                            clearSearchState()
                             selectedFolderKey = null
                             selectedFolderName = null
                             selectedFolderCoverUri = null
@@ -1034,6 +1147,7 @@ fun MusicPlayerMainScreen(
                             selectedPlaylistName = null
                             isSearchActive = false
                             searchQuery = ""
+                            clearSearchState()
                             selectedFolderKey = null
                             selectedFolderName = null
                             selectedFolderCoverUri = null
@@ -1335,15 +1449,6 @@ fun MusicPlayerMainScreen(
                                         }
                                     }
                                     BrowseScreen.Search -> {
-                                        val baseItems = if (folderKey != null) {
-                                            midiFiles.filter { it.folderKey == folderKey }
-                                        } else {
-                                            midiFiles.toList()
-                                        }
-                                        val items = baseItems.filter {
-                                            it.matchesSearch(searchQuery) &&
-                                                midiAvailability[it.uri.toString()] != MidiFileAvailability.Missing
-                                        }
                                         BrowseRefreshContainer(
                                             isRefreshing = isBrowseRefreshing,
                                             onRefresh = {
@@ -1352,26 +1457,47 @@ fun MusicPlayerMainScreen(
                                                 }
                                             }
                                         ) {
-                                            MidiFileList(
-                                                items = items,
-                                                listContext = MidiListContext.Search,
-                                                showLoopMarkers = true,
-                                                selectedUri = selectedMidiFileUri,
-                                                availability = midiAvailability,
-                                                animationToken = browseAnimationToken,
-                                                onItemClick = { tapped: MidiFileItem ->
-                                                    handleMidiTap(
-                                                        item = tapped,
-                                                        listContext = MidiListContext.Search,
-                                                        sourceItems = items,
-                                                        sourceTitle = selectedFolderName,
-                                                        sourceCover = selectedFolderCoverUri
-                                                    )
-                                                },
-                                                onAddToPlaylist = { item: MidiFileItem -> pendingPlaylistCandidate = item },
-                                                onQueueNext = { item: MidiFileItem -> queueTrackNext(item, items, selectedFolderName) },
-                                                onMissingItemDetected = { item: MidiFileItem -> handleMissingItem(item, MidiListContext.Search) }
-                                            )
+                                            Box(modifier = Modifier.fillMaxSize()) {
+                                                MidiFileList(
+                                                    items = searchResults,
+                                                    listContext = MidiListContext.Search,
+                                                    showLoopMarkers = true,
+                                                    selectedUri = selectedMidiFileUri,
+                                                    availability = midiAvailability,
+                                                    animationToken = browseAnimationToken,
+                                                    onItemClick = { tapped: MidiFileItem ->
+                                                        handleMidiTap(
+                                                            item = tapped,
+                                                            listContext = MidiListContext.Search,
+                                                            sourceItems = searchResults.toList(),
+                                                            sourceTitle = selectedFolderName,
+                                                            sourceCover = selectedFolderCoverUri
+                                                        )
+                                                    },
+                                                    onAddToPlaylist = { item: MidiFileItem -> pendingPlaylistCandidate = item },
+                                                    onQueueNext = { item: MidiFileItem ->
+                                                        queueTrackNext(item, searchResults.toList(), selectedFolderName)
+                                                    },
+                                                    onMissingItemDetected = { item: MidiFileItem ->
+                                                        handleMissingItem(item, MidiListContext.Search)
+                                                    }
+                                                )
+                                                if (isSearchLoading) {
+                                                    Box(
+                                                        modifier = Modifier
+                                                            .fillMaxWidth().fillMaxHeight(0.5f)
+                                                            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.72f)),
+                                                        contentAlignment = Alignment.Center
+                                                    ) {
+                                                        Column(
+                                                            horizontalAlignment = Alignment.CenterHorizontally,
+                                                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                                                        ) {
+                                                            CircularProgressIndicator()
+                                                        }
+                                                    }
+                                                }
+                                            }
                                         }
                                     }
                                 }
@@ -3107,6 +3233,7 @@ private fun PlaylistTracks(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val midiParser = remember(context) { MidiParser(context.contentResolver) }
+    val metadataCacheRepository = remember(context) { MidiMetadataCacheStore.repository(context) }
     val metadataCache = remember(playlistId) { mutableStateMapOf<String, MidiMetadata>() }
     val metadataLoading = remember(playlistId) { mutableStateMapOf<String, Boolean>() }
     val loadedItems = produceState(initialValue = emptyList<MidiFileItem>(), playlistId, refreshToken) {
@@ -3165,14 +3292,20 @@ private fun PlaylistTracks(
         if (metadataLoading[key] == true) return
         metadataLoading[key] = true
         scope.launch {
-            val metadata = withContext(Dispatchers.IO) { midiParser.getMetadata(item.uri) }
+            val metadata = metadataCacheRepository.get(key)
+                ?: withContext(Dispatchers.IO) { midiParser.getMetadata(item.uri) }
             metadataCache[key] = metadata
+            metadataCacheRepository.put(key, metadata)
             applyMetadata(item.uri, metadata)
             metadataLoading.remove(key)
         }
     }
 
     LaunchedEffect(loadedItems) {
+        val persistedMetadata = withContext(Dispatchers.IO) {
+            metadataCacheRepository.getByUris(loadedItems.map { it.uri.toString() })
+        }
+        metadataCache.putAll(persistedMetadata)
         loadedItemsState.clear()
         loadedItemsState.addAll(
             loadedItems.map { item ->
@@ -3410,9 +3543,36 @@ private fun MidiFileItem.displaySecondaryText(): String? {
 }
 
 private fun MidiFileItem.matchesSearch(query: String): Boolean {
-    return fileName.contains(query, ignoreCase = true) ||
-        (metadataTitle?.contains(query, ignoreCase = true) == true) ||
-        (metadataArtist?.contains(query, ignoreCase = true) == true)
+    val queryTokens = query.searchTokens()
+    if (queryTokens.isEmpty()) return true
+
+    val searchableTexts = buildList {
+        add(fileName.substringBeforeLast('.', missingDelimiterValue = fileName))
+        add(fileName)
+        metadataTitle?.let(::add)
+        metadataArtist?.let(::add)
+        add(folderName)
+    }
+
+    val normalizedTexts = searchableTexts.map { it.toSearchKey() }
+    return queryTokens.all { token ->
+        normalizedTexts.any { normalized ->
+            normalized.contains(token)
+        }
+    }
+}
+
+private fun String.searchTokens(): List<String> {
+    return toSearchKey()
+        .split(' ')
+        .filter { it.isNotBlank() }
+}
+
+private fun String.toSearchKey(): String {
+    return Normalizer.normalize(this, Normalizer.Form.NFKC)
+        .lowercase()
+        .replace(Regex("[\\p{P}\\p{S}\\s]+"), " ")
+        .trim()
 }
 
 private data class FolderItem(
