@@ -5,6 +5,8 @@
     <string name="error_playback_service_not_ready">Playback serviceの初期化に失敗しました</string>
     <string name="error_failed_to_load_midi">MIDIまたはサウンドフォントの読み込みに失敗しました</string>
     <string name="error_failed_to_start_playback">再生時にエラーが発生しました</string>
+    <string name="error_failed_to_refresh_browse">ファイル一覧の更新に失敗しました</string>
+    <string name="error_midi_file_missing">ファイルがありません</string>
     <string name="back">戻る</string>
     <string name="cancel">キャンセル</string>
     <string name="unknown">不明</string>
@@ -18,6 +20,7 @@
     <string name="info_grant_storage_permission">ストレージの権限を付与してください</string>
     <string name="info_no_mid_files_found">MIDIファイルがありません</string>
     <string name="info_no_matching_files">一致するファイルが見つかりませんでした</string>
+    <string name="summary_midi_file_missing">ファイルがありません</string>
     <string name="info_added_to_next_queue">次にこの曲が再生されます</string>
     <string name="info_no_active_queue">再生キューがありません。何か再生してみましょう。</string>
     <string name="info_added_to_playlist">プレイリストに追加しました</string>
