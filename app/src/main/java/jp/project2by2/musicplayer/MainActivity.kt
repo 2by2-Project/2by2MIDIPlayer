@@ -35,6 +35,7 @@ import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
@@ -134,6 +135,7 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableStateMapOf
@@ -151,10 +153,13 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
@@ -1759,6 +1764,14 @@ private data class NowPlayingRollUi(
     val loopEndMs: Long
 )
 
+private enum class NowPlayingVisualizerMode { PianoRoll, Visualizer }
+
+private const val NOW_PLAYING_VISUALIZER_HORIZONTAL_BARS = 16
+private const val NOW_PLAYING_VISUALIZER_VERTICAL_SEGMENTS = 64
+private const val NOW_PLAYING_VISUALIZER_SEGMENT_GAP_PX = 2f
+private const val NOW_PLAYING_PEAK_FALL_SPEED_PLAYING = 0.006f
+private const val NOW_PLAYING_PEAK_FALL_SPEED_IDLE = 0.008f
+private const val NOW_PLAYING_PEAK_LINE_HEIGHT_PX = 2.5f
 private const val MINI_PLAYER_EXPAND_THRESHOLD_PX = 1600f
 private const val PLAYLIST_REORDER_DEBUG_LOG = true
 
@@ -1943,6 +1956,33 @@ private fun NowPlayingPianoRollSheet(
             delay(24)
         }
     }.value
+    var visualizerModeOrdinal by rememberSaveable(fileUri) {
+        mutableIntStateOf(NowPlayingVisualizerMode.PianoRoll.ordinal)
+    }
+    val visualizerMode = NowPlayingVisualizerMode.entries
+        .getOrElse(visualizerModeOrdinal) { NowPlayingVisualizerMode.PianoRoll }
+    val visualizerBins = produceState(
+        initialValue = FloatArray(NOW_PLAYING_VISUALIZER_HORIZONTAL_BARS),
+        key1 = playbackService,
+        key2 = fileUri
+    ) {
+        val service = playbackService ?: run {
+            value = FloatArray(NOW_PLAYING_VISUALIZER_HORIZONTAL_BARS)
+            return@produceState
+        }
+        var smoothed = FloatArray(NOW_PLAYING_VISUALIZER_HORIZONTAL_BARS)
+        while (kotlinx.coroutines.currentCoroutineContext().isActive) {
+            val target = service.getVisualizerSpectrum(NOW_PLAYING_VISUALIZER_HORIZONTAL_BARS)
+            for (i in smoothed.indices) {
+                val current = smoothed[i]
+                val goal = target[i]
+                val blend = if (goal > current) 0.42f else 0.12f
+                smoothed[i] = (current + (goal - current) * blend).coerceIn(0f, 1f)
+            }
+            value = smoothed.copyOf()
+            delay(33)
+        }
+    }.value
 
     LaunchedEffect(ui?.positionMs, ui?.durationMs) {
         val raw = ui?.positionMs ?: return@LaunchedEffect
@@ -2073,29 +2113,77 @@ private fun NowPlayingPianoRollSheet(
                 }
             }
             when {
-                pianoRollData == null || ui == null -> {
-                    Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                ui == null -> {
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxWidth(),
+                        contentAlignment = Alignment.Center
+                    ) {
                         CircularProgressIndicator()
                     }
                 }
                 else -> {
-                    PlaybackPianoRollView(
-                        notes = pianoRollData.notes,
-                        measureTickPositions = pianoRollData.measureTickPositions,
-                        tickTimeAnchors = pianoRollData.tickTimeAnchors,
-                        currentPositionMs = stablePositionMs,
-                        loopPointMs = ui.loopStartMs,
-                        endPointMs = ui.loopEndMs,
-                        totalDurationMs = maxOf(pianoRollData.totalDurationMs, ui.durationMs),
-                        totalTicks = pianoRollData.totalTicks,
-                        zoomLevel = calculatePlaybackInitialZoomLevel(
-                            totalTicks = pianoRollData.totalTicks,
-                            measureTickPositions = pianoRollData.measureTickPositions
-                        ),
+                    SingleChoiceSegmentedButtonRow(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .weight(1f)
-                    )
+                            .padding(horizontal = 12.dp, vertical = 4.dp)
+                    ) {
+                        SegmentedButton(
+                            selected = visualizerMode == NowPlayingVisualizerMode.PianoRoll,
+                            onClick = { visualizerModeOrdinal = NowPlayingVisualizerMode.PianoRoll.ordinal },
+                            shape = androidx.compose.material3.SegmentedButtonDefaults.itemShape(index = 0, count = 2),
+                            label = { Text(stringResource(R.string.now_playing_view_piano_roll)) }
+                        )
+                        SegmentedButton(
+                            selected = visualizerMode == NowPlayingVisualizerMode.Visualizer,
+                            onClick = { visualizerModeOrdinal = NowPlayingVisualizerMode.Visualizer.ordinal },
+                            shape = androidx.compose.material3.SegmentedButtonDefaults.itemShape(index = 1, count = 2),
+                            label = { Text(stringResource(R.string.now_playing_view_visualizer)) }
+                        )
+                    }
+                    when (visualizerMode) {
+                        NowPlayingVisualizerMode.PianoRoll -> {
+                            if (pianoRollData == null) {
+                                Box(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .fillMaxWidth(),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    CircularProgressIndicator()
+                                }
+                            } else {
+                                PlaybackPianoRollView(
+                                    notes = pianoRollData.notes,
+                                    measureTickPositions = pianoRollData.measureTickPositions,
+                                    tickTimeAnchors = pianoRollData.tickTimeAnchors,
+                                    currentPositionMs = stablePositionMs,
+                                    loopPointMs = ui.loopStartMs,
+                                    endPointMs = ui.loopEndMs,
+                                    totalDurationMs = maxOf(pianoRollData.totalDurationMs, ui.durationMs),
+                                    totalTicks = pianoRollData.totalTicks,
+                                    zoomLevel = calculatePlaybackInitialZoomLevel(
+                                        totalTicks = pianoRollData.totalTicks,
+                                        measureTickPositions = pianoRollData.measureTickPositions
+                                    ),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .weight(1f)
+                                )
+                            }
+                        }
+                        NowPlayingVisualizerMode.Visualizer -> {
+                            NowPlayingWaveVisualizer(
+                                bins = visualizerBins,
+                                isPlaying = ui.isPlaying,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .weight(1f)
+                                    .padding(horizontal = 12.dp, vertical = 8.dp)
+                            )
+                        }
+                    }
                 }
             }
             Column(
@@ -2244,6 +2332,115 @@ private fun NowPlayingPianoRollSheet(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun NowPlayingWaveVisualizer(
+    bins: FloatArray,
+    isPlaying: Boolean,
+    modifier: Modifier = Modifier
+) {
+    val activeBins = if (isPlaying) bins else FloatArray(bins.size)
+    var peakHoldBins by remember(activeBins.size) { mutableStateOf(FloatArray(activeBins.size)) }
+    LaunchedEffect(activeBins, isPlaying) {
+        val decayStep = if (isPlaying) NOW_PLAYING_PEAK_FALL_SPEED_PLAYING else NOW_PLAYING_PEAK_FALL_SPEED_IDLE
+        val next = FloatArray(activeBins.size)
+        for (i in activeBins.indices) {
+            val incoming = activeBins[i].coerceIn(0f, 1f)
+            val held = peakHoldBins.getOrNull(i) ?: 0f
+            next[i] = if (incoming >= held) {
+                incoming
+            } else {
+                (held - decayStep).coerceAtLeast(incoming).coerceAtLeast(0f)
+            }
+        }
+        peakHoldBins = next
+    }
+    Canvas(
+        modifier = modifier.background(Color(0xFF06090D))
+    ) {
+        if (activeBins.isEmpty()) return@Canvas
+        val barWidth = size.width / activeBins.size.toFloat()
+        val totalSegments = NOW_PLAYING_VISUALIZER_VERTICAL_SEGMENTS.coerceAtLeast(8)
+        val segmentGap = NOW_PLAYING_VISUALIZER_SEGMENT_GAP_PX
+        val segmentHeight = (
+            (size.height - segmentGap * (totalSegments - 1).toFloat()) / totalSegments.toFloat()
+        ).coerceAtLeast(2f)
+        val barInnerWidth = (barWidth * 0.62f).coerceAtLeast(2f)
+
+        // Subtle grid like classic car-stereo spectrum analyzers.
+        repeat(8) { i ->
+            val y = size.height * (i + 1) / 9f
+            drawLine(
+                color = Color.White.copy(alpha = 0.05f),
+                start = Offset(0f, y),
+                end = Offset(size.width, y),
+                strokeWidth = 1f
+            )
+        }
+        activeBins.indices.forEach { index ->
+            val x = (index + 0.5f) * barWidth
+            drawLine(
+                color = Color.White.copy(alpha = 0.03f),
+                start = Offset(x, 0f),
+                end = Offset(x, size.height),
+                strokeWidth = 1f
+            )
+        }
+
+        activeBins.forEachIndexed { index, raw ->
+            val amplitude = raw.coerceIn(0f, 1f)
+            val litSegments = (amplitude * totalSegments).toInt().coerceIn(0, totalSegments)
+            val left = index * barWidth + (barWidth - barInnerWidth) * 0.5f
+
+            for (s in 0 until totalSegments) {
+                val bottomY = size.height - s * (segmentHeight + segmentGap)
+                val topY = bottomY - segmentHeight
+                if (topY < 0f) continue
+                val baseColor = if (s == 0) {
+                    Color(0xFF2E89FF)
+                } else {
+                    val upperRatio = if (totalSegments <= 2) {
+                        1f
+                    } else {
+                        ((s - 1).toFloat() / (totalSegments - 2).toFloat()).coerceIn(0f, 1f)
+                    }
+                    if (upperRatio < 0.65f) {
+                        lerp(Color(0xFF2CFF6B), Color(0xFFFFE34D), upperRatio / 0.65f)
+                    } else {
+                        lerp(Color(0xFFFFE34D), Color(0xFFFF4D4D), (upperRatio - 0.65f) / 0.35f)
+                    }
+                }
+                val isLit = s < litSegments
+                val alpha = if (isLit) 0.96f else 0.10f
+                drawRect(
+                    color = baseColor.copy(alpha = alpha),
+                    topLeft = Offset(left, topY),
+                    size = Size(barInnerWidth, segmentHeight)
+                )
+            }
+
+            val heldAmplitude = (peakHoldBins.getOrNull(index) ?: 0f).coerceIn(0f, 1f)
+            if (heldAmplitude > 0f) {
+                val peakSegment = (heldAmplitude * totalSegments).toInt().coerceIn(0, totalSegments - 1)
+                val peakBottom = size.height - peakSegment * (segmentHeight + segmentGap)
+                val lineY = (peakBottom - segmentHeight * 0.5f).coerceIn(0f, size.height - NOW_PLAYING_PEAK_LINE_HEIGHT_PX)
+                drawRect(
+                    color = Color.White.copy(alpha = 0.92f),
+                    topLeft = Offset(left, lineY),
+                    size = Size(barInnerWidth, NOW_PLAYING_PEAK_LINE_HEIGHT_PX)
+                )
+            }
+        }
+
+        val horizonY = size.height - 1f
+        drawLine(
+            color = Color(0xFF6EFFA5).copy(alpha = 0.32f),
+            start = Offset(0f, horizonY),
+            end = Offset(size.width, horizonY),
+            strokeWidth = 2.4f
+        )
     }
 }
 

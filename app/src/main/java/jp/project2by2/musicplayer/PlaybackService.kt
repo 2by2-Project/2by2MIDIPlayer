@@ -37,6 +37,8 @@ import dev.atsushieno.ktmidi.Midi1SimpleMessage
 import dev.atsushieno.ktmidi.MidiChannelStatus
 import dev.atsushieno.ktmidi.read
 import java.io.File
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -46,7 +48,20 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.launch
+import kotlin.math.exp
+import kotlin.math.ln
+import kotlin.math.pow
+import kotlin.math.sqrt
 import kotlin.random.Random
+
+private const val VISUALIZER_ASSUMED_SAMPLE_RATE_HZ = 44_100f
+private const val VISUALIZER_MIN_HZ = 31.5f
+private const val VISUALIZER_MAX_HZ = 16_000f
+private const val VISUALIZER_NOISE_GATE_DB = -78f
+private const val VISUALIZER_DB_FLOOR = -66f
+private const val VISUALIZER_DB_CEILING = -10f
+private const val VISUALIZER_DB_RESPONSE_GAMMA = 0.90f
+private const val LOG10_DENOMINATOR = 2.302585092994046
 
 @UnstableApi
 class PlaybackService : MediaSessionService() {
@@ -472,6 +487,66 @@ class PlaybackService : MediaSessionService() {
     fun isPlaying(): Boolean {
         val h = handles ?: return false
         return BASS.BASS_ChannelIsActive(h.stream) == BASS.BASS_ACTIVE_PLAYING
+    }
+
+    fun getVisualizerSpectrum(binCount: Int = 56): FloatArray {
+        val requestedBins = binCount.coerceIn(8, 128)
+        val output = FloatArray(requestedBins)
+        val h = handles ?: return output
+        if (h.stream == 0 || !isPlayingBass()) return output
+
+        val fftBuffer = ByteBuffer.allocateDirect(512 * 4).order(ByteOrder.LITTLE_ENDIAN)
+        val readBytes = BASS.BASS_ChannelGetData(
+            h.stream,
+            fftBuffer,
+            BASS.BASS_DATA_FFT1024
+        )
+        if (readBytes <= 0) return output
+        val fftCount = (readBytes / 4).coerceIn(0, 512)
+        if (fftCount <= 8) return output
+
+        val minBin = 1
+        val maxBin = (fftCount - 1).coerceAtLeast(minBin + 1)
+        val nyquistHz = VISUALIZER_ASSUMED_SAMPLE_RATE_HZ * 0.5f
+        val rangeMinHz = VISUALIZER_MIN_HZ.coerceIn(1f, nyquistHz - 10f)
+        val rangeMaxHz = VISUALIZER_MAX_HZ.coerceIn(rangeMinHz + 10f, nyquistHz)
+        fun hzToBin(hz: Float): Int {
+            val ratio = (hz / nyquistHz).coerceIn(0f, 1f)
+            return (ratio * maxBin.toFloat()).toInt().coerceIn(minBin, maxBin)
+        }
+        val mappedMinBin = hzToBin(rangeMinHz)
+        val mappedMaxBin = hzToBin(rangeMaxHz).coerceAtLeast(mappedMinBin + 1)
+        val minLog = ln((mappedMinBin + 1).toDouble())
+        val logSpan = ln((mappedMaxBin + 1).toDouble()) - minLog
+
+        for (i in output.indices) {
+            val startRatio = i.toDouble() / output.size.toDouble()
+            val endRatio = (i + 1).toDouble() / output.size.toDouble()
+            val startBin = (exp(minLog + logSpan * startRatio) - 1.0).toInt().coerceIn(mappedMinBin, mappedMaxBin)
+            val endBin = (exp(minLog + logSpan * endRatio) - 1.0).toInt()
+                .coerceIn(startBin + 1, mappedMaxBin + 1)
+            var powerSum = 0f
+            var count = 0
+            for (bin in startBin until endBin) {
+                val value = fftBuffer.getFloat(bin * 4).coerceAtLeast(0f)
+                powerSum += value * value
+                count += 1
+            }
+            val rms = if (count > 0) sqrt((powerSum / count.toFloat()).toDouble()).toFloat() else 0f
+            val bandRatio = if (output.size <= 1) 1f else i.toFloat() / (output.size - 1).toFloat()
+            val highBoost = (0.85f + 1.6f * bandRatio.pow(1.15f))
+            val compensated = rms * highBoost
+            val safeAmplitude = compensated.coerceAtLeast(1.0e-9f).toDouble()
+            val db = (20.0 * (ln(safeAmplitude) / LOG10_DENOMINATOR)).toFloat()
+            if (db <= VISUALIZER_NOISE_GATE_DB) {
+                output[i] = 0f
+                continue
+            }
+            val normalizedDb = ((db - VISUALIZER_DB_FLOOR) / (VISUALIZER_DB_CEILING - VISUALIZER_DB_FLOOR))
+                .coerceIn(0f, 1f)
+            output[i] = normalizedDb.pow(VISUALIZER_DB_RESPONSE_GAMMA).coerceIn(0f, 1f)
+        }
+        return output
     }
 
     private fun releaseHandles() {

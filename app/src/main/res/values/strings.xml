@@ -90,4 +90,6 @@
     <string name="set_loop_point">Set Loop Point</string>
     <string name="save">Save</string>
     <string name="action_done">Done</string>
+    <string name="now_playing_view_piano_roll">Piano Roll</string>
+    <string name="now_playing_view_visualizer">Visualizer</string>
 </resources>

@@ -86,4 +86,6 @@
     <string name="set_loop_point">ループポイントを設定</string>
     <string name="save">保存</string>
     <string name="action_done">完了</string>
+    <string name="now_playing_view_piano_roll">ピアノロール</string>
+    <string name="now_playing_view_visualizer">ビジュアライザー</string>
 </resources>
