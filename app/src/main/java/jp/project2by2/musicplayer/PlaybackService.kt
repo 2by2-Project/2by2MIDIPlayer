@@ -47,6 +47,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.launch
 import kotlin.random.Random
+import kotlin.system.measureTimeMillis
 
 @UnstableApi
 class PlaybackService : MediaSessionService() {
@@ -103,56 +104,59 @@ class PlaybackService : MediaSessionService() {
 
     override fun onCreate() {
         super.onCreate()
-        bassInit()
-        observePlaybackSettings()
+        val initMs = measureTimeMillis {
+            bassInit()
+            observePlaybackSettings()
 
-        bassPlayer = BassPlayer(
-            looper = Looper.getMainLooper(),
-            initialTitle = getString(R.string.app_name),
-            initialArtworkUri = getOrCreateNotificationPlaceholderArtworkUri(),
-            onPlay = { playInternalFromController() },
-            onPause = { pauseInternalFromController(releaseFocus = true) },
-            onSeek = { ms -> seekInternalFromController(ms) },
-            onSeekToPrevious = { seekInternalFromController(0L) },
-            onSeekToNext = {
-                serviceScope.launch { playNextInQueue(shuffleEnabledSnapshot) }
-            },
-            onSetLoopEnabled = { enabled ->
-                serviceScope.launch { setLoopEnabledFromController(enabled) }
-            },
-            onSetShuffleEnabled = { enabled ->
-                serviceScope.launch { setShuffleEnabledFromController(enabled) }
-            },
-            queryPositionMs = { getSessionPositionMs() },
-            queryDurationMs = { getDurationMs() },
-            queryIsPlaying = { isPlaying() },
-            queryLoopEnabled = { loopEnabledSnapshot },
-            queryShuffleEnabled = { shuffleEnabledSnapshot },
-        )
-        val contentIntent = PendingIntent.getActivity(
-            this,
-            0,
-            Intent(this, MainActivity::class.java).apply {
-                flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
-            },
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-        )
+            bassPlayer = BassPlayer(
+                looper = Looper.getMainLooper(),
+                initialTitle = getString(R.string.app_name),
+                initialArtworkUri = getOrCreateNotificationPlaceholderArtworkUri(),
+                onPlay = { playInternalFromController() },
+                onPause = { pauseInternalFromController(releaseFocus = true) },
+                onSeek = { ms -> seekInternalFromController(ms) },
+                onSeekToPrevious = { seekInternalFromController(0L) },
+                onSeekToNext = {
+                    serviceScope.launch { playNextInQueue(shuffleEnabledSnapshot) }
+                },
+                onSetLoopEnabled = { enabled ->
+                    serviceScope.launch { setLoopEnabledFromController(enabled) }
+                },
+                onSetShuffleEnabled = { enabled ->
+                    serviceScope.launch { setShuffleEnabledFromController(enabled) }
+                },
+                queryPositionMs = { getSessionPositionMs() },
+                queryDurationMs = { getDurationMs() },
+                queryIsPlaying = { isPlaying() },
+                queryLoopEnabled = { loopEnabledSnapshot },
+                queryShuffleEnabled = { shuffleEnabledSnapshot },
+            )
+            val contentIntent = PendingIntent.getActivity(
+                this,
+                0,
+                Intent(this, MainActivity::class.java).apply {
+                    flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                },
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+            )
 
-        mediaSession = MediaSession.Builder(this, bassPlayer)
-            .setId(getString(R.string.playback_session_id))
-            .setSessionActivity(contentIntent)
-            .setCallback(mediaSessionCallback)
-            .build()
+            mediaSession = MediaSession.Builder(this, bassPlayer)
+                .setId(getString(R.string.playback_session_id))
+                .setSessionActivity(contentIntent)
+                .setCallback(mediaSessionCallback)
+                .build()
 
-        notificationProvider = DefaultMediaNotificationProvider.Builder(this)
-            .setChannelName(R.string.notification_channel_name)
-            .setChannelId(NOTIFICATION_CHANNEL_ID)
-            .setNotificationId(NOTIFICATION_ID)
-            .build().also { provider ->
-                provider.setSmallIcon(R.drawable.notification_icon)
-            }
-        setMediaNotificationProvider(notificationProvider)
-        updateNotificationControls()
+            notificationProvider = DefaultMediaNotificationProvider.Builder(this)
+                .setChannelName(R.string.notification_channel_name)
+                .setChannelId(NOTIFICATION_CHANNEL_ID)
+                .setNotificationId(NOTIFICATION_ID)
+                .build().also { provider ->
+                    provider.setSmallIcon(R.drawable.notification_icon)
+                }
+            setMediaNotificationProvider(notificationProvider)
+            updateNotificationControls()
+        }
+        Log.d(STARTUP_TRACE_TAG, "PlaybackService.onCreate took ${initMs}ms")
     }
 
     private fun observePlaybackSettings() {
@@ -893,7 +897,12 @@ class PlaybackService : MediaSessionService() {
     }
 
     private fun bassInit(): Boolean {
-        return BassRuntime.acquire()
+        var ok = false
+        val durationMs = measureTimeMillis {
+            ok = BassRuntime.acquire()
+        }
+        Log.d(STARTUP_TRACE_TAG, "BassRuntime.acquire took ${durationMs}ms")
+        return ok
     }
 
     private fun bassTerminate() {
