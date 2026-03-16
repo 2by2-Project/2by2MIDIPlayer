@@ -409,18 +409,33 @@ fun MusicPlayerMainScreen(
     fun MidiFileItem.withMetadata(metadata: MidiMetadata?): MidiFileItem {
         if (metadata == null) return this
         return copy(
-            metadataTitle = metadata.title?.takeIf { it.isNotBlank() },
-            metadataArtist = metadata.copyright?.takeIf { it.isNotBlank() },
-            loopPointMs = metadata.loopPointMs
+            metadataTitle = metadata.title?.takeIf { it.isNotBlank() } ?: metadataTitle,
+            metadataArtist = metadata.copyright?.takeIf { it.isNotBlank() } ?: metadataArtist,
+            loopPointMs = metadata.loopPointMs ?: loopPointMs
+        )
+    }
+
+    fun mergeMetadataPreservingKnownValues(
+        current: MidiMetadata?,
+        incoming: MidiMetadata
+    ): MidiMetadata {
+        return MidiMetadata(
+            title = current?.title?.takeIf { it.isNotBlank() } ?: incoming.title,
+            copyright = current?.copyright?.takeIf { it.isNotBlank() } ?: incoming.copyright,
+            loopPointMs = current?.loopPointMs ?: incoming.loopPointMs,
+            durationMs = current?.durationMs ?: incoming.durationMs
         )
     }
 
     fun applyPersistedMetadata(entries: Map<String, MidiMetadata>) {
         if (entries.isEmpty()) return
-        midiMetadataCache.putAll(entries)
+        val mergedEntries = entries.mapValues { (uriString, incoming) ->
+            mergeMetadataPreservingKnownValues(midiMetadataCache[uriString], incoming)
+        }
+        midiMetadataCache.putAll(mergedEntries)
         for (index in midiFiles.indices) {
             val item = midiFiles[index]
-            val metadata = entries[item.uri.toString()] ?: continue
+            val metadata = mergedEntries[item.uri.toString()] ?: continue
             midiFiles[index] = item.withMetadata(metadata)
         }
     }
@@ -873,6 +888,18 @@ fun MusicPlayerMainScreen(
         scope.launch {
             try {
                 val demoFiles = queryDemoMidiFiles(context)
+                val demoMetadata = demoFiles.associate { item ->
+                    item.uri.toString() to MidiMetadata(
+                        title = item.metadataTitle,
+                        copyright = item.metadataArtist,
+                        loopPointMs = item.loopPointMs,
+                        durationMs = item.durationMs
+                    )
+                }
+                demoMetadata.forEach { (uriString, metadata) ->
+                    midiMetadataCache[uriString] = metadata
+                }
+                metadataCacheRepository.putAll(demoMetadata)
 
                 midiFiles.removeAll { it.folderKey == "assets_demo" }
                 midiFiles.addAll(demoFiles)
@@ -1477,7 +1504,6 @@ fun MusicPlayerMainScreen(
                                                     items = items,
                                                     listContext = MidiListContext.Browse,
                                                     isLoading = isFolderPreparing || (folderKey == "assets_demo" && isDemoLoading),
-                                                    showLoopMarkers = true,
                                                     selectedUri = selectedMidiFileUri,
                                                     availability = midiAvailability,
                                                     animationToken = browseAnimationToken,
@@ -1506,7 +1532,6 @@ fun MusicPlayerMainScreen(
                                                 items = searchResults,
                                                 listContext = MidiListContext.Search,
                                                 isLoading = isSearchLoading,
-                                                showLoopMarkers = true,
                                                 selectedUri = selectedMidiFileUri,
                                                 availability = midiAvailability,
                                                 animationToken = browseAnimationToken,
@@ -2312,7 +2337,6 @@ private fun MidiFileList(
     isEditMode: Boolean = false,
     onMoveItem: (Long, Int) -> Unit = { _, _ -> },
     onRemoveItem: (Long) -> Unit = {},
-    showLoopMarkers: Boolean = false,
     selectedUri: Uri?,
     availability: Map<String, MidiFileAvailability> = emptyMap(),
     animationToken: Long = 0L,
@@ -2452,7 +2476,6 @@ private fun MidiFileList(
                             removingItemIds.remove(itemId)
                         }
                     },
-                    showLoopMarker = showLoopMarkers && item.loopPointMs != null,
                     onRowHeightMeasured = { h ->
                         if (h > 1f) measuredRowHeightPx = h
                     },
@@ -2473,7 +2496,6 @@ private fun MidiFileRow(
     availability: MidiFileAvailability = MidiFileAvailability.Unknown,
     rowModifier: Modifier = Modifier,
     isSelected: Boolean,
-    showLoopMarker: Boolean = false,
     showReorderHandle: Boolean = false,
     isRemoving: Boolean = false,
     onDragStart: () -> Unit = {},
@@ -2650,7 +2672,7 @@ private fun MidiFileRow(
             Row(
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                if (showLoopMarker) {
+                if (item.loopPointMs != null) {
                     Icon(
                         imageVector = Icons.Default.Repeat,
                         contentDescription = null,
@@ -3318,23 +3340,34 @@ private fun PlaylistTracks(
     fun applyMetadata(uri: Uri, metadata: MidiMetadata) {
         val metadataTitle = metadata.title?.takeIf { it.isNotBlank() }
         val metadataArtist = metadata.copyright?.takeIf { it.isNotBlank() }
+        val loopPointMs = metadata.loopPointMs
         val loadedIndex = loadedItemsState.indexOfFirst { it.uri == uri }
         if (loadedIndex >= 0) {
             val current = loadedItemsState[loadedIndex]
-            if (current.metadataTitle != metadataTitle || current.metadataArtist != metadataArtist) {
+            if (
+                current.metadataTitle != metadataTitle ||
+                current.metadataArtist != metadataArtist ||
+                current.loopPointMs != loopPointMs
+            ) {
                 loadedItemsState[loadedIndex] = current.copy(
                     metadataTitle = metadataTitle,
-                    metadataArtist = metadataArtist
+                    metadataArtist = metadataArtist,
+                    loopPointMs = loopPointMs
                 )
             }
         }
         val editIndex = editItems.indexOfFirst { it.uri == uri }
         if (editIndex >= 0) {
             val current = editItems[editIndex]
-            if (current.metadataTitle != metadataTitle || current.metadataArtist != metadataArtist) {
+            if (
+                current.metadataTitle != metadataTitle ||
+                current.metadataArtist != metadataArtist ||
+                current.loopPointMs != loopPointMs
+            ) {
                 editItems[editIndex] = current.copy(
                     metadataTitle = metadataTitle,
-                    metadataArtist = metadataArtist
+                    metadataArtist = metadataArtist,
+                    loopPointMs = loopPointMs
                 )
                 onEditItemsChanged(editItems.toList())
             }
@@ -3342,7 +3375,7 @@ private fun PlaylistTracks(
     }
 
     fun requestMetadata(item: MidiFileItem) {
-        if (item.metadataTitle != null || item.metadataArtist != null) return
+        if (item.loopPointMs != null) return
         val key = item.uri.toString()
         metadataCache[key]?.let {
             applyMetadata(item.uri, it)
@@ -3371,7 +3404,8 @@ private fun PlaylistTracks(
                 metadataCache[item.uri.toString()]?.let { metadata ->
                     item.copy(
                         metadataTitle = metadata.title?.takeIf { it.isNotBlank() },
-                        metadataArtist = metadata.copyright?.takeIf { it.isNotBlank() }
+                        metadataArtist = metadata.copyright?.takeIf { it.isNotBlank() },
+                        loopPointMs = metadata.loopPointMs
                     )
                 } ?: item
             }
@@ -3780,6 +3814,7 @@ private fun calculateMidiDurationMs(midiBytes: ByteArray): Long {
 private suspend fun queryDemoMidiFiles(context: Context): List<MidiFileItem> = withContext(Dispatchers.IO) {
     val results = mutableListOf<MidiFileItem>()
     val demoFolderName = context.getString(R.string.folder_demo_name)
+    val midiParser = MidiParser(context.contentResolver)
 
     try {
         val assetManager = context.assets
@@ -3797,13 +3832,19 @@ private suspend fun queryDemoMidiFiles(context: Context): List<MidiFileItem> = w
             val uri = DemoMidiContract.buildUri(fileName)
 
             // Calculate MIDI file duration using ktmidi
-            val durationMs = logStartupStep("calculateMidiDurationMs($fileName)") {
+            val metadata = logStartupStep("parseDemoMidiMetadata($fileName)") {
+                midiParser.parseMetadata(midiBytes)
+            }
+            val durationMs = metadata.durationMs ?: logStartupStep("calculateMidiDurationMs($fileName)") {
                 calculateMidiDurationMs(midiBytes)
             }
 
             results.add(MidiFileItem(
                 uri = uri,
                 fileName = fileName,
+                metadataTitle = metadata.title?.takeIf { it.isNotBlank() },
+                metadataArtist = metadata.copyright?.takeIf { it.isNotBlank() },
+                loopPointMs = metadata.loopPointMs,
                 folderName = demoFolderName,
                 folderKey = "assets_demo",
                 durationMs = durationMs

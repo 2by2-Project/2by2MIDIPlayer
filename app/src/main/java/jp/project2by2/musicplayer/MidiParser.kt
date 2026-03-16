@@ -30,7 +30,7 @@ class MidiParser(private val contentResolver: ContentResolver) {
         val bytes = runCatching {
             contentResolver.openInputStream(uri)?.use { it.readBytes() }
         }.getOrNull() ?: return EMPTY_METADATA
-        val metadata = getMetadataFromBytes(bytes)
+        val metadata = parseMetadata(bytes)
         MetadataLruCache.put(uriKey, metadata)
         fileName?.let { MetadataLruCache.put(cacheKeyForFileName(it), metadata) }
         return metadata
@@ -41,12 +41,12 @@ class MidiParser(private val contentResolver: ContentResolver) {
         MetadataLruCache.get(fileSignatureKey)?.let { return it }
 
         val bytes = runCatching { file.readBytes() }.getOrNull() ?: return EMPTY_METADATA
-        val metadata = getMetadataFromBytes(bytes)
+        val metadata = parseMetadata(bytes)
         MetadataLruCache.put(fileSignatureKey, metadata)
         return metadata
     }
 
-    private fun getMetadataFromBytes(bytes: ByteArray): MidiMetadata {
+    fun parseMetadata(bytes: ByteArray): MidiMetadata {
         return runCatching {
             val music = Midi1Music().apply { read(bytes.toList()) }
             MidiMetadataExtractor.extract(music)
