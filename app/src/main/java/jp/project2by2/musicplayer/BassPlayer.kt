@@ -3,7 +3,6 @@ package jp.project2by2.musicplayer
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
-import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
@@ -30,6 +29,10 @@ class BassPlayer(
     private val queryLoopEnabled: () -> Boolean,
     private val queryShuffleEnabled: () -> Boolean,
 ) : SimpleBasePlayer(looper) {
+    private companion object {
+        private const val MAX_REASONABLE_DURATION_MS = 7L * 24L * 60L * 60L * 1000L
+    }
+
     private val playerHandler = Handler(looper)
     private val applicationLooper = looper
 
@@ -80,7 +83,6 @@ class BassPlayer(
         val isPlaying = queryIsPlaying()
         val posMs = queryPositionMs()
         val durMs = queryDurationMs()
-        val durUs = if (durMs > 0) durMs * 1000 else C.TIME_UNSET
 
         val metadata = MediaMetadata.Builder()
             .setTitle(title)
@@ -93,12 +95,17 @@ class BassPlayer(
             .setMediaMetadata(metadata)
             .build()
 
-        val itemData = MediaItemData.Builder(mediaId)
+        val itemDataBuilder = MediaItemData.Builder(mediaId)
             .setMediaItem(mediaItem)
             .setMediaMetadata(metadata)
-            .setDurationUs(durUs)
             .setIsSeekable(durMs > 0)
-            .build()
+        val safeDurationUs = durMs
+            .takeIf { it in 1L..MAX_REASONABLE_DURATION_MS }
+            ?.times(1000L)
+        if (safeDurationUs != null && safeDurationUs > 0L) {
+            itemDataBuilder.setDurationUs(safeDurationUs)
+        }
+        val itemData = itemDataBuilder.build()
 
         val commands = Player.Commands.Builder()
             .add(Player.COMMAND_GET_TIMELINE)

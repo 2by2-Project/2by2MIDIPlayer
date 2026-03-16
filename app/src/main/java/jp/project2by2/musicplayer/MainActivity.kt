@@ -2134,6 +2134,15 @@ private fun NowPlayingPianoRollSheet(
                     }
                 }
                 else -> {
+                    val initialZoomLevel = remember(
+                        pianoRollData.totalTicks,
+                        pianoRollData.measureTickPositions
+                    ) {
+                        calculatePlaybackInitialZoomLevel(
+                            totalTicks = pianoRollData.totalTicks,
+                            measureTickPositions = pianoRollData.measureTickPositions
+                        )
+                    }
                     PlaybackPianoRollView(
                         notes = pianoRollData.notes,
                         measureTickPositions = pianoRollData.measureTickPositions,
@@ -2143,10 +2152,7 @@ private fun NowPlayingPianoRollSheet(
                         endPointMs = ui.loopEndMs,
                         totalDurationMs = maxOf(pianoRollData.totalDurationMs, ui.durationMs),
                         totalTicks = pianoRollData.totalTicks,
-                        zoomLevel = calculatePlaybackInitialZoomLevel(
-                            totalTicks = pianoRollData.totalTicks,
-                            measureTickPositions = pianoRollData.measureTickPositions
-                        ),
+                        zoomLevel = initialZoomLevel,
                         modifier = Modifier
                             .fillMaxWidth()
                             .weight(1f)
@@ -2321,12 +2327,7 @@ private fun calculatePlaybackInitialZoomLevel(
         ?: spans[spans.size / 2]
 
     val targetWindowTicks = (dominantMeasureTicks * targetVisibleMeasures).coerceAtLeast(1)
-    val zoom = (totalTicks.toFloat() / targetWindowTicks.toFloat()).coerceIn(1f, 40f)
-    Log.d(
-        "PlaybackPianoRollTS",
-        "calculatePlaybackInitialZoomLevel: totalTicks=$totalTicks dominantMeasureTicks=$dominantMeasureTicks targetMeasures=$targetVisibleMeasures zoom=$zoom"
-    )
-    return zoom
+    return (totalTicks.toFloat() / targetWindowTicks.toFloat()).coerceIn(1f, 40f)
 }
 
 @Composable

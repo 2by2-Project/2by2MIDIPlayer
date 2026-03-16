@@ -9,6 +9,8 @@ object BassRuntime {
 
     fun acquire(): Boolean = synchronized(lock) {
         if (!initialized) {
+            BASS.BASS_SetConfig(BASS.BASS_CONFIG_UPDATEPERIOD, 5)
+            BASS.BASS_SetConfig(BASS.BASS_CONFIG_BUFFER, 10)
             initialized = BASS.BASS_Init(-1, 44100, 0)
             if (!initialized) return false
         }
