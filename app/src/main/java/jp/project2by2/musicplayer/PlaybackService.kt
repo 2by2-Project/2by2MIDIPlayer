@@ -924,6 +924,7 @@ class PlaybackService : MediaSessionService() {
             }
         )
         BASSMIDI.BASS_MIDI_StreamSetFonts(stream, fonts, 1)
+        BASSMIDI.BASS_MIDI_StreamLoadSamples(stream)
         return MidiHandles(stream, soundFontHandle)
     }
 

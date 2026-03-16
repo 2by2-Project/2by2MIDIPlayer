@@ -129,6 +129,7 @@ class LoopPreviewPlayer(
             }
         )
         BASSMIDI.BASS_MIDI_StreamSetFonts(stream, fonts, 1)
+        BASSMIDI.BASS_MIDI_StreamLoadSamples(stream)
         BASS.BASS_ChannelSetAttribute(stream, BASS.BASS_ATTRIB_VOL, 1f)
         return MidiHandles(stream = stream, font = soundFontHandle)
     }
