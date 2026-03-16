@@ -327,7 +327,7 @@ fun MusicPlayerMainScreen(
     val searchResults = remember { mutableStateListOf<MidiFileItem>() }
 
     fun applyFolderItems(items: List<MidiFileItem>) {
-        val rebuilt = buildFolderItems(context, items)
+        val rebuilt = buildFolderItems(context, items, folderCoverCache.toMap())
         folderItems.clear()
         folderItems.addAll(rebuilt)
         val activeFolderKeys = rebuilt.map { folderItem: FolderItem -> folderItem.key }.toSet()
@@ -352,7 +352,7 @@ fun MusicPlayerMainScreen(
         }
         val resolvedFolder: FolderItem = requireNotNull(folder)
         selectedFolderName = resolvedFolder.name
-        selectedFolderCoverUri = folderCoverCache[resolvedFolder.key]
+        selectedFolderCoverUri = folderCoverCache[resolvedFolder.key] ?: resolvedFolder.coverUri
     }
 
     fun applyBrowseSnapshot(snapshot: BrowseLibrarySnapshot, animateItems: Boolean) {
@@ -382,6 +382,7 @@ fun MusicPlayerMainScreen(
         folderItems.clear()
         folderItems.addAll(snapshot.folderItems)
         folderCoverCache.clear()
+        folderCoverCache.putAll(snapshot.folderItems.associate { folderItem -> folderItem.key to folderItem.coverUri })
         refreshSelectedFolderState()
         if (animateItems) browseAnimationToken += 1L
     }
@@ -593,7 +594,10 @@ fun MusicPlayerMainScreen(
                 "refreshBrowseLibrary start initial=$isInitialLoad"
             )
             val snapshot = logStartupStep("loadBrowseLibrary") {
-                loadBrowseLibrary(context)
+                loadBrowseLibrary(
+                    context = context,
+                    includeFolderCovers = hasImagePermission
+                )
             }
             val persistedMetadata = logStartupStep("metadataCacheRepository.getByUris(initial)") {
                 metadataCacheRepository.getByUris(
@@ -669,7 +673,7 @@ fun MusicPlayerMainScreen(
         }
     }
 
-    LaunchedEffect(hasAudioPermission) {
+    LaunchedEffect(hasAudioPermission, hasImagePermission) {
         if (!hasAudioPermission) return@LaunchedEffect
         refreshBrowseLibrary(isInitialLoad = !hasCompletedInitialBrowseLoad)
     }
@@ -1437,7 +1441,7 @@ fun MusicPlayerMainScreen(
                                                 rootTab = RootTab.Browse
                                                 selectedFolderKey = selectedFolder.key
                                                 selectedFolderName = selectedFolder.name
-                                                selectedFolderCoverUri = folderCoverCache[selectedFolder.key]
+                                                selectedFolderCoverUri = folderCoverCache[selectedFolder.key] ?: selectedFolder.coverUri
                                             },
                                             onDemoMusicClick = { handleDemoMusicClick() },
                                             viewMode = folderViewMode,
@@ -3714,7 +3718,8 @@ private fun queryMidiFiles(context: Context): List<MidiFileItem> {
 }
 
 private suspend fun loadBrowseLibrary(
-    context: Context
+    context: Context,
+    includeFolderCovers: Boolean
 ): BrowseLibrarySnapshot = withContext(Dispatchers.IO) {
     val scannedFiles = logStartupStep("queryMidiFiles") {
         queryMidiFiles(context).toMutableList()
@@ -3722,9 +3727,21 @@ private suspend fun loadBrowseLibrary(
     val sortedFiles = scannedFiles.sortedWith(
         compareBy<MidiFileItem>({ it.folderName.lowercase() }, { it.fileName.lowercase() })
     )
+    val folderCoverUris = if (includeFolderCovers) {
+        sortedFiles
+            .asSequence()
+            .map { it.folderKey }
+            .filter { it.isNotBlank() }
+            .distinct()
+            .associateWith { folderKey ->
+                findCoverImageUri(context, folderKey)
+            }
+    } else {
+        emptyMap()
+    }
     BrowseLibrarySnapshot(
         midiFiles = sortedFiles,
-        folderItems = buildFolderItems(context, sortedFiles)
+        folderItems = buildFolderItems(context, sortedFiles, folderCoverUris)
     )
 }
 
