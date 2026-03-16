@@ -193,6 +193,7 @@ import kotlin.coroutines.coroutineContext
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
+import kotlin.system.measureTimeMillis
 
 class MainActivity : ComponentActivity() {
     private var externalOpenUri by mutableStateOf<Uri?>(null)
@@ -239,6 +240,18 @@ class MainActivity : ComponentActivity() {
 
         externalOpenUri = uri
     }
+}
+
+const val STARTUP_TRACE_TAG = "StartupTrace"
+
+private inline fun <T> logStartupStep(label: String, block: () -> T): T {
+    var result: T? = null
+    val durationMs = measureTimeMillis {
+        result = block()
+    }
+    Log.d(STARTUP_TRACE_TAG, "$label took ${durationMs}ms")
+    @Suppress("UNCHECKED_CAST")
+    return result as T
 }
 
 @androidx.annotation.OptIn(UnstableApi::class)
@@ -303,6 +316,7 @@ fun MusicPlayerMainScreen(
     var isBrowseInitialLoading by remember { mutableStateOf(false) }
     var isBrowseRefreshing by remember { mutableStateOf(false) }
     var hasCompletedInitialBrowseLoad by remember { mutableStateOf(false) }
+    var browseReadyUptimeMs by remember { mutableLongStateOf(0L) }
     var isFolderPreparing by remember { mutableStateOf(false) }
     var isSearchLoading by remember { mutableStateOf(false) }
     var browseAnimationToken by remember { mutableLongStateOf(0L) }
@@ -423,20 +437,30 @@ fun MusicPlayerMainScreen(
     }
 
     suspend fun prepareFolderContents(folderKey: String) {
+        Log.d(STARTUP_TRACE_TAG, "prepareFolderContents start folderKey=$folderKey")
         val itemsInFolder = midiFiles.filter { item -> item.folderKey == folderKey }
         val uriStrings = itemsInFolder.map { it.uri.toString() }
-        val persistedMetadata = metadataCacheRepository.getByUris(uriStrings)
+        val persistedMetadata = logStartupStep("metadataCacheRepository.getByUris(folder)") {
+            metadataCacheRepository.getByUris(uriStrings)
+        }
         applyPersistedMetadata(persistedMetadata)
         for (item in itemsInFolder) {
             val key = item.uri.toString()
             if (midiMetadataCache[key] == null) {
-                val metadata = withContext(Dispatchers.IO) { midiParser.getMetadata(item.uri) }
+                val metadata = logStartupStep("midiParser.getMetadata($key)") {
+                    withContext(Dispatchers.IO) { midiParser.getMetadata(item.uri) }
+                }
                 midiMetadataCache[key] = metadata
-                metadataCacheRepository.put(key, metadata)
+                logStartupStep("metadataCacheRepository.put($key)") {
+                    metadataCacheRepository.put(key, metadata)
+                }
                 applyMidiMetadata(item.uri, metadata)
             }
-            updateMidiAvailability(item, forceRefresh = true)
+            logStartupStep("updateMidiAvailability($key)") {
+                updateMidiAvailability(item, forceRefresh = true)
+            }
         }
+        Log.d(STARTUP_TRACE_TAG, "prepareFolderContents end folderKey=$folderKey items=${itemsInFolder.size}")
     }
 
     suspend fun performSearch(query: String, folderKey: String?) {
@@ -518,11 +542,12 @@ fun MusicPlayerMainScreen(
     }
 
     // Media3
-    val sessionToken = SessionToken(context, ComponentName(context, PlaybackService::class.java))
-    val controllerFuture = MediaController.Builder(context, sessionToken).buildAsync()
-    controllerFuture.addListener({
-        // MediaController is available here with controllerFuture.get()
-    }, MoreExecutors.directExecutor())
+    val sessionToken = remember(context) {
+        SessionToken(context, ComponentName(context, PlaybackService::class.java))
+    }
+    val controllerFuture = remember(context, sessionToken) {
+        MediaController.Builder(context, sessionToken).buildAsync()
+    }
 
     val audioPermission = if (Build.VERSION.SDK_INT >= 33) {
         Manifest.permission.READ_MEDIA_AUDIO
@@ -555,13 +580,28 @@ fun MusicPlayerMainScreen(
         }
         isBrowseRefreshing = true
         try {
-            val snapshot = loadBrowseLibrary(context, demoFilesLoaded)
-            val persistedMetadata = metadataCacheRepository.getByUris(
-                snapshot.midiFiles.map { it.uri.toString() }
+            Log.d(
+                STARTUP_TRACE_TAG,
+                "refreshBrowseLibrary start initial=$isInitialLoad demoLoaded=$demoFilesLoaded"
             )
+            val snapshot = logStartupStep("loadBrowseLibrary") {
+                loadBrowseLibrary(context, demoFilesLoaded)
+            }
+            val persistedMetadata = logStartupStep("metadataCacheRepository.getByUris(initial)") {
+                metadataCacheRepository.getByUris(
+                    snapshot.midiFiles.map { it.uri.toString() }
+                )
+            }
             midiMetadataCache.putAll(persistedMetadata)
             applyBrowseSnapshot(snapshot, animateItems = true)
             hasCompletedInitialBrowseLoad = true
+            if (browseReadyUptimeMs == 0L) {
+                browseReadyUptimeMs = android.os.SystemClock.uptimeMillis()
+            }
+            Log.d(
+                STARTUP_TRACE_TAG,
+                "refreshBrowseLibrary end items=${snapshot.midiFiles.size} folders=${snapshot.folderItems.size} cachedMetadata=${persistedMetadata.size}"
+            )
         } catch (_: Exception) {
             Toast.makeText(
                 context,
@@ -606,6 +646,12 @@ fun MusicPlayerMainScreen(
         }
     }
 
+    DisposableEffect(controllerFuture) {
+        onDispose {
+            MediaController.releaseFuture(controllerFuture)
+        }
+    }
+
     LaunchedEffect(playbackService) {
         val service = playbackService ?: return@LaunchedEffect
 
@@ -615,7 +661,7 @@ fun MusicPlayerMainScreen(
         }
     }
 
-    LaunchedEffect(hasAudioPermission, hasImagePermission) {
+    LaunchedEffect(hasAudioPermission) {
         if (!hasAudioPermission) return@LaunchedEffect
         val loaded = SettingsDataStore.demoFilesLoadedFlow(context).first()
         demoFilesLoaded = loaded
@@ -651,6 +697,25 @@ fun MusicPlayerMainScreen(
             if (selectedFolderKey == folderKey) {
                 isFolderPreparing = false
             }
+        }
+    }
+
+    fun requestBrowseRefresh() {
+        val now = android.os.SystemClock.uptimeMillis()
+        val readyForManualRefresh = hasCompletedInitialBrowseLoad &&
+            browseReadyUptimeMs > 0L &&
+            now - browseReadyUptimeMs >= 1_500L &&
+            !isFolderPreparing &&
+            !isSearchLoading
+        if (!readyForManualRefresh) {
+            Log.d(
+                STARTUP_TRACE_TAG,
+                "ignored manual refresh ready=$hasCompletedInitialBrowseLoad uptimeDelta=${now - browseReadyUptimeMs} folderPreparing=$isFolderPreparing searchLoading=$isSearchLoading"
+            )
+            return
+        }
+        scope.launch {
+            refreshBrowseLibrary(isInitialLoad = false)
         }
     }
 
@@ -1372,11 +1437,7 @@ fun MusicPlayerMainScreen(
                                 when (screen) {
                                     BrowseScreen.Folders -> BrowseRefreshContainer(
                                         isRefreshing = isBrowseRefreshing,
-                                        onRefresh = {
-                                            scope.launch {
-                                                refreshBrowseLibrary(isInitialLoad = false)
-                                            }
-                                        }
+                                        onRefresh = { requestBrowseRefresh() }
                                     ) {
                                         FolderGrid(
                                             items = folderItems,
@@ -1411,11 +1472,7 @@ fun MusicPlayerMainScreen(
                                         }
                                         BrowseRefreshContainer(
                                             isRefreshing = isBrowseRefreshing,
-                                            onRefresh = {
-                                                scope.launch {
-                                                    refreshBrowseLibrary(isInitialLoad = false)
-                                                }
-                                            }
+                                            onRefresh = { requestBrowseRefresh() }
                                         ) {
                                             if (isFolderPreparing && items.isEmpty()) {
                                                 Box(
@@ -1451,11 +1508,7 @@ fun MusicPlayerMainScreen(
                                     BrowseScreen.Search -> {
                                         BrowseRefreshContainer(
                                             isRefreshing = isBrowseRefreshing,
-                                            onRefresh = {
-                                                scope.launch {
-                                                    refreshBrowseLibrary(isInitialLoad = false)
-                                                }
-                                            }
+                                            onRefresh = { requestBrowseRefresh() }
                                         ) {
                                             Box(modifier = Modifier.fillMaxSize()) {
                                                 MidiFileList(
@@ -3662,10 +3715,12 @@ private suspend fun loadBrowseLibrary(
     context: Context,
     includeDemoFiles: Boolean
 ): BrowseLibrarySnapshot = withContext(Dispatchers.IO) {
-    val scannedFiles = queryMidiFiles(context).toMutableList()
+    val scannedFiles = logStartupStep("queryMidiFiles") {
+        queryMidiFiles(context).toMutableList()
+    }
     if (includeDemoFiles) {
         scannedFiles.removeAll { it.folderKey == "assets_demo" }
-        scannedFiles.addAll(queryDemoMidiFiles(context))
+        scannedFiles.addAll(logStartupStep("queryDemoMidiFiles") { queryDemoMidiFiles(context) })
     }
     val sortedFiles = scannedFiles.sortedWith(
         compareBy<MidiFileItem>({ it.folderName.lowercase() }, { it.fileName.lowercase() })
@@ -3718,6 +3773,7 @@ private suspend fun queryDemoMidiFiles(context: Context): List<MidiFileItem> = w
     try {
         val assetManager = context.assets
         val demoFiles = assetManager.list("demo") ?: emptyArray()
+        Log.d(STARTUP_TRACE_TAG, "queryDemoMidiFiles start count=${demoFiles.size}")
 
         for (fileName in demoFiles) {
             if (!fileName.endsWith(".mid", ignoreCase = true) &&
@@ -3739,7 +3795,9 @@ private suspend fun queryDemoMidiFiles(context: Context): List<MidiFileItem> = w
             val uri = Uri.fromFile(cacheFile)
 
             // Calculate MIDI file duration using ktmidi
-            val durationMs = calculateMidiDurationMs(cacheFile)
+            val durationMs = logStartupStep("calculateMidiDurationMs($fileName)") {
+                calculateMidiDurationMs(cacheFile)
+            }
 
             results.add(MidiFileItem(
                 uri = uri,
@@ -3753,6 +3811,7 @@ private suspend fun queryDemoMidiFiles(context: Context): List<MidiFileItem> = w
         e.printStackTrace()
     }
 
+    Log.d(STARTUP_TRACE_TAG, "queryDemoMidiFiles end results=${results.size}")
     return@withContext results.sortedBy { it.fileName.lowercase() }
 }
 
