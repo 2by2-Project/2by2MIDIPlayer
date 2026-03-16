@@ -58,6 +58,12 @@
             android:exported="false"
             android:theme="@style/Theme._2by2MusicPlayer" />
 
+        <provider
+            android:name=".DemoMidiContentProvider"
+            android:authorities="${applicationId}.demo-midi"
+            android:exported="false"
+            android:grantUriPermissions="true" />
+
         <service
             android:name=".PlaybackService"
             android:exported="false"

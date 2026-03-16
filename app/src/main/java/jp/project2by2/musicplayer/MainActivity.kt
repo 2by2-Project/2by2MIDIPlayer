@@ -2,6 +2,7 @@ package jp.project2by2.musicplayer
 
 import android.Manifest
 import android.content.ComponentName
+import android.content.ClipData
 import android.content.ContentUris
 import android.content.Context
 import android.content.Intent
@@ -49,11 +50,13 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
@@ -336,13 +339,18 @@ fun MusicPlayerMainScreen(
     fun refreshSelectedFolderState() {
         val currentFolderKey = selectedFolderKey ?: return
         val folder = folderItems.firstOrNull { folderItem: FolderItem -> folderItem.key == currentFolderKey }
-        if (folder == null) {
+        if (folder == null && currentFolderKey != "assets_demo") {
             selectedFolderKey = null
             selectedFolderName = null
             selectedFolderCoverUri = null
             return
         }
-        val resolvedFolder: FolderItem = folder
+        if (currentFolderKey == "assets_demo" && folder == null) {
+            selectedFolderName = context.getString(R.string.folder_demo_name)
+            selectedFolderCoverUri = null
+            return
+        }
+        val resolvedFolder: FolderItem = requireNotNull(folder)
         selectedFolderName = resolvedFolder.name
         selectedFolderCoverUri = folderCoverCache[resolvedFolder.key]
     }
@@ -582,10 +590,10 @@ fun MusicPlayerMainScreen(
         try {
             Log.d(
                 STARTUP_TRACE_TAG,
-                "refreshBrowseLibrary start initial=$isInitialLoad demoLoaded=$demoFilesLoaded"
+                "refreshBrowseLibrary start initial=$isInitialLoad"
             )
             val snapshot = logStartupStep("loadBrowseLibrary") {
-                loadBrowseLibrary(context, demoFilesLoaded)
+                loadBrowseLibrary(context)
             }
             val persistedMetadata = logStartupStep("metadataCacheRepository.getByUris(initial)") {
                 metadataCacheRepository.getByUris(
@@ -663,8 +671,6 @@ fun MusicPlayerMainScreen(
 
     LaunchedEffect(hasAudioPermission) {
         if (!hasAudioPermission) return@LaunchedEffect
-        val loaded = SettingsDataStore.demoFilesLoadedFlow(context).first()
-        demoFilesLoaded = loaded
         refreshBrowseLibrary(isInitialLoad = !hasCompletedInitialBrowseLoad)
     }
 
@@ -851,42 +857,33 @@ fun MusicPlayerMainScreen(
     fun handleDemoMusicClick() {
         if (isDemoLoading) return
 
+        selectedFolderKey = "assets_demo"
+        selectedFolderName = context.getString(R.string.folder_demo_name)
+        selectedFolderCoverUri = null
+
         if (demoFilesLoaded) {
-            // Already loaded, just navigate
-            selectedFolderKey = "assets_demo"
-            selectedFolderName = context.getString(R.string.folder_demo_name)
-            selectedFolderCoverUri = null
             return
         }
 
-        // Load demo files
         isDemoLoading = true
         scope.launch {
             try {
                 val demoFiles = queryDemoMidiFiles(context)
 
-                // Remove any existing demo files first
                 midiFiles.removeAll { it.folderKey == "assets_demo" }
-                // Add new demo files
                 midiFiles.addAll(demoFiles)
                 applyFolderItems(midiFiles)
                 browseAnimationToken += 1L
 
                 demoFilesLoaded = true
-                SettingsDataStore.setDemoFilesLoaded(context, true)
-                isDemoLoading = false
-
-                // Navigate to demo folder
-                selectedFolderKey = "assets_demo"
-                selectedFolderName = context.getString(R.string.folder_demo_name)
-                selectedFolderCoverUri = null
             } catch (e: Exception) {
-                isDemoLoading = false
                 Toast.makeText(
                     context,
                     "Failed to load demo files: ${e.message}",
                     Toast.LENGTH_LONG
                 ).show()
+            } finally {
+                isDemoLoading = false
             }
         }
     }
@@ -1289,19 +1286,10 @@ fun MusicPlayerMainScreen(
                         )
                         androidx.compose.foundation.layout.Spacer(modifier = Modifier.height(24.dp))
 
-                        if (isDemoLoading) {
-                            CircularProgressIndicator(modifier = Modifier.size(32.dp))
-                            androidx.compose.foundation.layout.Spacer(modifier = Modifier.height(8.dp))
-                            Text(
-                                text = stringResource(id = R.string.loading_demo_files),
-                                style = MaterialTheme.typography.bodySmall
-                            )
-                        } else {
-                            DemoMusicButton(
-                                onClick = { handleDemoMusicClick() },
-                                showDividers = false
-                            )
-                        }
+                        DemoMusicButton(
+                            onClick = { handleDemoMusicClick() },
+                            showDividers = false
+                        )
                     }
                 } else {
                     val isSearching = isSearchActive && searchQuery.isNotBlank()
@@ -1452,7 +1440,6 @@ fun MusicPlayerMainScreen(
                                                 selectedFolderCoverUri = folderCoverCache[selectedFolder.key]
                                             },
                                             onDemoMusicClick = { handleDemoMusicClick() },
-                                            isDemoLoading = isDemoLoading,
                                             viewMode = folderViewMode,
                                             onViewModeChange = { mode ->
                                                 folderViewMode = mode
@@ -1470,10 +1457,10 @@ fun MusicPlayerMainScreen(
                                             it.folderKey == folderKey &&
                                                 midiAvailability[it.uri.toString()] != MidiFileAvailability.Missing
                                         }
-                                        BrowseRefreshContainer(
-                                            isRefreshing = isBrowseRefreshing,
-                                            onRefresh = { requestBrowseRefresh() }
-                                        ) {
+                                    BrowseRefreshContainer(
+                                        isRefreshing = isBrowseRefreshing,
+                                        onRefresh = { requestBrowseRefresh() }
+                                    ) {
                                             if (isFolderPreparing && items.isEmpty()) {
                                                 Box(
                                                     modifier = Modifier.fillMaxSize(),
@@ -1485,6 +1472,7 @@ fun MusicPlayerMainScreen(
                                                 MidiFileList(
                                                     items = items,
                                                     listContext = MidiListContext.Browse,
+                                                    isLoading = isFolderPreparing || (folderKey == "assets_demo" && isDemoLoading),
                                                     showLoopMarkers = true,
                                                     selectedUri = selectedMidiFileUri,
                                                     availability = midiAvailability,
@@ -1510,47 +1498,31 @@ fun MusicPlayerMainScreen(
                                             isRefreshing = isBrowseRefreshing,
                                             onRefresh = { requestBrowseRefresh() }
                                         ) {
-                                            Box(modifier = Modifier.fillMaxSize()) {
-                                                MidiFileList(
-                                                    items = searchResults,
-                                                    listContext = MidiListContext.Search,
-                                                    showLoopMarkers = true,
-                                                    selectedUri = selectedMidiFileUri,
-                                                    availability = midiAvailability,
-                                                    animationToken = browseAnimationToken,
-                                                    onItemClick = { tapped: MidiFileItem ->
-                                                        handleMidiTap(
-                                                            item = tapped,
-                                                            listContext = MidiListContext.Search,
-                                                            sourceItems = searchResults.toList(),
-                                                            sourceTitle = selectedFolderName,
-                                                            sourceCover = selectedFolderCoverUri
-                                                        )
-                                                    },
-                                                    onAddToPlaylist = { item: MidiFileItem -> pendingPlaylistCandidate = item },
-                                                    onQueueNext = { item: MidiFileItem ->
-                                                        queueTrackNext(item, searchResults.toList(), selectedFolderName)
-                                                    },
-                                                    onMissingItemDetected = { item: MidiFileItem ->
-                                                        handleMissingItem(item, MidiListContext.Search)
-                                                    }
-                                                )
-                                                if (isSearchLoading) {
-                                                    Box(
-                                                        modifier = Modifier
-                                                            .fillMaxWidth().fillMaxHeight(0.5f)
-                                                            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.72f)),
-                                                        contentAlignment = Alignment.Center
-                                                    ) {
-                                                        Column(
-                                                            horizontalAlignment = Alignment.CenterHorizontally,
-                                                            verticalArrangement = Arrangement.spacedBy(12.dp)
-                                                        ) {
-                                                            CircularProgressIndicator()
-                                                        }
-                                                    }
+                                            MidiFileList(
+                                                items = searchResults,
+                                                listContext = MidiListContext.Search,
+                                                isLoading = isSearchLoading,
+                                                showLoopMarkers = true,
+                                                selectedUri = selectedMidiFileUri,
+                                                availability = midiAvailability,
+                                                animationToken = browseAnimationToken,
+                                                onItemClick = { tapped: MidiFileItem ->
+                                                    handleMidiTap(
+                                                        item = tapped,
+                                                        listContext = MidiListContext.Search,
+                                                        sourceItems = searchResults.toList(),
+                                                        sourceTitle = selectedFolderName,
+                                                        sourceCover = selectedFolderCoverUri
+                                                    )
+                                                },
+                                                onAddToPlaylist = { item: MidiFileItem -> pendingPlaylistCandidate = item },
+                                                onQueueNext = { item: MidiFileItem ->
+                                                    queueTrackNext(item, searchResults.toList(), selectedFolderName)
+                                                },
+                                                onMissingItemDetected = { item: MidiFileItem ->
+                                                    handleMissingItem(item, MidiListContext.Search)
                                                 }
-                                            }
+                                            )
                                         }
                                     }
                                 }
@@ -1760,6 +1732,7 @@ fun MusicPlayerMainScreen(
             title = currentTitle,
             onDismiss = { showNowPlayingActions = false },
             showPlayAction = false,
+            loopEditEnabled = !DemoMidiContract.isDemoUri(currentUri),
             onPlay = {},
             onShare = {
                 showNowPlayingActions = false
@@ -2331,6 +2304,7 @@ private fun calculatePlaybackInitialZoomLevel(
 private fun MidiFileList(
     items: List<MidiFileItem>,
     listContext: MidiListContext,
+    isLoading: Boolean = false,
     isEditMode: Boolean = false,
     onMoveItem: (Long, Int) -> Unit = { _, _ -> },
     onRemoveItem: (Long) -> Unit = {},
@@ -2352,10 +2326,19 @@ private fun MidiFileList(
     val removingItemIds = remember { mutableStateListOf<Long>() }
 
     if (items.isEmpty()) {
-        Text(
-            text = stringResource(id = R.string.info_no_matching_files),
-            style = MaterialTheme.typography.bodySmall
-        )
+        if (isLoading) {
+            LoadingMidiState()
+        } else if (listContext == MidiListContext.Search) {
+            EmptyMidiState(
+                icon = Icons.Default.Search,
+                message = stringResource(id = R.string.info_no_matching_files)
+            )
+        } else {
+            EmptyMidiState(
+                icon = Icons.Default.Folder,
+                message = stringResource(id = R.string.info_no_mid_files_found)
+            )
+        }
         return
     }
     LazyColumn(
@@ -2685,6 +2668,7 @@ private fun MidiFileRow(
         MidiFileActionsDialog(
             title = item.displayTitle(),
             onDismiss = { showActions = false },
+            loopEditEnabled = !DemoMidiContract.isDemoUri(item.uri),
             onPlay = {
                 showActions = false
                 if (availability == MidiFileAvailability.Missing) {
@@ -2722,10 +2706,59 @@ private fun MidiFileRow(
 }
 
 @Composable
+private fun LoadingMidiState() {
+    val density = LocalDensity.current
+    val imeBottom = WindowInsets.ime.getBottom(density)
+    val upwardOffset = if (imeBottom > 0) (-96).dp else 0.dp
+
+    Box(
+        modifier = Modifier.fillMaxSize(),
+        contentAlignment = Alignment.Center
+    ) {
+        CircularProgressIndicator(
+            modifier = Modifier.offset(y = upwardOffset)
+        )
+    }
+}
+
+@Composable
+private fun EmptyMidiState(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    message: String
+) {
+    val density = LocalDensity.current
+    val imeBottom = WindowInsets.ime.getBottom(density)
+    val upwardOffset = if (imeBottom > 0) (-96).dp else 0.dp
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .offset(y = upwardOffset),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(40.dp)
+        )
+        Spacer(modifier = Modifier.height(12.dp))
+        Text(
+            text = message,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center
+        )
+    }
+}
+
+@Composable
 private fun MidiFileActionsDialog(
     title: String,
     onDismiss: () -> Unit,
     showPlayAction: Boolean = true,
+    loopEditEnabled: Boolean = true,
     onPlay: () -> Unit,
     onShare: () -> Unit,
     onDetails: () -> Unit,
@@ -2762,7 +2795,11 @@ private fun MidiFileActionsDialog(
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(text = stringResource(id = R.string.action_add_to_playlist))
                 }
-                ElevatedButton(onClick = onEditLoopPoint, modifier = Modifier.fillMaxWidth()) {
+                ElevatedButton(
+                    onClick = onEditLoopPoint,
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = loopEditEnabled
+                ) {
                     Icon(imageVector = Icons.Filled.Edit, contentDescription = null)
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(text = stringResource(id = R.string.action_edit_loop_point))
@@ -2788,7 +2825,6 @@ private fun FolderGrid(
     animationToken: Long = 0L,
     onFolderClick: (FolderItem) -> Unit,
     onDemoMusicClick: () -> Unit,
-    isDemoLoading: Boolean = false,
     viewMode: FolderViewMode,
     onViewModeChange: (FolderViewMode) -> Unit
 ) {
@@ -2878,26 +2914,10 @@ private fun FolderGrid(
                 }
 
                 item(span = { GridItemSpan(maxLineSpan) }) {
-                    if (isDemoLoading) {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 24.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally
-                        ) {
-                            CircularProgressIndicator(modifier = Modifier.size(32.dp))
-                            androidx.compose.foundation.layout.Spacer(modifier = Modifier.height(8.dp))
-                            Text(
-                                text = stringResource(id = R.string.loading_demo_files),
-                                style = MaterialTheme.typography.bodySmall
-                            )
-                        }
-                    } else {
-                        DemoMusicButton(
-                            onClick = onDemoMusicClick,
-                            modifier = Modifier.padding(top = 12.dp)
-                        )
-                    }
+                    DemoMusicButton(
+                        onClick = onDemoMusicClick,
+                        modifier = Modifier.padding(top = 12.dp)
+                    )
                 }
             }
         } else {
@@ -2907,8 +2927,7 @@ private fun FolderGrid(
                 listState = listState,
                 animationToken = animationToken,
                 onFolderClick = onFolderClick,
-                onDemoMusicClick = onDemoMusicClick,
-                isDemoLoading = isDemoLoading
+                onDemoMusicClick = onDemoMusicClick
             )
         }
     }
@@ -2921,8 +2940,7 @@ private fun FolderList(
     listState: LazyListState = rememberLazyListState(),
     animationToken: Long = 0L,
     onFolderClick: (FolderItem) -> Unit,
-    onDemoMusicClick: () -> Unit,
-    isDemoLoading: Boolean
+    onDemoMusicClick: () -> Unit
 ) {
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -2943,26 +2961,10 @@ private fun FolderList(
             }
         }
         item {
-            if (isDemoLoading) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 24.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    CircularProgressIndicator(modifier = Modifier.size(32.dp))
-                    androidx.compose.foundation.layout.Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = stringResource(id = R.string.loading_demo_files),
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                }
-            } else {
-                DemoMusicButton(
-                    onClick = onDemoMusicClick,
-                    modifier = Modifier.padding(top = 12.dp)
-                )
-            }
+            DemoMusicButton(
+                onClick = onDemoMusicClick,
+                modifier = Modifier.padding(top = 12.dp)
+            )
         }
     }
 }
@@ -3433,7 +3435,7 @@ private fun resolveDurationMsForUri(context: Context, uri: Uri): Long {
         val path = uri.path ?: return 0L
         val file = File(path)
         if (!file.exists() || !file.isFile) return 0L
-        return calculateMidiDurationMs(file).coerceAtLeast(0L)
+        return calculateMidiDurationMs(file.readBytes()).coerceAtLeast(0L)
     }
 
     return runCatching {
@@ -3712,15 +3714,10 @@ private fun queryMidiFiles(context: Context): List<MidiFileItem> {
 }
 
 private suspend fun loadBrowseLibrary(
-    context: Context,
-    includeDemoFiles: Boolean
+    context: Context
 ): BrowseLibrarySnapshot = withContext(Dispatchers.IO) {
     val scannedFiles = logStartupStep("queryMidiFiles") {
         queryMidiFiles(context).toMutableList()
-    }
-    if (includeDemoFiles) {
-        scannedFiles.removeAll { it.folderKey == "assets_demo" }
-        scannedFiles.addAll(logStartupStep("queryDemoMidiFiles") { queryDemoMidiFiles(context) })
     }
     val sortedFiles = scannedFiles.sortedWith(
         compareBy<MidiFileItem>({ it.folderName.lowercase() }, { it.fileName.lowercase() })
@@ -3739,27 +3736,24 @@ private fun inferListContext(item: MidiFileItem): MidiListContext {
     }
 }
 
-private fun calculateMidiDurationMs(midiFile: File): Long {
+private fun calculateMidiDurationMs(midiBytes: ByteArray): Long {
     return try {
-        midiFile.inputStream().use { inputStream ->
-            val bytes = inputStream.readBytes().toList()
-            val music = Midi1Music().apply { read(bytes) }
+        val music = Midi1Music().apply { read(midiBytes.toList()) }
 
-            // Find the maximum tick from all tracks
-            var maxTick = 0
-            for (track in music.tracks) {
-                var tick = 0
-                for (e in track.events) {
-                    tick += e.deltaTime
-                }
-                if (tick > maxTick) {
-                    maxTick = tick
-                }
+        // Find the maximum tick from all tracks
+        var maxTick = 0
+        for (track in music.tracks) {
+            var tick = 0
+            for (e in track.events) {
+                tick += e.deltaTime
             }
-
-            // Convert tick to milliseconds
-            music.getTimePositionInMillisecondsForTick(maxTick).toLong()
+            if (tick > maxTick) {
+                maxTick = tick
+            }
         }
+
+        // Convert tick to milliseconds
+        music.getTimePositionInMillisecondsForTick(maxTick).toLong()
     } catch (e: Exception) {
         e.printStackTrace()
         0L
@@ -3781,22 +3775,13 @@ private suspend fun queryDemoMidiFiles(context: Context): List<MidiFileItem> = w
                 continue
             }
 
-            // Copy asset to files directory (persistent storage) to get URI
-            val cacheFile = File(context.filesDir, "demo/$fileName")
-            if (!cacheFile.exists()) {
-                cacheFile.parentFile?.mkdirs()
-                assetManager.open("demo/$fileName").use { input ->
-                    cacheFile.outputStream().use { output ->
-                        input.copyTo(output)
-                    }
-                }
-            }
-
-            val uri = Uri.fromFile(cacheFile)
+            val assetPath = "${DemoMidiContract.DEMO_FOLDER}/$fileName"
+            val midiBytes = assetManager.open(assetPath).use { it.readBytes() }
+            val uri = DemoMidiContract.buildUri(fileName)
 
             // Calculate MIDI file duration using ktmidi
             val durationMs = logStartupStep("calculateMidiDurationMs($fileName)") {
-                calculateMidiDurationMs(cacheFile)
+                calculateMidiDurationMs(midiBytes)
             }
 
             results.add(MidiFileItem(
@@ -3842,7 +3827,9 @@ private fun buildFolderItems(
     items: List<MidiFileItem>,
     folderCoverUris: Map<String, Uri?> = emptyMap()
 ): List<FolderItem> {
-    val grouped = items.groupBy { it.folderKey }
+    val grouped = items
+        .filterNot { it.folderKey == "assets_demo" }
+        .groupBy { it.folderKey }
     val results = mutableListOf<FolderItem>()
     for ((key, _) in grouped) {
         val name = extractFolderName(key).ifBlank { context.getString(R.string.unknown) }
@@ -3879,6 +3866,7 @@ private fun shareMidiFile(context: Context, uri: Uri) {
     val shareIntent = Intent(Intent.ACTION_SEND).apply {
         type = mimeType
         putExtra(Intent.EXTRA_STREAM, uri)
+        clipData = ClipData.newUri(context.contentResolver, "MIDI", uri)
         addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
     }
     context.startActivity(Intent.createChooser(shareIntent, null))

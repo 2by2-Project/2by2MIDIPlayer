@@ -41,6 +41,9 @@ android {
         compose = true
         buildConfig = true
     }
+    androidResources {
+        noCompress += setOf("mid", "midi")
+    }
 }
 
 dependencies {
