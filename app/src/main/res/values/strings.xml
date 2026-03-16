@@ -17,7 +17,7 @@
     <string name="settings">Settings</string>
     <string name="topbar_search_summary">Search by filename / track name / artist</string>
     <string name="info_grant_storage_permission">Please grant storage permission</string>
-    <string name="info_no_mid_files_found">No .mid files found</string>
+    <string name="info_no_mid_files_found">No files</string>
     <string name="info_no_matching_files">No matching files</string>
     <string name="summary_midi_file_missing">File is missing</string>
     <string name="info_added_to_next_queue">Queued to next track</string>
@@ -62,7 +62,6 @@
     <string name="soundfont_size_large">Large</string>
     <string name="button_sample_demo_music">Browse Sample MIDIs</string>
     <string name="folder_demo_name">Sample MIDI musics</string>
-    <string name="loading_demo_files">Loading sample MIDI files…</string>
     <string name="action_play_in_next_track">Play in next track</string>
     <string name="action_share">Share</string>
     <string name="action_details">Details</string>

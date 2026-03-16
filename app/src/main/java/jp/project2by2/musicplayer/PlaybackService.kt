@@ -945,6 +945,9 @@ class PlaybackService : MediaSessionService() {
 
     private fun resolveFolderDisplayName(uri: Uri): String? {
         activeQueueTitle?.let { if (it.isNotBlank()) return it }
+        if (DemoMidiContract.isDemoUri(uri)) {
+            return getString(R.string.folder_demo_name)
+        }
         val lastSegment = uri.path?.substringBeforeLast('/', "")?.substringAfterLast('/', "")
         return lastSegment?.takeIf { it.isNotBlank() }
     }

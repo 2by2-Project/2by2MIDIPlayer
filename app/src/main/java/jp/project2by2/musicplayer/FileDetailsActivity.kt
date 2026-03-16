@@ -233,6 +233,9 @@ private fun resolveDisplayName(context: Context, uri: Uri): String {
 }
 
 private fun resolveParentFolderName(context: Context, uri: Uri): String {
+    if (DemoMidiContract.isDemoUri(uri)) {
+        return context.getString(R.string.folder_demo_name)
+    }
     if (uri.scheme == "file") {
         return File(uri.path ?: return "").parentFile?.name.orEmpty()
     }
@@ -274,4 +277,3 @@ private fun resolveMimeType(context: Context, uri: Uri): String {
     if (extension.isBlank()) return ""
     return MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension.lowercase()).orEmpty()
 }
-

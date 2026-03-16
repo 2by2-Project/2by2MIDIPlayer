@@ -18,7 +18,7 @@
     <string name="settings">設定</string>
     <string name="topbar_search_summary">ファイル名・曲名・アーティストで検索</string>
     <string name="info_grant_storage_permission">ストレージの権限を付与してください</string>
-    <string name="info_no_mid_files_found">MIDIファイルがありません</string>
+    <string name="info_no_mid_files_found">ファイルがありません</string>
     <string name="info_no_matching_files">一致するファイルが見つかりませんでした</string>
     <string name="summary_midi_file_missing">ファイルがありません</string>
     <string name="info_added_to_next_queue">次にこの曲が再生されます</string>
@@ -58,7 +58,6 @@
     <string name="soundfont_size_large">高品質</string>
     <string name="button_sample_demo_music">サンプルMIDI一覧を表示</string>
     <string name="folder_demo_name">サンプルMIDI楽曲</string>
-    <string name="loading_demo_files">サンプルMIDIファイルを読み込んでいます…</string>
     <string name="action_play_in_next_track">次に再生</string>
     <string name="action_share">シェアする</string>
     <string name="action_details">ファイルの詳細</string>
