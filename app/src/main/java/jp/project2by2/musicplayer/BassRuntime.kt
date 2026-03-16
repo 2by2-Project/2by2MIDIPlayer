@@ -1,6 +1,7 @@
 package jp.project2by2.musicplayer
 
 import com.un4seen.bass.BASS
+import com.un4seen.bass.BASSMIDI
 
 object BassRuntime {
     private val lock = Any()
@@ -11,6 +12,7 @@ object BassRuntime {
         if (!initialized) {
             initialized = BASS.BASS_Init(-1, 44100, 0)
             if (!initialized) return false
+            BASS.BASS_SetConfig(BASSMIDI.BASS_CONFIG_MIDI_COMPACT, 0)
         }
         refCount += 1
         true
