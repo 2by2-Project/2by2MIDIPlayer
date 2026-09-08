@@ -1,0 +1,69 @@
+import org.jetbrains.compose.desktop.application.dsl.TargetFormat
+
+plugins {
+    alias(libs.plugins.kotlin.jvm)
+    alias(libs.plugins.compose.multiplatform)
+    alias(libs.plugins.kotlin.compose)
+}
+
+kotlin { compilerOptions.jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_11) }
+java {
+    sourceCompatibility = JavaVersion.VERSION_11
+    targetCompatibility = JavaVersion.VERSION_11
+}
+
+dependencies {
+    implementation(project(":shared"))
+    implementation(compose.desktop.currentOs)
+    implementation(libs.compose.desktop.material3)
+    implementation(libs.compose.material.icons)
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-swing:1.10.2")
+    implementation("net.java.dev.jna:jna:5.17.0")
+    testImplementation(kotlin("test"))
+}
+
+compose.desktop {
+    application {
+        mainClass = "jp.project2by2.musicplayer.desktop.MainKt"
+        providers.gradleProperty("packagingJavaHome").orNull?.let { javaHome = it }
+        nativeDistributions {
+            targetFormats(TargetFormat.Msi, TargetFormat.Deb)
+            packageName = "2by2MusicPlayer"
+            packageVersion = "1.7.0"
+            description = "2by2 MIDI Player"
+            windows { iconFile.set(project.file("icons/app-icon.ico")) }
+            linux { iconFile.set(project.file("src/main/resources/app-icon.png")) }
+            modules("java.desktop", "java.prefs", "jdk.unsupported", "jdk.charsets")
+            appResourcesRootDir.set(layout.projectDirectory.dir("resources"))
+        }
+    }
+}
+
+val nativePlatform = if (System.getProperty("os.name").startsWith("Windows")) "win-x64" else "linux-x64"
+tasks.withType<JavaExec>().configureEach {
+    systemProperty("bass.native.dir", rootProject.file("proprietary").absolutePath)
+    systemProperty("midi.demo.dir", rootProject.file("app/src/main/assets/demo").absolutePath)
+}
+tasks.test {
+    systemProperty("bass.native.dir", rootProject.file("proprietary").absolutePath)
+    systemProperty("midi.demo.dir", rootProject.file("app/src/main/assets/demo").absolutePath)
+    systemProperty("native.fixture.dir", layout.buildDirectory.dir("native-fixtures").get().asFile.absolutePath)
+}
+
+// Compose copies these resources alongside the installed application, outside its jars.
+val stageNativeLibraries by tasks.registering(Sync::class) {
+    from(rootProject.layout.projectDirectory.dir("proprietary/$nativePlatform"))
+    into(layout.projectDirectory.dir("resources/common/proprietary/$nativePlatform"))
+    doFirst {
+        val names = if (nativePlatform == "win-x64") listOf("bass.dll", "bassmidi.dll") else listOf("libbass.so", "libbassmidi.so")
+        names.forEach { check(rootProject.file("proprietary/$nativePlatform/$it").isFile) { "Missing proprietary/$nativePlatform/$it" } }
+    }
+}
+val stageDemoMidi by tasks.registering(Sync::class) {
+    from(rootProject.layout.projectDirectory.dir("app/src/main/assets/demo"))
+    into(layout.projectDirectory.dir("resources/common/demo"))
+    include("*.MID", "*.mid", "*.midi")
+}
+tasks.matching { it.name == "createDistributable" || it.name.startsWith("prepareAppResources") }.configureEach {
+    dependsOn(stageNativeLibraries, stageDemoMidi)
+}

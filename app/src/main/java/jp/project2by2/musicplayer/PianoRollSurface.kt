@@ -5,25 +5,9 @@ import android.graphics.Paint
 import android.net.Uri
 import android.os.SystemClock
 import android.util.Log
-import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.tween
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
-import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
 import dev.atsushieno.ktmidi.Midi1Music
@@ -31,7 +15,6 @@ import dev.atsushieno.ktmidi.MidiChannelStatus
 import dev.atsushieno.ktmidi.Midi1CompoundMessage
 import dev.atsushieno.ktmidi.read
 import java.util.PriorityQueue
-import kotlin.math.roundToInt
 import kotlin.math.roundToLong
 
 private val MidiChannelNeonPalette = listOf(
@@ -59,37 +42,6 @@ private const val ACTIVE_NOTE_OVERLAY_ALPHA = 0.75f
 private const val ACTIVE_NOTE_GLOW_ALPHA = 0.15f
 private const val ACTIVE_NOTE_GLOW_EXPAND_X = 4f
 private const val ACTIVE_NOTE_GLOW_EXPAND_Y = 4f
-
-data class PianoRollNote(
-    val noteNumber: Int,
-    val startMs: Long,
-    val endMs: Long,
-    val startTick: Int,
-    val endTick: Int,
-    val velocity: Int,
-    val channel: Int,
-    val trackIndex: Int
-)
-
-data class TickTimeAnchor(
-    val tick: Int,
-    val ms: Long
-)
-
-data class TimeSignature(
-    val tick: Int,
-    val numerator: Int,
-    val denominator: Int
-)
-
-data class PianoRollData(
-    val notes: List<PianoRollNote>,
-    val totalDurationMs: Long,
-    val measurePositions: List<Long>,
-    val measureTickPositions: List<Int>,
-    val totalTicks: Int,
-    val tickTimeAnchors: List<TickTimeAnchor>
-)
 
 fun buildPianoRollData(music: Midi1Music): PianoRollData {
     val maxTick = music.tracks.maxOfOrNull { t -> t.events.sumOf { it.deltaTime } } ?: 0
@@ -259,7 +211,7 @@ private suspend fun extractPianoRollNotesProgressive(
     }
 
     while (queue.isNotEmpty()) {
-        val cursor = queue.poll()
+        val cursor = queue.poll() ?: break
         val track = music.tracks[cursor.trackIndex]
         val event = track.events[cursor.eventIndex]
         val tick = cursor.absoluteTick
@@ -317,151 +269,7 @@ private suspend fun extractPianoRollNotesProgressive(
     return notes
 }
 
-@Composable
-fun PlaybackPianoRollView(
-    notes: List<PianoRollNote>,
-    measureTickPositions: List<Int>,
-    tickTimeAnchors: List<TickTimeAnchor>,
-    currentPositionMs: Long,
-    loopPointMs: Long,
-    endPointMs: Long,
-    totalDurationMs: Long,
-    totalTicks: Int,
-    zoomLevel: Float = 10f,
-    modifier: Modifier = Modifier
-) {
-    var previousNoteCount by remember { mutableIntStateOf(0) }
-    var chunkStartIndex by remember { mutableIntStateOf(0) }
-    val chunkReveal = remember { Animatable(1f) }
 
-    LaunchedEffect(notes.size) {
-        val newSize = notes.size
-        if (newSize > previousNoteCount) {
-            chunkStartIndex = previousNoteCount
-            previousNoteCount = newSize
-            chunkReveal.snapTo(0f)
-            chunkReveal.animateTo(
-                targetValue = 1f,
-                animationSpec = tween(durationMillis = 250, easing = FastOutSlowInEasing)
-            )
-        } else {
-            previousNoteCount = newSize
-            chunkStartIndex = newSize
-            chunkReveal.snapTo(1f)
-        }
-    }
-
-    Box(modifier = modifier.background(Color(0xFF161616))) {
-        Canvas(Modifier.fillMaxSize()) {
-            val durationTicks = totalTicks.coerceAtLeast(1)
-            val displayDurationTicks = durationTicks
-            val viewport = (displayDurationTicks / zoomLevel).toInt().coerceAtLeast(1)
-            val half = viewport / 2
-            val currentTick = msToTick(currentPositionMs, tickTimeAnchors, durationTicks)
-            val currentDisplayTick = currentTick
-            val visibleStart = (currentDisplayTick - half).coerceIn(0, (displayDurationTicks - viewport).coerceAtLeast(0))
-            val visibleEnd = visibleStart + viewport
-            val endDisplayTick = msToTick(endPointMs, tickTimeAnchors, durationTicks).coerceIn(0, durationTicks)
-            val drawableEndTick = minOf(visibleEnd, endDisplayTick)
-            val endX = ((endDisplayTick - visibleStart).toFloat() / viewport.toFloat()) * size.width
-            val measureLabelPaint = Paint().apply {
-                color = Color.Gray.copy(alpha = 0.45f).toArgb()
-                textSize = 32f
-                isAntiAlias = true
-            }
-
-            measureTickPositions.forEachIndexed { index, measureDisplayTick ->
-                if (measureDisplayTick !in visibleStart..drawableEndTick) return@forEachIndexed
-                val x = ((measureDisplayTick - visibleStart).toFloat() / viewport.toFloat()) * size.width
-                drawLine(
-                    color = Color.Gray.copy(alpha = 0.45f),
-                    start = Offset(x, 0f),
-                    end = Offset(x, size.height),
-                    strokeWidth = 1.5f
-                )
-                drawContext.canvas.nativeCanvas.drawText("${index + 1}", x + 10f, 32f, measureLabelPaint)
-            }
-
-            notes.forEachIndexed { index, note ->
-                val startDisplayTick = note.startTick.coerceIn(0, durationTicks)
-                val endNoteTick = note.endTick.coerceIn(0, durationTicks)
-                if (startDisplayTick >= drawableEndTick || endNoteTick <= visibleStart) return@forEachIndexed
-                val clippedStartTick = maxOf(startDisplayTick, visibleStart)
-                val clippedEndTick = minOf(endNoteTick, drawableEndTick)
-                if (clippedEndTick <= clippedStartTick) return@forEachIndexed
-                val x = ((clippedStartTick - visibleStart).toFloat() / viewport.toFloat()) * size.width
-                val w = ((clippedEndTick - clippedStartTick).toFloat() / viewport.toFloat()) * size.width
-                val y = ((127 - note.noteNumber).toFloat() / 127f) * size.height
-                val h = size.height / 128f * 2f
-                val channelColor = MidiChannelNeonPalette[note.channel.mod(MidiChannelNeonPalette.size)]
-                val reveal = if (index >= chunkStartIndex) chunkReveal.value else 1f
-                val animatedWidth = (w.coerceAtLeast(2f) * reveal).coerceAtLeast(2f)
-                val animatedAlpha = 0.15f + (0.60f * reveal)
-                val highlightStrength = when {
-                    currentPositionMs < note.startMs -> 0f
-                    currentPositionMs <= note.endMs -> 1f
-                    else -> {
-                        val elapsedSinceOff = (currentPositionMs - note.endMs).toFloat()
-                        (1f - (elapsedSinceOff / ACTIVE_NOTE_FADE_OUT_MS)).coerceIn(0f, 1f)
-                    }
-                }
-                val noteColor = lerp(channelColor, Color.White, highlightStrength * ACTIVE_NOTE_WHITE_MIX)
-                if (highlightStrength > 0f) {
-                    drawRect(
-                        color = lerp(channelColor, Color.White, 0.35f).copy(
-                            alpha = highlightStrength * ACTIVE_NOTE_GLOW_ALPHA
-                        ),
-                        topLeft = Offset(x - ACTIVE_NOTE_GLOW_EXPAND_X, y - ACTIVE_NOTE_GLOW_EXPAND_Y),
-                        size = Size(
-                            animatedWidth + ACTIVE_NOTE_GLOW_EXPAND_X * 2f,
-                            h + ACTIVE_NOTE_GLOW_EXPAND_Y * 2f
-                        ),
-                        blendMode = BlendMode.Plus
-                    )
-                }
-                drawRect(
-                    color = noteColor.copy(alpha = animatedAlpha),
-                    topLeft = Offset(x, y),
-                    size = Size(animatedWidth, h)
-                )
-                if (highlightStrength > 0f) {
-                    drawRect(
-                        color = Color.White.copy(alpha = highlightStrength * ACTIVE_NOTE_OVERLAY_ALPHA),
-                        topLeft = Offset(x, y),
-                        size = Size(animatedWidth, h)
-                    )
-                }
-            }
-
-            fun drawMarker(ms: Long, color: Color, width: Float) {
-                val markerDisplayTick = msToTick(ms, tickTimeAnchors, durationTicks).coerceIn(0, durationTicks)
-                if (markerDisplayTick !in visibleStart..visibleEnd) return
-                if (markerDisplayTick > endDisplayTick && color != Color.Red) return
-                val x = ((markerDisplayTick - visibleStart).toFloat() / viewport.toFloat()) * size.width
-                drawLine(color = color, start = Offset(x, 0f), end = Offset(x, size.height), strokeWidth = width)
-            }
-
-            drawMarker(endPointMs, Color.Red, 5f)
-            drawMarker(loopPointMs, Color.Green, 5f)
-            drawMarker(currentPositionMs, Color.White, 5f)
-            if (endX < size.width) {
-                drawRect(
-                    color = Color(0xFF161616),
-                    topLeft = Offset(endX.coerceAtLeast(0f), 0f),
-                    size = Size((size.width - endX).coerceAtLeast(0f), size.height)
-                )
-                if (endX in 0f..size.width) {
-                    drawLine(
-                        color = Color.Red,
-                        start = Offset(endX, 0f),
-                        end = Offset(endX, size.height),
-                        strokeWidth = 5f
-                    )
-                }
-            }
-        }
-    }
-}
 
 internal fun androidx.compose.ui.graphics.drawscope.DrawScope.drawSharedPianoRoll(
     notes: List<PianoRollNote>,
@@ -755,32 +563,4 @@ private fun buildTickTimeAnchors(music: Midi1Music, maxTick: Int): List<TickTime
     }
 
     return anchors
-}
-
-internal fun msToTick(ms: Long, anchors: List<TickTimeAnchor>, totalTicks: Int): Int {
-    if (anchors.isEmpty()) return 0
-    val clampedMs = ms.coerceAtLeast(0L)
-    if (clampedMs <= anchors.first().ms) return anchors.first().tick
-    if (clampedMs >= anchors.last().ms) return anchors.last().tick
-
-    var low = 0
-    var high = anchors.lastIndex
-    while (low <= high) {
-        val mid = (low + high) ushr 1
-        val value = anchors[mid].ms
-        when {
-            value < clampedMs -> low = mid + 1
-            value > clampedMs -> high = mid - 1
-            else -> return anchors[mid].tick.coerceIn(0, totalTicks)
-        }
-    }
-
-    val right = low.coerceIn(1, anchors.lastIndex)
-    val left = right - 1
-    val a = anchors[left]
-    val b = anchors[right]
-    val spanMs = (b.ms - a.ms).coerceAtLeast(1L)
-    val ratio = (clampedMs - a.ms).toDouble() / spanMs.toDouble()
-    val tick = a.tick + ((b.tick - a.tick).toDouble() * ratio).roundToInt()
-    return tick.coerceIn(0, totalTicks)
 }

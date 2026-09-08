@@ -1,5 +1,6 @@
 *.iml
 .gradle
+/.kotlin/
 /.gradle-user
 /local.properties
 /.idea/caches
@@ -14,10 +15,16 @@
 .externalNativeBuild
 .cxx
 local.properties
+/.codex
+/.codex*
+/.claude
+/AGENTS.md
+/CLAUDE.md
 
 # Ignore BASS/BASSMIDI proprietary stuff
 /app/src/main/jniLibs/
 /app/src/main/java/com/un4seen/bass/
+/proprietary/
 
 # Ignore app releases
 /app/release/

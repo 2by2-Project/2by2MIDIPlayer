@@ -1,4 +1,13 @@
 package jp.project2by2.musicplayer
+import jp.project2by2.musicplayer.model.*
+import jp.project2by2.musicplayer.state.NowPlayingState
+import jp.project2by2.musicplayer.ui.browse.BrowseScreen
+import jp.project2by2.musicplayer.ui.browse.TrackList
+import jp.project2by2.musicplayer.ui.browse.DemoMusicButton
+import jp.project2by2.musicplayer.ui.browse.MidiFileActionsDialog
+import jp.project2by2.musicplayer.ui.playlist.*
+import jp.project2by2.musicplayer.ui.player.NowPlayingSheet
+
 
 import android.Manifest
 import android.content.ComponentName
@@ -23,10 +32,6 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.animateDpAsState
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.snap
-import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -39,102 +44,50 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.aspectRatio
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.ime
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.itemsIndexed as lazyItemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.GridItemSpan
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material.Slider
-import androidx.compose.material.SliderDefaults
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material.icons.filled.Audiotrack
-import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Done
-import androidx.compose.material.icons.filled.DriveFileRenameOutline
 import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.EditNote
-import androidx.compose.material.icons.filled.Folder
-import androidx.compose.material.icons.filled.Info
-import androidx.compose.material.icons.filled.Loop
-import androidx.compose.material.icons.filled.MusicNote
-import androidx.compose.material.icons.filled.Pause
-import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Repeat
-import androidx.compose.material.icons.filled.RemoveCircle
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.Shuffle
-import androidx.compose.material.icons.filled.SkipNext
-import androidx.compose.material.icons.filled.SkipPrevious
-import androidx.compose.material.icons.filled.GridView
-import androidx.compose.material.icons.filled.LocationOn
-import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material.icons.filled.QueueMusic
-import androidx.compose.material.icons.filled.Repeat
-import androidx.compose.material.icons.filled.ViewList
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ElevatedButton
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.SingleChoiceSegmentedButtonRow
-import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.derivedStateOf
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableLongStateOf
@@ -144,26 +97,16 @@ import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
-import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clipToBounds
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
-import androidx.compose.ui.input.nestedscroll.NestedScrollSource
-import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
@@ -193,8 +136,6 @@ import java.io.FileNotFoundException
 import java.io.InputStream
 import java.text.Normalizer
 import kotlin.coroutines.coroutineContext
-import kotlin.math.max
-import kotlin.math.min
 import kotlin.math.roundToInt
 import kotlin.system.measureTimeMillis
 
@@ -989,7 +930,6 @@ fun MusicPlayerMainScreen(
     }
 
     // Focus requester for search bar
-    val focusRequesterSearch = remember { FocusRequester() }
     val folderGridState = rememberLazyGridState()
     val folderListState = rememberLazyListState()
 
@@ -997,10 +937,7 @@ fun MusicPlayerMainScreen(
     Box(modifier = modifier.fillMaxSize()) {
     Scaffold(
         topBar = {
-            TopAppBar(
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(0.5f)
-                ),
+            jp.project2by2.musicplayer.ui.player.PlayerTopAppBar(
                 navigationIcon = {
                     if (selectedFolderKey != null || selectedPlaylistId != null) {
                         IconButton(
@@ -1039,12 +976,7 @@ fun MusicPlayerMainScreen(
                             textAlign = TextAlign.Center
                         )
                     } else {
-                        Image(
-                            painter = painterResource(id = R.drawable.logo_image),
-                            contentDescription = stringResource(id = R.string.app_logo),
-                            modifier = Modifier.height(48.dp),
-                            colorFilter = ColorFilter.tint(MaterialTheme.colorScheme.primary)
-                        )
+                        jp.project2by2.musicplayer.ui.player.PlayerLogo()
                     }
                 },
                 actions = {
@@ -1201,12 +1133,9 @@ fun MusicPlayerMainScreen(
                         )
                     }
                 }
-                NavigationBar(
-                    modifier = Modifier
-                ) {
-                    NavigationBarItem(
-                        selected = rootTab == RootTab.Browse,
-                        onClick = {
+                jp.project2by2.musicplayer.ui.player.PlayerNavigationBar(
+                    playlistsSelected = rootTab == RootTab.Playlists,
+                    onBrowse = {
                             rootTab = RootTab.Browse
                             isSearchActive = false
                             searchQuery = ""
@@ -1220,18 +1149,7 @@ fun MusicPlayerMainScreen(
                             selectedPlaylistId = null
                             selectedPlaylistName = null
                         },
-                        icon = {
-                            Icon(
-                                imageVector = Icons.Default.Folder,
-                                contentDescription = stringResource(id = R.string.browse),
-                                modifier = Modifier.size(20.dp)
-                            )
-                        },
-                        label = { Text(text = stringResource(id = R.string.browse)) }
-                    )
-                    NavigationBarItem(
-                        selected = rootTab == RootTab.Playlists,
-                        onClick = {
+                    onPlaylists = {
                             rootTab = RootTab.Playlists
                             isPlaylistEditModeActive = false
                             playlistNameDraft = ""
@@ -1244,17 +1162,8 @@ fun MusicPlayerMainScreen(
                             selectedFolderKey = null
                             selectedFolderName = null
                             selectedFolderCoverUri = null
-                        },
-                        icon = {
-                            Icon(
-                                imageVector = Icons.Default.QueueMusic,
-                                contentDescription = stringResource(id = R.string.playlists),
-                                modifier = Modifier.size(20.dp)
-                            )
-                        },
-                        label = { Text(text = stringResource(id = R.string.playlists)) }
-                    )
-                }
+                        }
+                )
             }
         },
         modifier = Modifier.fillMaxSize(),
@@ -1267,30 +1176,9 @@ fun MusicPlayerMainScreen(
             Column(
                 modifier = Modifier.fillMaxSize()
             ) {
-                AnimatedVisibility(
-                    visible = isSearchActive,
-                    enter = slideInVertically(initialOffsetY = { -it }, animationSpec = tween(200)) +
-                        fadeIn(animationSpec = tween(200)),
-                    exit = slideOutVertically(targetOffsetY = { -it }, animationSpec = tween(200)) +
-                        fadeOut(animationSpec = tween(200))
-                ) {
-                    Surface(color = MaterialTheme.colorScheme.surfaceVariant.copy(0.5f)) {
-                        OutlinedTextField(
-                            value = searchQuery,
-                            onValueChange = { searchQuery = it },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 16.dp, vertical = 8.dp)
-                                .zIndex(0f)
-                                .focusRequester(focusRequesterSearch),
-                            placeholder = { Text(stringResource(id = R.string.topbar_search_summary)) },
-                            singleLine = true
-                        )
-                        LaunchedEffect(Unit) {
-                            focusRequesterSearch.requestFocus()
-                        }
-                    }
-                }
+                jp.project2by2.musicplayer.ui.browse.BrowseSearchField(
+                    visible = isSearchActive, query = searchQuery, onQueryChange = { searchQuery = it }
+                )
                 if (!hasAudioPermission) {
                     ElevatedButton(onClick = { storagePermissionLauncher.launch(permissionsToRequest) }) {
                         Text(stringResource(id = R.string.info_grant_storage_permission))
@@ -1980,8 +1868,6 @@ private fun NowPlayingPianoRollSheet(
     val shuffleEnabled by SettingsDataStore.shuffleEnabledFlow(context).collectAsState(initial = false)
 
     if (fileUri == null) return
-    var stablePositionMs by remember(fileUri) { mutableLongStateOf(0L) }
-    var targetPositionMs by remember(fileUri) { mutableLongStateOf(0L) }
     val ui = produceState<NowPlayingRollUi?>(initialValue = null, key1 = playbackService, key2 = fileUri) {
         val service = playbackService ?: run { value = null; return@produceState }
         while (kotlinx.coroutines.currentCoroutineContext().isActive) {
@@ -1999,334 +1885,19 @@ private fun NowPlayingPianoRollSheet(
         }
     }.value
 
-    LaunchedEffect(ui?.positionMs, ui?.durationMs) {
-        val raw = ui?.positionMs ?: return@LaunchedEffect
-        if (targetPositionMs == 0L && stablePositionMs == 0L) {
-            targetPositionMs = raw
-            stablePositionMs = raw
-            return@LaunchedEffect
-        }
-        val deltaFromStable = raw - stablePositionMs
-        if (deltaFromStable < -250L) {
-            // Loop wrap / backward seek: snap immediately.
-            stablePositionMs = raw
-        }
-        targetPositionMs = raw
-    }
 
-    LaunchedEffect(ui?.isPlaying, ui?.durationMs, ui?.loopStartMs, ui?.loopEndMs, targetPositionMs) {
-        var lastFrameNanos = 0L
-        while (kotlinx.coroutines.currentCoroutineContext().isActive) {
-            withFrameNanos { now ->
-                if (lastFrameNanos == 0L) {
-                    lastFrameNanos = now
-                    return@withFrameNanos
-                }
-                val frameMs = ((now - lastFrameNanos) / 1_000_000L).coerceIn(0L, 50L)
-                lastFrameNanos = now
-                val duration = ui?.durationMs?.coerceAtLeast(0L) ?: 0L
-                val loopStart = ui?.loopStartMs?.coerceAtLeast(0L) ?: 0L
-                val loopEnd = ui?.loopEndMs?.coerceAtLeast(loopStart) ?: duration
-                if (ui?.isPlaying == true) {
-                    var predicted = (stablePositionMs + frameMs).coerceAtMost(duration)
-                    if (loopEnd > loopStart && predicted >= loopEnd) {
-                        predicted = loopStart + (predicted - loopEnd)
-                    }
-                    val target = targetPositionMs.coerceIn(0L, duration)
-                    val correction = ((target - predicted) * 0.20f).toLong()
-                    stablePositionMs = (predicted + correction).coerceIn(0L, duration)
-                } else {
-                    stablePositionMs = targetPositionMs.coerceIn(0L, duration)
-                }
-            }
-        }
-    }
-
-    // For seekbar slider
-    var isSeeking by remember { mutableStateOf(false) }
-    var sliderValue by remember { mutableStateOf(0.0f) }
-    val progress by remember(ui?.positionMs, ui?.durationMs) {
-        derivedStateOf {
-            val duration = ui?.durationMs ?: 0L
-            val position = ui?.positionMs ?: 0L
-            if (duration > 0L) {
-                (position.toFloat() / duration.toFloat()).coerceIn(0f, 1f)
-            } else {
-                0f
-            }
-        }
-    }
-    Surface(
-        color = MaterialTheme.colorScheme.surface,
-        modifier = Modifier
-            .fillMaxSize()
-            .statusBarsPadding()
-            .navigationBarsPadding()
-    ) {
-        Column(modifier = Modifier.fillMaxSize()) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 12.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                val coverBitmap = rememberCoverBitmap(playbackService?.currentArtworkUri)
-                Box(
-                    modifier = Modifier
-                        .requiredSize(48.dp)
-                        .background(MaterialTheme.colorScheme.surfaceVariant),
-                    contentAlignment = Alignment.Center
-                ) {
-                    if (coverBitmap != null) {
-                        Image(
-                            bitmap = coverBitmap,
-                            contentDescription = null,
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier.fillMaxSize()
-                        )
-                    } else {
-                        Icon(
-                            imageVector = Icons.Default.MusicNote,
-                            contentDescription = null,
-                            modifier = Modifier.size(24.dp),
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-                Spacer(modifier = Modifier.width(12.dp))
-                // Title and artist
-                Column(
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Text(
-                        text = playbackService?.getCurrentTitle().orEmpty(),
-                        Modifier
-                            .padding(end = 16.dp)
-                            .clipToBounds()
-                            .basicMarquee(iterations = Int.MAX_VALUE),
-                        maxLines = 1,
-                        style = MaterialTheme.typography.headlineSmall
-                    )
-                    Text(
-                        text = playbackService?.currentArtist.orEmpty(),
-                        Modifier
-                            .padding(end = 16.dp)
-                            .clipToBounds()
-                            .basicMarquee(iterations = Int.MAX_VALUE),
-                        maxLines = 1,
-                        style = MaterialTheme.typography.bodyMedium,
-                    )
-                }
-                if (showActions) {
-                    IconButton(onClick = onActionsClick) {
-                        Icon(
-                            imageVector = Icons.Default.MoreVert,
-                            contentDescription = null,
-                            modifier = Modifier.padding(8.dp)
-                        )
-                    }
-                }
-            }
-            when {
-                pianoRollData == null || ui == null -> {
-                    Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                        CircularProgressIndicator()
-                    }
-                }
-                else -> {
-                    PlaybackPianoRollView(
-                        notes = pianoRollData.notes,
-                        measureTickPositions = pianoRollData.measureTickPositions,
-                        tickTimeAnchors = pianoRollData.tickTimeAnchors,
-                        currentPositionMs = stablePositionMs,
-                        loopPointMs = ui.loopStartMs,
-                        endPointMs = ui.loopEndMs,
-                        totalDurationMs = maxOf(pianoRollData.totalDurationMs, ui.durationMs),
-                        totalTicks = pianoRollData.totalTicks,
-                        zoomLevel = calculatePlaybackInitialZoomLevel(
-                            totalTicks = pianoRollData.totalTicks,
-                            measureTickPositions = pianoRollData.measureTickPositions
-                        ),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .weight(1f)
-                    )
-                }
-            }
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(8.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                Slider(
-                    value = if (isSeeking) sliderValue else progress,
-                    valueRange = 0f..1f,
-                    onValueChange = { v ->
-                        isSeeking = true
-                        sliderValue = v
-                    },
-                    onValueChangeFinished = {
-                        isSeeking = false
-                        val duration = ui?.durationMs ?: 0L
-                        val ms = (sliderValue.coerceIn(0f, 1f) * duration.toFloat()).toLong()
-                        targetPositionMs = ms
-                        onSeekToMs(ms)
-                    },
-                    colors = SliderDefaults.colors(
-                        thumbColor = MaterialTheme.colorScheme.primary,
-                        activeTrackColor = MaterialTheme.colorScheme.primary,
-                        inactiveTrackColor = MaterialTheme.colorScheme.surfaceVariant,
-                    ),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(32.dp)
-                )
-            }
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 0.dp),
-            ) {
-                val seconds = (ui?.positionMs ?: 0L) / 1000
-                val minutes = seconds / 60
-                val remainingSeconds = seconds % 60
-                Text(
-                    text = String.format("%d:%02d", minutes, remainingSeconds),
-                    style = MaterialTheme.typography.bodySmall,
-                )
-                Spacer(Modifier.weight(1f))
-                val durationText = ui?.durationMs ?: 0L
-                Text(
-                    text = String.format("%d:%02d", durationText / 60000, (durationText % 60000) / 1000),
-                    style = MaterialTheme.typography.bodySmall,
-                )
-            }
-            Row (
-                modifier = Modifier.fillMaxWidth()
-                    .padding(start = 12.dp, end = 12.dp, top = 0.dp, bottom = 12.dp),
-                horizontalArrangement = Arrangement.SpaceEvenly,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                val sideControlButtonSize = 48.dp
-                val sideControlIconSize = 32.dp
-                IconButton(
-                    modifier = Modifier.size(sideControlButtonSize),
-                    onClick = {
-                        scope.launch {
-                            SettingsDataStore.setShuffleEnabled(context, !shuffleEnabled)
-                        }
-                    }
-                ) {
-                    Surface(
-                        shape = RoundedCornerShape(50),
-                        color = if (shuffleEnabled) { MaterialTheme.colorScheme.primaryContainer } else { Color.Transparent },
-                        modifier = Modifier.fillMaxSize()
-                    ) {
-                        Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
-                            Icon(
-                                imageVector = Icons.Default.Shuffle,
-                                contentDescription = null,
-                                modifier = Modifier.size(sideControlIconSize)
-                            )
-                        }
-                    }
-                }
-                IconButton(
-                    modifier = Modifier.size(sideControlButtonSize),
-                    onClick = onPrevious
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.SkipPrevious,
-                        contentDescription = null,
-                        modifier = Modifier.size(sideControlIconSize)
-                    )
-                }
-                Surface(
-                    shape = CircleShape,
-                    color = MaterialTheme.colorScheme.primary,
-                    tonalElevation = 6.dp,
-                    modifier = Modifier
-                        .padding(vertical = 12.dp)
-                        .size(92.dp)
-                ) {
-                    IconButton(
-                        onClick = {
-                            val service = playbackService ?: return@IconButton
-                            if (ui?.isPlaying == true) service.pause() else service.play()
-                        },
-                        modifier = Modifier.fillMaxSize()
-                    ) {
-                        Icon(
-                            imageVector = if (ui?.isPlaying == true) Icons.Default.Pause else Icons.Default.PlayArrow,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.onPrimary,
-                            modifier = Modifier.size(42.dp)
-                        )
-                    }
-                }
-                IconButton(
-                    modifier = Modifier.size(sideControlButtonSize),
-                    onClick = onNext
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.SkipNext,
-                        contentDescription = null,
-                        modifier = Modifier.size(sideControlIconSize)
-                    )
-                }
-                IconButton(
-                    modifier = Modifier.size(sideControlButtonSize),
-                    onClick = {
-                        scope.launch {
-                            SettingsDataStore.setLoopEnabled(context, !loopEnabled)
-                        }
-                    }
-                ) {
-                    Surface(
-                        shape = RoundedCornerShape(50),
-                        color = if (loopEnabled) { MaterialTheme.colorScheme.primaryContainer } else { Color.Transparent },
-                        modifier = Modifier.fillMaxSize()
-                    ) {
-                        Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
-                            Icon(
-                                imageVector = Icons.Default.Repeat,
-                                contentDescription = null,
-                                modifier = Modifier.size(sideControlIconSize)
-                            )
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-private fun calculatePlaybackInitialZoomLevel(
-    totalTicks: Int,
-    measureTickPositions: List<Int>,
-    targetVisibleMeasures: Int = 5
-): Float {
-    if (totalTicks <= 0) return 10f
-    val spans = measureTickPositions
-        .zipWithNext()
-        .map { (a, b) -> (b - a).coerceAtLeast(1) }
-    if (spans.isEmpty()) return 10f.coerceIn(1f, 40f)
-
-    val dominantMeasureTicks = spans
-        .groupingBy { it }
-        .eachCount()
-        .maxWithOrNull(compareBy<Map.Entry<Int, Int>> { it.value }.thenBy { it.key })
-        ?.key
-        ?: spans[spans.size / 2]
-
-    val targetWindowTicks = (dominantMeasureTicks * targetVisibleMeasures).coerceAtLeast(1)
-    val zoom = (totalTicks.toFloat() / targetWindowTicks.toFloat()).coerceIn(1f, 40f)
-    Log.d(
-        "PlaybackPianoRollTS",
-        "calculatePlaybackInitialZoomLevel: totalTicks=$totalTicks dominantMeasureTicks=$dominantMeasureTicks targetMeasures=$targetVisibleMeasures zoom=$zoom"
+    NowPlayingSheet(
+        title = playbackService?.getCurrentTitle().orEmpty(), artist = playbackService?.currentArtist.orEmpty(),
+        coverBitmap = rememberCoverBitmap(playbackService?.currentArtworkUri),
+        ui = ui?.let { NowPlayingState(it.isPlaying, it.positionMs, it.durationMs, it.loopStartMs, it.loopEndMs) },
+        pianoRollData = pianoRollData, loopEnabled = loopEnabled, shuffleEnabled = shuffleEnabled,
+        onLoopChange = { scope.launch { SettingsDataStore.setLoopEnabled(context, it) } },
+        onShuffleChange = { scope.launch { SettingsDataStore.setShuffleEnabled(context, it) } },
+        showActions = showActions, onActionsClick = onActionsClick, onSeekToMs = onSeekToMs,
+        onPrevious = onPrevious, onNext = onNext,
+        onPlayPause = { playbackService?.let { if (it.isPlaying()) it.pause() else it.play() } },
+        trackKey = fileUri
     )
-    return zoom
 }
 
 @Composable
@@ -2345,370 +1916,37 @@ private fun MidiFileList(
     onQueueNext: (MidiFileItem) -> Unit,
     onMissingItemDetected: (MidiFileItem) -> Unit = {}
 ) {
-    val scope = rememberCoroutineScope()
-    val density = LocalDensity.current
-    val defaultRowHeightPx = with(density) { 72.dp.toPx() }
-    var measuredRowHeightPx by remember { mutableFloatStateOf(defaultRowHeightPx) }
-    var activeDragItemId by remember { mutableStateOf<Long?>(null) }
-    var activeDragOffsetPx by remember { mutableFloatStateOf(0f) }
-    val removingItemIds = remember { mutableStateListOf<Long>() }
-
-    if (items.isEmpty()) {
-        if (isLoading) {
-            LoadingMidiState()
-        } else if (listContext == MidiListContext.Search) {
-            EmptyMidiState(
-                icon = Icons.Default.Search,
-                message = stringResource(id = R.string.info_no_matching_files)
-            )
-        } else {
-            EmptyMidiState(
-                icon = Icons.Default.Folder,
-                message = stringResource(id = R.string.info_no_mid_files_found)
-            )
-        }
-        return
-    }
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(bottom = 72.dp)
-    ) {
-        lazyItemsIndexed(
-            items = items,
-            key = { index: Int, item: MidiFileItem -> item.playlistItemId ?: "${item.uri}#$index" }
-        ) { index: Int, item: MidiFileItem ->
-            val itemAvailability = availability[item.uri.toString()] ?: MidiFileAvailability.Unknown
-            LaunchedEffect(item.uri, itemAvailability, listContext) {
-                if (itemAvailability == MidiFileAvailability.Missing && listContext != MidiListContext.Playlist) {
-                    onMissingItemDetected(item)
-                }
-            }
-            val itemId = item.playlistItemId
-            val activeId = activeDragItemId
-            val activeIndex = if (activeId != null) {
-                items.indexOfFirst { it.playlistItemId == activeId }
-            } else {
-                -1
-            }
-            val rowHeight = measuredRowHeightPx.coerceAtLeast(1f)
-            val projectedShift = if (activeIndex >= 0) {
-                (activeDragOffsetPx / rowHeight).roundToInt()
-            } else {
-                0
-            }
-            val projectedTargetIndex = if (activeIndex >= 0) {
-                (activeIndex + projectedShift).coerceIn(0, items.lastIndex)
-            } else {
-                -1
-            }
-            val shiftTarget = when {
-                activeIndex < 0 || index == activeIndex -> 0f
-                activeIndex < projectedTargetIndex && index in (activeIndex + 1)..projectedTargetIndex -> -rowHeight
-                activeIndex > projectedTargetIndex && index in projectedTargetIndex until activeIndex -> rowHeight
-                else -> 0f
-            }
-            val animatedShift by animateFloatAsState(
-                targetValue = shiftTarget,
-                animationSpec = if (activeIndex >= 0) tween(durationMillis = 120) else snap(),
-                label = "playlist_neighbor_shift"
-            )
-
-            StaggeredFadeInItem(
-                itemKey = item.playlistItemId ?: item.uri.toString(),
-                index = index,
-                animationToken = animationToken,
-                enabled = !isEditMode && listContext != MidiListContext.Playlist
-            ) {
-                MidiFileRow(
-                    item = item,
-                    availability = itemAvailability,
-                    rowModifier = Modifier.graphicsLayer { translationY = animatedShift },
-                    isSelected = item.uri == selectedUri,
-                    showReorderHandle = isEditMode,
-                    isRemoving = itemId != null && removingItemIds.contains(itemId),
-                    onDragStart = {
-                        if (!isEditMode || itemId == null) return@MidiFileRow
-                        if (removingItemIds.contains(itemId)) return@MidiFileRow
-                        activeDragItemId = itemId
-                        activeDragOffsetPx = 0f
-                        logPlaylistReorder("dragStart itemId=$itemId index=$index rowHeight=$rowHeight size=${items.size}")
-                    },
-                    onDragDelta = { dy ->
-                        if (!isEditMode || activeDragItemId != itemId) return@MidiFileRow
-                        activeDragOffsetPx += dy
-                    },
-                    onDragEnd = {
-                        if (!isEditMode || itemId == null) return@MidiFileRow
-                        val finalOffsetPx = activeDragOffsetPx
-                        val fromIndex = items.indexOfFirst { it.playlistItemId == itemId }
-                        if (fromIndex >= 0) {
-                            val toIndex = (fromIndex + (finalOffsetPx / rowHeight).roundToInt())
-                                .coerceIn(0, items.lastIndex)
-                            val delta = toIndex - fromIndex
-                            logPlaylistReorder(
-                                "dragEnd itemId=$itemId from=$fromIndex to=$toIndex delta=$delta offsetPx=$finalOffsetPx rowHeight=$rowHeight"
-                            )
-                            if (delta != 0) {
-                                activeDragOffsetPx = 0f
-                                activeDragItemId = null
-                                onMoveItem(itemId, delta)
-                            } else {
-                                activeDragOffsetPx = 0f
-                                activeDragItemId = null
-                            }
-                        } else {
-                            logPlaylistReorder("dragEnd itemId=$itemId but fromIndex not found")
-                            activeDragOffsetPx = 0f
-                            activeDragItemId = null
-                        }
-                    },
-                    onDeleteClick = {
-                        if (!isEditMode || itemId == null) return@MidiFileRow
-                        if (removingItemIds.contains(itemId)) return@MidiFileRow
-                        removingItemIds.add(itemId)
-                        if (activeDragItemId == itemId) {
-                            activeDragItemId = null
-                            activeDragOffsetPx = 0f
-                        }
-                        scope.launch {
-                            delay(220)
-                            onRemoveItem(itemId)
-                            removingItemIds.remove(itemId)
-                        }
-                    },
-                    onRowHeightMeasured = { h ->
-                        if (h > 1f) measuredRowHeightPx = h
-                    },
-                    onClick = { onItemClick(item) },
-                    onAddToPlaylist = { onAddToPlaylist(item) },
-                    onQueueNext = { onQueueNext(item) }
-                )
-            }
-        }
-    }
-
-}
-
-@OptIn(ExperimentalFoundationApi::class)
-@Composable
-private fun MidiFileRow(
-    item: MidiFileItem,
-    availability: MidiFileAvailability = MidiFileAvailability.Unknown,
-    rowModifier: Modifier = Modifier,
-    isSelected: Boolean,
-    showReorderHandle: Boolean = false,
-    isRemoving: Boolean = false,
-    onDragStart: () -> Unit = {},
-    onDragDelta: (Float) -> Unit = {},
-    onDragEnd: () -> Unit = {},
-    onDeleteClick: () -> Unit = {},
-    onRowHeightMeasured: (Float) -> Unit = {},
-    onClick: () -> Unit,
-    onAddToPlaylist: () -> Unit,
-    onQueueNext: () -> Unit
-) {
     val context = LocalContext.current
-    var showActions by remember { mutableStateOf(false) }
-    var dragVisualOffsetPx by remember(item.playlistItemId, showReorderHandle) { mutableFloatStateOf(0f) }
-    var isDragging by remember(item.playlistItemId, showReorderHandle) { mutableStateOf(false) }
-    var rowWidthPx by remember(item.playlistItemId, showReorderHandle) { mutableFloatStateOf(0f) }
-    val animatedScale by animateFloatAsState(
-        targetValue = if (isDragging) 1.02f else 1f,
-        animationSpec = spring(stiffness = 560f, dampingRatio = 0.9f),
-        label = "playlist_drag_scale"
-    )
-    val dismissProgress by animateFloatAsState(
-        targetValue = if (isRemoving) 1f else 0f,
-        animationSpec = tween(durationMillis = 220),
-        label = "playlist_remove_progress"
-    )
-    val editLeadingWidth by animateDpAsState(
-        targetValue = if (showReorderHandle) 44.dp else 0.dp,
-        animationSpec = tween(durationMillis = 220),
-        label = "playlist_edit_leading_width"
-    )
-    val deleteButtonAlpha by animateFloatAsState(
-        targetValue = if (showReorderHandle) 1f else 0f,
-        animationSpec = tween(durationMillis = 220),
-        label = "playlist_delete_fade"
-    )
-    val background = if (isSelected) {
-        MaterialTheme.colorScheme.primaryContainer.copy(0.25f)
-    } else {
-        Color.Transparent
-    }
-    val contentColor = if (isSelected) {
-        MaterialTheme.colorScheme.onPrimaryContainer
-    } else {
-        MaterialTheme.colorScheme.onBackground
-    }
-    val titleAlpha = if (availability == MidiFileAvailability.Missing) 0.45f else 1f
-    val secondaryText = if (availability == MidiFileAvailability.Missing) {
-        context.getString(R.string.summary_midi_file_missing)
-    } else {
-        item.displaySecondaryText()
-    }
-    val secondaryColor = if (availability == MidiFileAvailability.Missing) {
-        MaterialTheme.colorScheme.error
-    } else {
-        contentColor
-    }
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(
-                if (dismissProgress > 0f) {
-                    Color(0xFFC62828).copy(alpha = dismissProgress)
-                } else {
-                    Color.Transparent
-                }
-            )
-            .onSizeChanged {
-                rowWidthPx = it.width.toFloat()
-                onRowHeightMeasured(it.height.toFloat())
-            }
-    ) {
-        Row(
-            modifier = rowModifier
-                .fillMaxWidth()
-                .zIndex(if (isDragging) 2f else 0f)
-                .graphicsLayer {
-                    translationX = -rowWidthPx * dismissProgress
-                    translationY = dragVisualOffsetPx
-                    scaleX = animatedScale
-                    scaleY = animatedScale
-                }
-                .shadow(
-                    elevation = if (isDragging) 8.dp else 0.dp,
-                    shape = RoundedCornerShape(8.dp),
-                    clip = false
-                )
-                .combinedClickable(
-                    onClick = { if (!isRemoving) onClick() },
-                    onLongClick = {
-                        if (!showReorderHandle && !isRemoving) {
-                            showActions = true
-                        }
-                    }
-                )
-                .then(
-                    if (showReorderHandle && !isRemoving) {
-                        Modifier.pointerInput(item.playlistItemId ?: item.uri) {
-                            detectDragGesturesAfterLongPress(
-                                onDragStart = {
-                                    isDragging = true
-                                    dragVisualOffsetPx = 0f
-                                    onDragStart()
-                                },
-                                onDrag = { change, dragAmount ->
-                                    change.consume()
-                                    val dy = dragAmount.y
-                                    dragVisualOffsetPx += dy
-                                    onDragDelta(dy)
-                                },
-                                onDragEnd = {
-                                    dragVisualOffsetPx = 0f
-                                    isDragging = false
-                                    onDragEnd()
-                                },
-                                onDragCancel = {
-                                    dragVisualOffsetPx = 0f
-                                    isDragging = false
-                                    onDragEnd()
-                                }
-                            )
-                        }
-                    } else {
-                        Modifier
-                    }
-                )
-                .padding(horizontal = 0.dp, vertical = 0.dp)
-                .background(background, RoundedCornerShape(4.dp)),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Box(
-                modifier = Modifier
-                    .width(editLeadingWidth)
-                    .padding(start = if (showReorderHandle) 6.dp else 0.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                if (showReorderHandle || deleteButtonAlpha > 0f) {
-                    IconButton(
-                        onClick = onDeleteClick,
-                        modifier = Modifier
-                            .size(32.dp)
-                            .graphicsLayer { alpha = deleteButtonAlpha }
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.RemoveCircle,
-                            contentDescription = null,
-                            tint = Color(0xFFC62828)
-                        )
-                    }
-                }
-            }
-            Column(
-                modifier = Modifier.weight(1f).padding(16.dp)
-            ) {
-                Text(
-                    text = item.displayTitle(),
-                    maxLines = 1,
-                    color = contentColor,
-                    modifier = Modifier
-                        .alpha(titleAlpha)
-                        .clipToBounds()
-                        .basicMarquee(Int.MAX_VALUE)
-                )
-                if (!secondaryText.isNullOrBlank()) {
-                    Text(
-                        text = secondaryText,
-                        style = MaterialTheme.typography.bodySmall,
-                        modifier = Modifier.alpha(if (availability == MidiFileAvailability.Missing) 1f else 0.5f),
-                        maxLines = 1,
-                        color = secondaryColor
-                    )
-                }
-            }
-            Row(
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                if (item.loopPointMs != null) {
-                    Icon(
-                        imageVector = Icons.Default.Repeat,
-                        contentDescription = null,
-                        modifier = Modifier.size(16.dp),
-                        tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
-                    )
-                }
-                Text(
-                    text = formatDuration(item.durationMs),
-                    style = MaterialTheme.typography.bodySmall,
-                    modifier = Modifier.padding(16.dp),
-                    color = contentColor
-                )
-            }
-        }
-    }
-
-    if (showActions && !showReorderHandle) {
+    TrackList(
+        items = items.map { it.toLibraryTrack() }, listContext = listContext,
+        isLoading = isLoading, isEditMode = isEditMode, onMoveItem = onMoveItem,
+        onRemoveItem = onRemoveItem, selectedUri = selectedUri?.toString(),
+        availability = availability, animationToken = animationToken,
+        onItemClick = { track -> items.find { it.uri.toString() == track.uri && it.playlistItemId == track.playlistItemId }?.let(onItemClick) },
+        onAddToPlaylist = { track -> items.find { it.uri.toString() == track.uri && it.playlistItemId == track.playlistItemId }?.let(onAddToPlaylist) },
+        onQueueNext = { track -> items.find { it.uri.toString() == track.uri && it.playlistItemId == track.playlistItemId }?.let(onQueueNext) },
+        onMissingItemDetected = { track -> items.find { it.uri.toString() == track.uri && it.playlistItemId == track.playlistItemId }?.let(onMissingItemDetected) },
+        actions = { track, close ->
+            val item = items.first { it.uri.toString() == track.uri && it.playlistItemId == track.playlistItemId }
+            val availability = availability[track.uri] ?: MidiFileAvailability.Unknown
         MidiFileActionsDialog(
             title = item.displayTitle(),
-            onDismiss = { showActions = false },
+            onDismiss = { close() },
             loopEditEnabled = !DemoMidiContract.isDemoUri(item.uri),
             onPlay = {
-                showActions = false
+                close()
                 if (availability == MidiFileAvailability.Missing) {
                     Toast.makeText(context, context.getString(R.string.error_midi_file_missing), Toast.LENGTH_SHORT).show()
                 } else {
-                    onQueueNext()
+                    onQueueNext(item)
                 }
             },
             onShare = {
-                showActions = false
+                close()
                 shareMidiFile(context, item.uri)
             },
             onDetails = {
-                showActions = false
+                close()
                 val intent = Intent(context, FileDetailsActivity::class.java).apply {
                     putExtra(FileDetailsActivity.EXTRA_URI, item.uri)
                     addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
@@ -2716,7 +1954,7 @@ private fun MidiFileRow(
                 context.startActivity(intent)
             },
             onEditLoopPoint = {
-                showActions = false
+                close()
                 val intent = Intent(context, EditLoopPointActivity::class.java).apply {
                     putExtra(EditLoopPointActivity.EXTRA_URI, item.uri)
                     addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
@@ -2724,119 +1962,10 @@ private fun MidiFileRow(
                 context.startActivity(intent)
             },
             onAddToPlaylist = {
-                showActions = false
-                onAddToPlaylist()
+                close()
+                onAddToPlaylist(item)
             }
         )
-    }
-}
-
-@Composable
-private fun LoadingMidiState() {
-    val density = LocalDensity.current
-    val imeBottom = WindowInsets.ime.getBottom(density)
-    val upwardOffset = if (imeBottom > 0) (-96).dp else 0.dp
-
-    Box(
-        modifier = Modifier.fillMaxSize(),
-        contentAlignment = Alignment.Center
-    ) {
-        CircularProgressIndicator(
-            modifier = Modifier.offset(y = upwardOffset)
-        )
-    }
-}
-
-@Composable
-private fun EmptyMidiState(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    message: String
-) {
-    val density = LocalDensity.current
-    val imeBottom = WindowInsets.ime.getBottom(density)
-    val upwardOffset = if (imeBottom > 0) (-96).dp else 0.dp
-
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .offset(y = upwardOffset),
-        verticalArrangement = Arrangement.Center,
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.size(40.dp)
-        )
-        Spacer(modifier = Modifier.height(12.dp))
-        Text(
-            text = message,
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            textAlign = TextAlign.Center
-        )
-    }
-}
-
-@Composable
-private fun MidiFileActionsDialog(
-    title: String,
-    onDismiss: () -> Unit,
-    showPlayAction: Boolean = true,
-    loopEditEnabled: Boolean = true,
-    onPlay: () -> Unit,
-    onShare: () -> Unit,
-    onDetails: () -> Unit,
-    onEditLoopPoint: () -> Unit,
-    onAddToPlaylist: () -> Unit
-) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(text = title) },
-        text = {
-            Column(
-                modifier = Modifier.fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(4.dp)
-            ) {
-                if (showPlayAction) {
-                    ElevatedButton(onClick = onPlay, modifier = Modifier.fillMaxWidth()) {
-                        Icon(imageVector = Icons.Filled.PlayArrow, contentDescription = null)
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(text = stringResource(id = R.string.action_play_in_next_track))
-                    }
-                }
-                ElevatedButton(onClick = onShare, modifier = Modifier.fillMaxWidth()) {
-                    Icon(imageVector = Icons.Filled.Share, contentDescription = null)
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(text = stringResource(id = R.string.action_share))
-                }
-                ElevatedButton(onClick = onDetails, modifier = Modifier.fillMaxWidth()) {
-                    Icon(imageVector = Icons.Filled.Info, contentDescription = null)
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(text = stringResource(id = R.string.action_details))
-                }
-                ElevatedButton(onClick = onAddToPlaylist, modifier = Modifier.fillMaxWidth()) {
-                    Icon(imageVector = Icons.Default.QueueMusic, contentDescription = null)
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(text = stringResource(id = R.string.action_add_to_playlist))
-                }
-                ElevatedButton(
-                    onClick = onEditLoopPoint,
-                    modifier = Modifier.fillMaxWidth(),
-                    enabled = loopEditEnabled
-                ) {
-                    Icon(imageVector = Icons.Filled.Edit, contentDescription = null)
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(text = stringResource(id = R.string.action_edit_loop_point))
-                }
-            }
-        },
-        confirmButton = {},
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text(text = stringResource(id = R.string.cancel))
-            }
         }
     )
 }
@@ -2854,273 +1983,16 @@ private fun FolderGrid(
     viewMode: FolderViewMode,
     onViewModeChange: (FolderViewMode) -> Unit
 ) {
-    var headerVisible by rememberSaveable { mutableStateOf(true) }
-
-    val headerScrollBehavior = remember {
-        object : NestedScrollConnection {
-            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
-                when {
-                    available.y > 1f -> headerVisible = true   // 下方向スクロールで表示
-                    available.y < -1f -> headerVisible = false // 上方向スクロールで非表示
-                }
-                return Offset.Zero
-            }
-        }
-    }
-
-    Column(
-        modifier = Modifier.fillMaxSize()
-            .nestedScroll(headerScrollBehavior)
-    ) {
-        AnimatedVisibility(
-            visible = headerVisible,
-            enter = fadeIn() + slideInVertically { -it / 2 },
-            exit = fadeOut() + slideOutVertically { -it / 2 }
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
-                horizontalArrangement = Arrangement.End,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                val folderCount = items.size
-                Text(
-                    text = "$folderCount folders",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Spacer(modifier = Modifier.weight(1f))
-                SingleChoiceSegmentedButtonRow {
-                    SegmentedButton(
-                        selected = viewMode == FolderViewMode.Grid,
-                        onClick = { onViewModeChange(FolderViewMode.Grid) },
-                        shape = androidx.compose.material3.SegmentedButtonDefaults.itemShape(index = 0, count = 2),
-                        icon = {},
-                        label = {
-                            Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                                Icon(imageVector = Icons.Default.GridView, contentDescription = stringResource(id = R.string.view_grid))
-                            }
-                        }
-                    )
-                    SegmentedButton(
-                        selected = viewMode == FolderViewMode.List,
-                        onClick = { onViewModeChange(FolderViewMode.List) },
-                        shape = androidx.compose.material3.SegmentedButtonDefaults.itemShape(index = 1, count = 2),
-                        icon = {},
-                        label = {
-                            Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                                Icon(imageVector = Icons.Default.ViewList, contentDescription = stringResource(id = R.string.view_list))
-                            }
-                        }
-                    )
-                }
-            }
-        }
-
-        if (viewMode == FolderViewMode.Grid) {
-            LazyVerticalGrid(
-                columns = GridCells.Fixed(2),
-                modifier = Modifier.fillMaxSize(),
-                state = gridState,
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                contentPadding = PaddingValues(16.dp)
-            ) {
-                itemsIndexed(items, key = { _: Int, item: FolderItem -> item.key }) { index: Int, folder: FolderItem ->
-                    StaggeredFadeInItem(
-                        itemKey = folder.key,
-                        index = index,
-                        animationToken = animationToken
-                    ) {
-                        FolderCard(
-                            folder = folder,
-                            folderCoverCache = folderCoverCache,
-                            onClick = { onFolderClick(folder) }
-                        )
-                    }
-                }
-
-                item(span = { GridItemSpan(maxLineSpan) }) {
-                    DemoMusicButton(
-                        onClick = onDemoMusicClick,
-                        modifier = Modifier.padding(top = 12.dp)
-                    )
-                }
-            }
-        } else {
-            FolderList(
-                items = items,
-                folderCoverCache = folderCoverCache,
-                listState = listState,
-                animationToken = animationToken,
-                onFolderClick = onFolderClick,
-                onDemoMusicClick = onDemoMusicClick
-            )
-        }
-    }
-}
-
-@Composable
-private fun FolderList(
-    items: List<FolderItem>,
-    folderCoverCache: MutableMap<String, Uri?>,
-    listState: LazyListState = rememberLazyListState(),
-    animationToken: Long = 0L,
-    onFolderClick: (FolderItem) -> Unit,
-    onDemoMusicClick: () -> Unit
-) {
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        state = listState,
-        contentPadding = PaddingValues(bottom = 72.dp)
-    ) {
-        lazyItemsIndexed(items, key = { _: Int, item: FolderItem -> item.key }) { index: Int, folder: FolderItem ->
-            StaggeredFadeInItem(
-                itemKey = folder.key,
-                index = index,
-                animationToken = animationToken
-            ) {
-                FolderListRow(
-                    folder = folder,
-                    folderCoverCache = folderCoverCache,
-                    onClick = { onFolderClick(folder) }
-                )
-            }
-        }
-        item {
-            DemoMusicButton(
-                onClick = onDemoMusicClick,
-                modifier = Modifier.padding(top = 12.dp)
-            )
-        }
-    }
-}
-
-@Composable
-private fun FolderListRow(
-    folder: FolderItem,
-    folderCoverCache: MutableMap<String, Uri?>,
-    onClick: () -> Unit
-) {
-    val coverBitmap = rememberFolderCoverBitmap(folder.key, folder.coverUri, folderCoverCache)
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        if (coverBitmap != null) {
-            Image(
-                bitmap = coverBitmap,
-                contentDescription = null,
-                modifier = Modifier
-                    .size(56.dp)
-                    .clipToBounds(),
-                contentScale = ContentScale.Crop
-            )
-        } else {
-            Box(
-                modifier = Modifier
-                    .size(56.dp)
-                    .background(MaterialTheme.colorScheme.surfaceVariant),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Folder,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        }
-        Spacer(modifier = Modifier.width(12.dp))
-        Text(
-            text = folder.name,
-            modifier = Modifier
-                .weight(1f)
-                .clipToBounds()
-                .basicMarquee(Int.MAX_VALUE),
-            maxLines = 1
-        )
-    }
-}
-
-@Composable
-private fun FolderCard(
-    folder: FolderItem,
-    folderCoverCache: MutableMap<String, Uri?>,
-    onClick: () -> Unit
-) {
-    val coverBitmap = rememberFolderCoverBitmap(folder.key, folder.coverUri, folderCoverCache)
-    Card(
-        onClick = onClick,
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Column(
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            if (coverBitmap != null) {
-                Image(
-                    bitmap = coverBitmap,
-                    contentDescription = null,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .aspectRatio(1f)
-                )
-            } else {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .aspectRatio(1f)
-                        .background(MaterialTheme.colorScheme.surfaceVariant),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Folder,
-                        contentDescription = null,
-                        modifier = Modifier.size(32.dp),
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            }
-            Text(
-                text = folder.name,
-                modifier = Modifier.padding(12.dp)
-                    .clipToBounds()
-                    .basicMarquee(Int.MAX_VALUE),
-                maxLines = 1
-            )
-        }
-    }
-}
-
-@Composable
-private fun DemoMusicButton(
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-    showDividers: Boolean = true
-) {
-    Column(modifier = modifier.fillMaxWidth()) {
-        if (showDividers) {
-            HorizontalDivider(
-                modifier = Modifier.padding(vertical = 8.dp),
-                thickness = 1.dp,
-                color = MaterialTheme.colorScheme.outlineVariant
-            )
-        }
-        TextButton(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 4.dp),
-            onClick = onClick
-        ) {
-            Icon(
-                imageVector = Icons.Filled.Audiotrack,
-                contentDescription = null,
-                modifier = Modifier.padding(end = 8.dp)
-            )
-            Text(stringResource(id = R.string.button_sample_demo_music))
-        }
-    }
+    BrowseScreen(
+        items = items.map { LibraryFolder(it.key, it.name) },
+        cover = { folder ->
+            val original = items.first { it.key == folder.key }
+            rememberFolderCoverBitmap(original.key, original.coverUri, folderCoverCache)
+        },
+        gridState = gridState, listState = listState, animationToken = animationToken,
+        onFolderClick = { folder -> onFolderClick(items.first { it.key == folder.key }) },
+        onDemoMusicClick = onDemoMusicClick, viewMode = viewMode, onViewModeChange = onViewModeChange
+    )
 }
 
 @Composable
@@ -3138,136 +2010,13 @@ private fun PlaylistHome(
         }
     }.value
 
-    Column(modifier = Modifier.fillMaxSize()) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            //Text(text = stringResource(id = R.string.playlists), style = MaterialTheme.typography.titleMedium)
-            ElevatedButton(
-                modifier = Modifier.fillMaxWidth(),
-                onClick = onCreatePlaylist
-            ) {
-                Text(text = stringResource(id = R.string.action_create_playlist))
-            }
-        }
-        if (playlists.isEmpty()) {
-            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text(text = stringResource(id = R.string.info_no_playlists_found))
-            }
-        } else {
-            LazyColumn(
-                modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(bottom = 72.dp)
-            ) {
-                items(playlists, key = { it.id }) { playlist ->
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .combinedClickable(
-                                onClick = { onOpenPlaylist(playlist) },
-                                onLongClick = { onShowPlaylistActions(playlist) }
-                            )
-                            .padding(horizontal = 16.dp, vertical = 12.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(text = playlist.name, maxLines = 1)
-                            Text(
-                                text = "${playlist.itemCount} tracks",
-                                style = MaterialTheme.typography.bodySmall,
-                                modifier = Modifier.alpha(0.7f)
-                            )
-                        }
-                        IconButton(onClick = { onPlayPlaylist(playlist) }) {
-                            Icon(imageVector = Icons.Default.PlayArrow, contentDescription = null)
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
 
-@Composable
-private fun PlaylistActionsDialog(
-    title: String,
-    onDismiss: () -> Unit,
-    onEdit: () -> Unit,
-    onRename: () -> Unit,
-    onDelete: () -> Unit
-) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(text = title) },
-        text = {
-            Column(
-                modifier = Modifier.fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(4.dp)
-            ) {
-                ElevatedButton(onClick = onEdit, modifier = Modifier.fillMaxWidth()) {
-                    Icon(imageVector = Icons.Filled.EditNote, contentDescription = null)
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(text = stringResource(id = R.string.action_edit))
-                }
-                ElevatedButton(onClick = onRename, modifier = Modifier.fillMaxWidth()) {
-                    Icon(imageVector = Icons.Filled.DriveFileRenameOutline, contentDescription = null)
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(text = stringResource(id = R.string.action_rename))
-                }
-                ElevatedButton(onClick = onDelete, modifier = Modifier.fillMaxWidth()) {
-                    Icon(imageVector = Icons.Filled.Delete, contentDescription = null)
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(text = stringResource(id = R.string.action_delete))
-                }
-            }
-        },
-        confirmButton = {},
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text(text = stringResource(id = R.string.cancel))
-            }
-        }
-    )
-}
-
-@Composable
-private fun RenamePlaylistDialog(
-    initialName: String,
-    onDismiss: () -> Unit,
-    onRename: (String) -> Unit
-) {
-    val focusRequesterPlaylistNameField = remember { FocusRequester() }
-    var name by remember(initialName) { mutableStateOf(initialName) }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(text = stringResource(id = R.string.action_rename_playlist)) },
-        text = {
-            OutlinedTextField(
-                value = name,
-                onValueChange = { name = it },
-                singleLine = true,
-                placeholder = { Text(stringResource(id = R.string.playlist_name_hint)) },
-                modifier = Modifier.focusRequester(focusRequesterPlaylistNameField)
-            )
-            LaunchedEffect(Unit) {
-                focusRequesterPlaylistNameField.requestFocus()
-            }
-        },
-        confirmButton = {
-            TextButton(
-                onClick = { onRename(name) },
-                enabled = name.isNotBlank()
-            ) {
-                Text(text = stringResource(id = R.string.save))
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text(text = stringResource(id = R.string.cancel))
-            }
-        }
+    PlaylistScreen(
+        playlists = playlists.map { LibraryPlaylist(it.id.toString(), it.name, it.itemCount) },
+        onCreatePlaylist = onCreatePlaylist,
+        onOpenPlaylist = { selected -> onOpenPlaylist(playlists.first { it.id.toString() == selected.id }) },
+        onShowPlaylistActions = { selected -> onShowPlaylistActions(playlists.first { it.id.toString() == selected.id }) },
+        onPlayPlaylist = { selected -> onPlayPlaylist(playlists.first { it.id.toString() == selected.id }) }
     )
 }
 
@@ -3494,44 +2243,6 @@ private fun resolveDurationMsForUri(context: Context, uri: Uri): Long {
 }
 
 @Composable
-private fun CreatePlaylistDialog(
-    onDismiss: () -> Unit,
-    onCreate: (String) -> Unit
-) {
-    val focusRequesterPlaylistNameField = remember { FocusRequester() }
-    var name by remember { mutableStateOf("") }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(text = stringResource(id = R.string.action_create_playlist)) },
-        text = {
-            OutlinedTextField(
-                value = name,
-                onValueChange = { name = it },
-                singleLine = true,
-                placeholder = { Text(stringResource(id = R.string.playlist_name_hint)) },
-                modifier = Modifier.focusRequester(focusRequesterPlaylistNameField)
-            )
-            LaunchedEffect(Unit) {
-                focusRequesterPlaylistNameField.requestFocus()
-            }
-        },
-        confirmButton = {
-            TextButton(
-                onClick = { onCreate(name) },
-                enabled = name.isNotBlank()
-            ) {
-                Text(text = stringResource(id = R.string.action_create))
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text(text = stringResource(id = R.string.cancel))
-            }
-        }
-    )
-}
-
-@Composable
 private fun AddToPlaylistDialog(
     repository: PlaylistRepository,
     refreshToken: Long,
@@ -3585,26 +2296,9 @@ private enum class BrowseScreen {
     Search
 }
 
-private enum class MidiListContext {
-    Browse,
-    Search,
-    Playlist
-}
-
-private enum class MidiFileAvailability {
-    Unknown,
-    Available,
-    Missing
-}
-
 private enum class RootTab {
     Browse,
     Playlists
-}
-
-private enum class FolderViewMode {
-    Grid,
-    List
 }
 
 private data class MidiFileItem(
@@ -3619,54 +2313,11 @@ private data class MidiFileItem(
     val durationMs: Long
 )
 
-private fun MidiFileItem.displayTitle(): String {
-    return metadataTitle?.takeIf { it.isNotBlank() } ?: fileName
-}
+private fun MidiFileItem.displayTitle(): String = midiDisplayTitle(fileName, metadataTitle)
 
-private fun MidiFileItem.displaySecondaryText(): String? {
-    if (metadataTitle.isNullOrBlank()) {
-        return folderName.takeIf { it.isNotBlank() }
-    }
-    val artist = metadataArtist?.takeIf { it.isNotBlank() }
-    return if (artist != null) {
-        "$fileName - $artist"
-    } else {
-        fileName
-    }
-}
+private fun MidiFileItem.displaySecondaryText(): String? = midiDisplaySecondaryText(fileName, folderName, metadataTitle, metadataArtist)
 
-private fun MidiFileItem.matchesSearch(query: String): Boolean {
-    val queryTokens = query.searchTokens()
-    if (queryTokens.isEmpty()) return true
-
-    val searchableTexts = buildList {
-        add(fileName.substringBeforeLast('.', missingDelimiterValue = fileName))
-        add(fileName)
-        metadataTitle?.let(::add)
-        metadataArtist?.let(::add)
-        add(folderName)
-    }
-
-    val normalizedTexts = searchableTexts.map { it.toSearchKey() }
-    return queryTokens.all { token ->
-        normalizedTexts.any { normalized ->
-            normalized.contains(token)
-        }
-    }
-}
-
-private fun String.searchTokens(): List<String> {
-    return toSearchKey()
-        .split(' ')
-        .filter { it.isNotBlank() }
-}
-
-private fun String.toSearchKey(): String {
-    return Normalizer.normalize(this, Normalizer.Form.NFKC)
-        .lowercase()
-        .replace(Regex("[\\p{P}\\p{S}\\s]+"), " ")
-        .trim()
-}
+private fun MidiFileItem.matchesSearch(query: String): Boolean = matchesMidiSearch(fileName, metadataTitle, metadataArtist, folderName, query)
 
 private data class FolderItem(
     val key: String,
@@ -3952,14 +2603,7 @@ private fun findCoverImageUri(context: Context, folderKey: String): Uri? {
             MediaStore.Files.FileColumns.DATA
         )
     }
-    val names = listOf(
-        "cover.jpg",
-        "cover.png",
-        "folder.jpg",
-        "folder.png",
-        "Cover.jpg",
-        "Cover.png"
-    )
+    val names = albumArtworkFileNames
 
     val selection = if (Build.VERSION.SDK_INT >= 29) {
         val nameClause = names.joinToString(" OR ") { "${MediaStore.Files.FileColumns.DISPLAY_NAME}=?" }
@@ -4011,17 +2655,6 @@ private fun BrowseRefreshContainer(
 }
 
 @Composable
-private fun StaggeredFadeInItem(
-    itemKey: Any,
-    index: Int,
-    animationToken: Long,
-    enabled: Boolean = true,
-    content: @Composable () -> Unit
-) {
-    content()
-}
-
-@Composable
 fun rememberCoverBitmap(uri: Uri?): androidx.compose.ui.graphics.ImageBitmap? {
     val context = LocalContext.current
     val bitmapState = produceState<androidx.compose.ui.graphics.ImageBitmap?>(initialValue = null, uri) {
@@ -4053,3 +2686,7 @@ private fun rememberFolderCoverBitmap(
     val resolvedUri = folderCoverCache[folderKey] ?: initialUri
     return rememberCoverBitmap(resolvedUri)
 }
+
+private fun MidiFileItem.toLibraryTrack() = LibraryTrack(
+    uri.toString(), displayTitle(), displaySecondaryText(), durationMs, playlistItemId, loopPointMs
+)
