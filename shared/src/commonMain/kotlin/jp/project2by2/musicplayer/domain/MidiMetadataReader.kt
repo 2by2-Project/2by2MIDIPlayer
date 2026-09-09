@@ -2,7 +2,6 @@ package jp.project2by2.musicplayer
 
 import dev.atsushieno.ktmidi.Midi1CompoundMessage
 import dev.atsushieno.ktmidi.Midi1Music
-import dev.atsushieno.ktmidi.MidiChannelStatus
 import dev.atsushieno.ktmidi.read
 
 /** The Android metadata policy, shared verbatim with desktop; byte access stays in hosts. */
@@ -18,20 +17,14 @@ private object MidiMetadataExtractor {
         fun extract(music: Midi1Music): MidiMetadata {
             val titleCandidates = mutableListOf<Candidate>()
             val copyrightCandidates = mutableListOf<Candidate>()
-            var maxTick = 0
-            var loopStartTick: Int? = null
+            val timing = music.extractMidiTiming()
 
             for ((trackIndex, track) in music.tracks.withIndex()) {
                 var tick = 0
                 for (event in track.events) {
                     tick += event.deltaTime
-                    if (tick > maxTick) maxTick = tick
 
                     val msg = event.message
-                    val status = msg.statusByte.toInt() and 0xF0
-                    if (status == MidiChannelStatus.CC && msg.msb.toInt() == 111) {
-                        loopStartTick = minOf(loopStartTick ?: tick, tick)
-                    }
 
                     if ((msg.statusByte.toInt() and 0xFF) != 0xFF) continue
                     val metaType = msg.msb.toInt() and 0xFF
@@ -54,14 +47,12 @@ private object MidiMetadataExtractor {
                 .sortedBy { it.tick }
                 .firstOrNull()
                 ?.text
-            val durationMs = music.getTimePositionInMillisecondsForTick(maxTick).toLong()
-            val loopPointMs = loopStartTick?.let { music.getTimePositionInMillisecondsForTick(it).toLong() }
 
             return MidiMetadata(
                 title = title,
                 copyright = copyright,
-                loopPointMs = loopPointMs,
-                durationMs = durationMs
+                loopPointMs = timing.loopStartMs,
+                durationMs = timing.endMs
             )
         }
 

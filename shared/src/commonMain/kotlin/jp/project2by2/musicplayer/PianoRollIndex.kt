@@ -98,6 +98,7 @@ fun parseSmfToPianoRollIndex(bytes: ByteArray): PianoRollIndex? {
                     val metaType = r.readU8()
                     val metaLen = r.readVarLen()
                     if (!r.canRead(metaLen)) break
+                    if (metaType == 0x2F) break // EOT delta is part of the track duration.
                     if (metaType == 0x51 && metaLen >= 3) {
                         val b0 = r.readU8()
                         val b1 = r.readU8()

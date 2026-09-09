@@ -59,6 +59,46 @@ class NativeAudioTest {
             assertTrue(bass.BASS_ChannelSetPosition(stream, 240, 2))
             val seconds = bass.BASS_ChannelBytes2Seconds(stream, bass.BASS_ChannelGetPosition(stream, 0))
             assertTrue(seconds in 0.24..0.26, "Tick seek: $seconds")
+
+            // Last note at 480; conductor EOT at 1440, including a tempo change.
+            // Verify desktop END and Android MIDI_TICK syncs against the native decoder.
+            bass.BASS_StreamFree(stream)
+            stream = 0
+            val sequence = javax.sound.midi.Sequence(javax.sound.midi.Sequence.PPQ, 480).apply {
+                createTrack().apply {
+                    add(javax.sound.midi.MidiEvent(javax.sound.midi.MetaMessage(0x51, byteArrayOf(15, 66, 64), 3), 480))
+                    add(javax.sound.midi.MidiEvent(javax.sound.midi.MetaMessage(0x2F, byteArrayOf(), 0), 1440))
+                }
+                createTrack().apply {
+                    add(javax.sound.midi.MidiEvent(javax.sound.midi.ShortMessage(0x90, 60, 100), 0))
+                    add(javax.sound.midi.MidiEvent(javax.sound.midi.ShortMessage(0x80, 60, 0), 480))
+                }
+            }
+            javax.sound.midi.MidiSystem.write(sequence, 1, song)
+            for (syncType in listOf(2, 0x10005)) {
+                stream = path(song).use { midi.BASS_MIDI_StreamCreateFile(0, it, 0, 0, unicode or 0x200000 or 0x8000, 44100) }
+                assertNotEquals(0, stream)
+                assertEquals(1440L, bass.BASS_ChannelGetLength(stream, 2))
+                assertEquals(2.5, bass.BASS_ChannelBytes2Seconds(stream, bass.BASS_ChannelGetLength(stream, 0)), 0.001)
+                val boundaries = mutableListOf<Double>()
+                val callback = EndSync { _, channel, _, _ ->
+                    boundaries += bass.BASS_ChannelBytes2Seconds(channel, bass.BASS_ChannelGetPosition(channel, 0))
+                    bass.BASS_ChannelSetPosition(channel, 480, 2)
+                }
+                assertNotEquals(0, bass.BASS_ChannelSetSync(stream, syncType or 0x40000000,
+                    if (syncType == 2) 0 else 1440, callback, null))
+                // GetPosition may report the start of the decode block: use sub-ms blocks.
+                Memory(176).use { buffer ->
+                    var blocks = 0
+                    while (boundaries.size < 2 && blocks++ < 5000) {
+                        assertTrue(bass.BASS_ChannelGetData(stream, buffer, 176) > 0)
+                    }
+                }
+                assertEquals(2, boundaries.size, "Sync type $syncType must repeat at EOT")
+                assertTrue(boundaries.all { it in 2.499..2.501 }, "Premature EOT: $boundaries")
+                bass.BASS_StreamFree(stream)
+                stream = 0
+            }
         } finally {
             if (stream != 0) bass.BASS_StreamFree(stream)
             if (font != 0) midi.BASS_MIDI_FontFree(font)

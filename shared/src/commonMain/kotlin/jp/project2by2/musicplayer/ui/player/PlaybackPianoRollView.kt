@@ -52,7 +52,7 @@ private const val ACTIVE_NOTE_GLOW_EXPAND_Y = 4f
 
 
 // Display delay in milliseconds: negative values show the piano roll ahead of audio.
-private const val PIANO_ROLL_DELAY = -100
+private const val PIANO_ROLL_DELAY = -150
 
 
 @Composable
