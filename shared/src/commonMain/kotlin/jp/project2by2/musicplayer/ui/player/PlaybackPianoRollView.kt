@@ -22,6 +22,7 @@ import jp.project2by2.musicplayer.model.*
 import jp.project2by2.musicplayer.state.*
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.text.*
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
 private val MidiChannelNeonPalette = listOf(
@@ -47,8 +48,13 @@ private const val ACTIVE_NOTE_FADE_OUT_MS = 400f
 private const val ACTIVE_NOTE_WHITE_MIX = 0.25f
 private const val ACTIVE_NOTE_OVERLAY_ALPHA = 0.75f
 private const val ACTIVE_NOTE_GLOW_ALPHA = 0.15f
-private const val ACTIVE_NOTE_GLOW_EXPAND_X = 4f
-private const val ACTIVE_NOTE_GLOW_EXPAND_Y = 4f
+// Match the original physical-pixel dimensions at the 3x Android reference density.
+// Keep these in dp so low-density desktops and HiDPI displays use the same proportions.
+private val MarkerWidth = (5f / 3f).dp
+private val MeasureLineWidth = 0.5.dp
+private val MeasureLabelGap = (10f / 3f).dp
+private val ActiveNoteGlowExpansion = (4f / 3f).dp
+private val MinimumNoteWidth = (2f / 3f).dp
 
 
 // Display delay in milliseconds: negative values show the piano roll ahead of audio.
@@ -92,6 +98,11 @@ fun PlaybackPianoRollView(
 
     Box(modifier = modifier.background(Color(0xFF161616))) {
         Canvas(Modifier.fillMaxSize()) {
+            val markerWidth = MarkerWidth.toPx()
+            val measureLineWidth = MeasureLineWidth.toPx()
+            val measureLabelGap = MeasureLabelGap.toPx()
+            val glowExpansion = ActiveNoteGlowExpansion.toPx()
+            val minimumNoteWidth = MinimumNoteWidth.toPx()
             val displayPositionMs = (currentPositionMs - PIANO_ROLL_DELAY)
                 .coerceIn(0L, totalDurationMs.coerceAtLeast(0L))
             val durationTicks = totalTicks.coerceAtLeast(1)
@@ -114,11 +125,11 @@ fun PlaybackPianoRollView(
                     color = Color.Gray.copy(alpha = 0.45f),
                     start = Offset(x, 0f),
                     end = Offset(x, size.height),
-                    strokeWidth = 1.5f
+                    strokeWidth = measureLineWidth
                 )
                 // Logical text size: legacy 32 physical pixels was about 11sp on a 3x phone,
                 // but became 32sp on a 1x desktop display.
-                drawText(textMeasurer, "${index + 1}", topLeft = Offset(x + 10f, 0f), style = TextStyle(color = Color.Gray.copy(alpha = 0.45f), fontSize = 11.sp))
+                drawText(textMeasurer, "${index + 1}", topLeft = Offset(x + measureLabelGap, 0f), style = TextStyle(color = Color.Gray.copy(alpha = 0.45f), fontSize = 11.sp))
             }
 
             notes.forEachIndexed { index, note ->
@@ -134,7 +145,7 @@ fun PlaybackPianoRollView(
                 val h = size.height / 128f * 2f
                 val channelColor = MidiChannelNeonPalette[note.channel.mod(MidiChannelNeonPalette.size)]
                 val reveal = if (index >= chunkStartIndex) chunkReveal.value else 1f
-                val animatedWidth = (w.coerceAtLeast(2f) * reveal).coerceAtLeast(2f)
+                val animatedWidth = (w.coerceAtLeast(minimumNoteWidth) * reveal).coerceAtLeast(minimumNoteWidth)
                 val animatedAlpha = 0.15f + (0.60f * reveal)
                 val highlightStrength = when {
                     displayPositionMs < note.startMs -> 0f
@@ -150,10 +161,10 @@ fun PlaybackPianoRollView(
                         color = lerp(channelColor, Color.White, 0.35f).copy(
                             alpha = highlightStrength * ACTIVE_NOTE_GLOW_ALPHA
                         ),
-                        topLeft = Offset(x - ACTIVE_NOTE_GLOW_EXPAND_X, y - ACTIVE_NOTE_GLOW_EXPAND_Y),
+                        topLeft = Offset(x - glowExpansion, y - glowExpansion),
                         size = Size(
-                            animatedWidth + ACTIVE_NOTE_GLOW_EXPAND_X * 2f,
-                            h + ACTIVE_NOTE_GLOW_EXPAND_Y * 2f
+                            animatedWidth + glowExpansion * 2f,
+                            h + glowExpansion * 2f
                         ),
                         blendMode = BlendMode.Plus
                     )
@@ -172,17 +183,17 @@ fun PlaybackPianoRollView(
                 }
             }
 
-            fun drawMarker(ms: Long, color: Color, width: Float) {
+            fun drawMarker(ms: Long, color: Color) {
                 val markerDisplayTick = msToTick(ms, tickTimeAnchors, durationTicks).coerceIn(0, durationTicks)
                 if (markerDisplayTick !in visibleStart..visibleEnd) return
                 if (markerDisplayTick > endDisplayTick && color != Color.Red) return
                 val x = ((markerDisplayTick - visibleStart).toFloat() / viewport.toFloat()) * size.width
-                drawLine(color = color, start = Offset(x, 0f), end = Offset(x, size.height), strokeWidth = width)
+                drawLine(color = color, start = Offset(x, 0f), end = Offset(x, size.height), strokeWidth = markerWidth)
             }
 
-            drawMarker(endPointMs, Color.Red, 5f)
-            drawMarker(loopPointMs, Color.Green, 5f)
-            drawMarker(displayPositionMs, Color.White, 5f)
+            drawMarker(endPointMs, Color.Red)
+            drawMarker(loopPointMs, Color.Green)
+            drawMarker(displayPositionMs, Color.White)
             if (endX < size.width) {
                 drawRect(
                     color = Color(0xFF161616),
@@ -194,7 +205,7 @@ fun PlaybackPianoRollView(
                         color = Color.Red,
                         start = Offset(endX, 0f),
                         end = Offset(endX, size.height),
-                        strokeWidth = 5f
+                        strokeWidth = markerWidth
                     )
                 }
             }
