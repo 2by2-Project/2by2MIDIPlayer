@@ -29,7 +29,14 @@ compose.desktop {
         nativeDistributions {
             targetFormats(TargetFormat.Msi, TargetFormat.Deb)
             packageName = "2by2MusicPlayer"
-            packageVersion = "1.7.0"
+            // Native installers use three components; Android keeps the shared display version.
+            packageVersion = providers.gradleProperty("appVersion").get()
+                .split('.').let { parts ->
+                    require(parts.size in 2..3 && parts.all { it.toIntOrNull() != null }) {
+                        "appVersion must be major.minor or major.minor.patch"
+                    }
+                    (parts + List(3 - parts.size) { "0" }).joinToString(".")
+                }
             description = "2by2 MIDI Player"
             windows { iconFile.set(project.file("icons/app-icon.ico")) }
             linux { iconFile.set(project.file("src/main/resources/app-icon.png")) }

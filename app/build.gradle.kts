@@ -15,8 +15,8 @@ android {
         applicationId = "jp.project2by2.musicplayer"
         minSdk = 24
         targetSdk = 36
-        versionCode = 7
-        versionName = "1.7"
+        versionCode = providers.gradleProperty("androidVersionCode").get().toInt()
+        versionName = providers.gradleProperty("appVersion").get()
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
