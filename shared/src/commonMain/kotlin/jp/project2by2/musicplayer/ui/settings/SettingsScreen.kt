@@ -33,7 +33,8 @@ fun SettingsScreen(
     onBack: () -> Unit, onPickSoundFont: () -> Unit,
     onRecommendedSoundFonts: (() -> Unit)? = null, onMaxVoicesChange: (Int) -> Unit,
     onEffectsChange: (Boolean) -> Unit, onReverbChange: (Float) -> Unit,
-    onLoopChange: (Boolean) -> Unit, onShuffleChange: (Boolean) -> Unit
+    onLoopChange: (Boolean) -> Unit, onShuffleChange: (Boolean) -> Unit,
+    soundFontLoading: Boolean = false
 ) {
     Scaffold(
         topBar = {
@@ -65,7 +66,7 @@ fun SettingsScreen(
                     val label = soundFontName ?: playerString("settings_soundfont_loaded")
                     SettingsInfoItem(title = playerString("settings_soundfont_title"), value = if (hasSoundFont) label else playerString("settings_soundfont_not_set"))
                     Button(
-                        onClick = { onPickSoundFont() },
+                        onClick = { onPickSoundFont() }, enabled = !soundFontLoading,
                         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)
                     ) {
                         Text(playerString("settings_soundfont_load_button"))
@@ -75,7 +76,7 @@ fun SettingsScreen(
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(horizontal = 16.dp, vertical = 8.dp),
-                        onClick = { onRecommendedSoundFonts?.invoke() },
+                        onClick = { onRecommendedSoundFonts?.invoke() }, enabled = !soundFontLoading,
                     ) {
                         Icon(
                             imageVector = Icons.Filled.AutoAwesome,

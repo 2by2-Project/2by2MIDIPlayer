@@ -28,7 +28,7 @@
     <string name="settings_soundfont_title">SoundFont</string>
     <string name="settings_soundfont_loaded">Loaded</string>
     <string name="settings_soundfont_not_set">Not set</string>
-    <string name="settings_soundfont_load_button">Load SoundFont (*.sf2)</string>
+    <string name="settings_soundfont_load_button">Load SoundFont (*.sf2 / *.dls)</string>
     <string name="settings_max_voices_title">Max Voices</string>
     <string name="settings_effects_toggle_title">Enable Reverb / Chorus effects</string>
     <string name="settings_effects_reverb_strength">Reverb strength</string>
@@ -89,4 +89,6 @@
     <string name="set_loop_point">Set Loop Point</string>
     <string name="save">Save</string>
     <string name="action_done">Done</string>
+    <string name="settings_soundfont_loading_title">Loading SoundFont</string>
+    <string name="settings_soundfont_import_failed">Could not load SoundFont</string>
 </resources>

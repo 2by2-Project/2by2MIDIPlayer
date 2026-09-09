@@ -58,7 +58,7 @@ private val MinimumNoteWidth = (2f / 3f).dp
 
 
 // Display delay in milliseconds: negative values show the piano roll ahead of audio.
-private const val PIANO_ROLL_DELAY = -150
+private const val PIANO_ROLL_DELAY = -120
 
 
 @Composable

@@ -11,7 +11,7 @@ fun chooseFiles(directory: Boolean = false, soundFont: Boolean = false, result: 
             dialogTitle = if (soundFont) "SoundFontを選択" else if (directory) "MIDIフォルダを選択" else "MIDIファイルを追加"
             fileSelectionMode = if (directory) JFileChooser.DIRECTORIES_ONLY else JFileChooser.FILES_ONLY
             isMultiSelectionEnabled = !directory && !soundFont
-            if (!directory) fileFilter = if (soundFont) FileNameExtensionFilter("SoundFont", "sf2", "sf3", "sfz")
+            if (!directory) fileFilter = if (soundFont) FileNameExtensionFilter("SoundFont / DLS", "sf2", "sf3", "sfz", "dls")
                 else FileNameExtensionFilter("MIDI", "mid", "midi")
         }
         if (chooser.showOpenDialog(null) == JFileChooser.APPROVE_OPTION) {

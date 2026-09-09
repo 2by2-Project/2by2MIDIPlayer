@@ -27,6 +27,7 @@ import java.io.File
 @Composable
 fun DesktopApp(controller: DesktopController) {
     val state by controller.state.collectAsState()
+    jp.project2by2.musicplayer.ui.settings.SoundFontLoadingDialog(state.soundFontLoading)
     val artworkLoader = remember { DesktopArtwork() }
     val currentArtwork = rememberDesktopArtwork(artworkLoader,
         state.current?.let { controller.midiFiles.resolve(it).parentFile })
@@ -90,6 +91,7 @@ fun DesktopApp(controller: DesktopController) {
             settings = {
             SettingsScreen(
                 soundFontName = state.soundFont?.let { File(it).name }, hasSoundFont = state.soundFont != null,
+                soundFontLoading = state.soundFontLoading,
                 maxVoices = state.maxVoices, effectsEnabled = state.effectsEnabled, reverbStrength = state.reverbStrength,
                 loopEnabled = state.loop, shuffleEnabled = state.shuffle, onBack = { settings = false },
                 onPickSoundFont = { chooseFiles(soundFont = true) { it.firstOrNull()?.let(controller::setFont) } },

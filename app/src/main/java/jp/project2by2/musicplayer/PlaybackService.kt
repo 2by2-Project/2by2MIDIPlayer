@@ -783,6 +783,29 @@ class PlaybackService : MediaSessionService() {
         }
     }
 
+    /** Main-thread commit of a validated font. The caller retains ownership if this throws. */
+    @Synchronized fun installSoundFont(font: Int, commitFile: () -> Unit): Boolean {
+        check(Looper.myLooper() == Looper.getMainLooper())
+        val current = handles
+        try {
+            current?.audio?.setFont(font)
+            commitFile()
+        } catch (failure: Exception) {
+            try { current?.audio?.setFont(current.font) }
+            catch (restore: Exception) {
+                // Both decoders must stop before the rejected font can be freed.
+                releaseHandles()
+                failure.addSuppressed(restore)
+            }
+            throw failure
+        }
+        if (current == null) return false
+        val old = current.font
+        current.font = font
+        BASSMIDI.BASS_MIDI_FontFree(old)
+        return true
+    }
+
     fun getCurrentUriString(): String? = currentUriString
     fun getCurrentTitle(): String? = currentTitle
 
@@ -1093,7 +1116,7 @@ data class LoopPoint(
 
 data class MidiHandles(
     val audio: MidiLoopStream,
-    val font: Int
+    var font: Int
 ) {
     val stream: Int get() = audio.output
 }

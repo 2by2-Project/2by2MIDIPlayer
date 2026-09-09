@@ -4,6 +4,8 @@ import jp.project2by2.musicplayer.PianoRollIndex
 import jp.project2by2.musicplayer.parseSmfToPianoRollIndex
 import jp.project2by2.musicplayer.MidiMetadata
 import jp.project2by2.musicplayer.parseMidiMetadata
+import jp.project2by2.musicplayer.soundfont.PreparedSoundFont
+import jp.project2by2.musicplayer.soundfont.SoundFontFiles
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -25,6 +27,7 @@ data class DesktopState(
     val index: PianoRollIndex? = null,
     val audio: AudioPosition = AudioPosition(),
     val soundFont: String? = null,
+    val soundFontLoading: Boolean = false,
     val volume: Float = 0.7f,
     val loop: Boolean = false,
     val shuffle: Boolean = false,
@@ -86,13 +89,16 @@ class DesktopStore(private val file: File = File(System.getProperty("user.home")
 class DesktopController(
     private val store: DesktopStore = DesktopStore(),
     val midiFiles: DesktopMidiFiles = DesktopMidiFiles(),
-    private val engine: BassAudio = BassAudio()
+    private val engine: BassAudio = BassAudio(),
+    private val fontCache: File = File(System.getProperty("java.io.tmpdir"), "2by2MusicPlayer-soundfonts")
 ) : AutoCloseable {
     private val executor = Executors.newSingleThreadExecutor { r -> Thread(r, "desktop-audio").apply { isDaemon = true } }
     private val dispatcher = executor.asCoroutineDispatcher()
     // Construct shutdown work while the controller is loaded, not during window disposal.
-    private val shutdownTask = FutureTask<Unit> { engine.close() }
-    private var closed = false
+    private val shutdownTask = FutureTask<Unit> { engine.close(); preparedFont?.close() }
+    private var preparedFont: PreparedSoundFont? = null
+    private val fontImportActive = java.util.concurrent.atomic.AtomicBoolean(false)
+    @Volatile private var closed = false
     private val scope = CoroutineScope(SupervisorJob() + dispatcher)
     private val metadataReader = DesktopMetadataReader()
     private val mutable = MutableStateFlow(DesktopState())
@@ -111,7 +117,7 @@ class DesktopController(
             mutable.update { it.copy(audioReady = true, engine = status) }
             engine.loop(mutable.value.loop)
             applySynthSettings()
-            mutable.value.soundFont?.let { engine.setSoundFont(File(it)) }
+            mutable.value.soundFont?.let { setFont(File(it)) }
         }
         scope.launch {
             while (isActive) {
@@ -187,10 +193,34 @@ class DesktopController(
         engine.seek(ms.coerceIn(0, mutable.value.audio.durationMs.coerceAtLeast(0)))
         mutable.update { it.copy(audio = engine.position()) }
     }
-    fun setFont(file: File) = operation {
-        engine.setSoundFont(file)
-        mutable.update { it.copy(soundFont = file.canonicalPath, audioReady = true) }
-        save()
+    fun setFont(file: File) {
+        if (closed || !fontImportActive.compareAndSet(false, true)) return
+        scope.launch {
+            mutable.update { it.copy(soundFontLoading = true) }
+            var candidate: PreparedSoundFont? = null
+            try {
+                // Conversion runs independently from the serial BASS device thread.
+                withContext(Dispatchers.IO) {
+                    val context = currentCoroutineContext()
+                    candidate = SoundFontFiles.prepare(file, fontCache) { context.ensureActive() }
+                }
+                ensureActive()
+                engine.setSoundFont(candidate!!.file)
+                val old = preparedFont
+                preparedFont = candidate
+                candidate = null
+                old?.close()
+                // Persist the original DLS path: rebuild a deleted temporary SF2 on restart.
+                mutable.update { it.copy(soundFont = file.canonicalPath, audioReady = true) }
+                save()
+            } catch (e: CancellationException) { throw e }
+            catch (e: Exception) { mutable.update { it.copy(error = e.message ?: "SoundFont import failed") } }
+            finally {
+                candidate?.close()
+                fontImportActive.set(false)
+                mutable.update { it.copy(soundFontLoading = false) }
+            }
+        }
     }
     fun setVolume(volume: Float) = operation {
         engine.volume(volume)

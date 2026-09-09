@@ -24,6 +24,14 @@ import androidx.compose.ui.platform.LocalContext
 import jp.project2by2.musicplayer.ui.theme._2by2MusicPlayerTheme
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.CancellationException
+import jp.project2by2.musicplayer.soundfont.PreparedSoundFont
+import jp.project2by2.musicplayer.soundfont.SoundFontFiles
+import com.un4seen.bass.BASSMIDI
 import java.io.File
 
 class SettingsActivity : ComponentActivity() {
@@ -82,6 +90,7 @@ private fun SettingsScreen(playbackService: PlaybackService?) {
     var hasSoundFont by remember { mutableStateOf(File(context.cacheDir, "soundfont.sf2").exists()) }
 
     val svc = playbackService
+    val currentService by androidx.compose.runtime.rememberUpdatedState(playbackService)
 
     var effectsEnabled by remember { mutableStateOf(false) }
     var reverbStrength by remember { mutableStateOf(1f) }
@@ -90,6 +99,8 @@ private fun SettingsScreen(playbackService: PlaybackService?) {
     val shuffleEnabled by SettingsDataStore.shuffleEnabledFlow(context).collectAsState(initial = false)
 
     var showSoundFontDialog by remember { mutableStateOf(false) }
+    var soundFontLoading by remember { mutableStateOf(false) }
+    jp.project2by2.musicplayer.ui.settings.SoundFontLoadingDialog(soundFontLoading)
 
     androidx.compose.runtime.LaunchedEffect(svc) {
         // Load settings
@@ -115,15 +126,64 @@ private fun SettingsScreen(playbackService: PlaybackService?) {
     val soundFontPicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
-        uri?.let {
-            val cacheSoundFontFile = File(context.cacheDir, "soundfont.sf2")
-            context.contentResolver.openInputStream(it)?.use { input ->
-                cacheSoundFontFile.outputStream().use { output -> input.copyTo(output) }
-            }
-            hasSoundFont = cacheSoundFontFile.exists()
-            val name = resolveDisplayName(it)
+        if (uri != null && !soundFontLoading) {
+            soundFontLoading = true
             scope.launch {
-                SettingsDataStore.setSoundFontName(context, name)
+                var imported: File? = null
+                var prepared: PreparedSoundFont? = null
+                var font = 0
+                var runtimeAcquired = false
+                try {
+                    val name = withContext(Dispatchers.IO) {
+                        val name = resolveDisplayName(uri)
+                        val workContext = currentCoroutineContext()
+                        val suffix = name.substringAfterLast('.', "sf2").lowercase().takeIf { it in listOf("dls", "sf2", "sf3") } ?: "sf2"
+                        val source = File.createTempFile("soundfont-import-", ".$suffix", context.cacheDir)
+                        imported = source
+                        val input = context.contentResolver.openInputStream(uri) ?: error("Cannot open SoundFont")
+                        input.use {
+                            source.outputStream().use { output ->
+                                val buffer = ByteArray(65536)
+                                var total = 0L
+                                while (true) {
+                                    workContext.ensureActive()
+                                    val count = input.read(buffer)
+                                    if (count < 0) break
+                                    total += count
+                                    require(total <= 1024L * 1024 * 1024) { "SoundFont exceeds 1 GiB" }
+                                    output.write(buffer, 0, count)
+                                }
+                            }
+                        }
+                        prepared = SoundFontFiles.prepare(source, context.cacheDir) { workContext.ensureActive() }
+                        check(BassRuntime.acquire()) { "Cannot initialize audio engine" }
+                        runtimeAcquired = true
+                        font = BASSMIDI.BASS_MIDI_FontInit(prepared!!.file.absolutePath, 0)
+                        check(font != 0) { "Cannot load SoundFont" }
+                        name
+                    }
+                    currentCoroutineContext().ensureActive()
+                    val commit = {
+                        // Atomic replacement on Android, including API 24/25; never truncate the old bank.
+                        android.system.Os.rename(prepared!!.file.absolutePath, File(context.cacheDir, "soundfont.sf2").absolutePath)
+                    }
+                    val service = currentService
+                    if (service != null) {
+                        if (service.installSoundFont(font, commit)) font = 0 // playback owns it now
+                    } else commit()
+                    hasSoundFont = true
+                    SettingsDataStore.setSoundFontName(context, name)
+                } catch (e: CancellationException) { throw e }
+                catch (e: Exception) {
+                    android.widget.Toast.makeText(context, context.getString(R.string.settings_soundfont_import_failed) + ": " + e.message,
+                        android.widget.Toast.LENGTH_LONG).show()
+                } finally {
+                    if (font != 0) BASSMIDI.BASS_MIDI_FontFree(font)
+                    if (runtimeAcquired) BassRuntime.release()
+                    prepared?.close()
+                    imported?.delete()
+                    soundFontLoading = false
+                }
             }
         }
     }
@@ -132,9 +192,10 @@ private fun SettingsScreen(playbackService: PlaybackService?) {
     val maxVoices by SettingsDataStore.maxVoicesFlow(context).collectAsState(initial = 40)
     jp.project2by2.musicplayer.ui.settings.SettingsScreen(
         soundFontName = soundFontName, hasSoundFont = hasSoundFont, maxVoices = maxVoices,
+        soundFontLoading = soundFontLoading,
         effectsEnabled = effectsEnabled, reverbStrength = reverbStrength,
         loopEnabled = loopEnabled, shuffleEnabled = shuffleEnabled,
-        onBack = { activity.finish() }, onPickSoundFont = { soundFontPicker.launch("application/octet-stream") },
+        onBack = { activity.finish() }, onPickSoundFont = { soundFontPicker.launch("*/*") },
         onRecommendedSoundFonts = { showSoundFontDialog = true },
         onMaxVoicesChange = { value -> svc?.setMaxVoices(value); scope.launch { SettingsDataStore.setMaxVoices(context, value) } },
         onEffectsChange = { value -> effectsEnabled = value; svc?.setEffectDisabled(!value); scope.launch { SettingsDataStore.setEffectsEnabled(context, value) } },
