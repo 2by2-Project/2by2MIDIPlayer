@@ -15,6 +15,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.*
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.*
+import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.input.nestedscroll.*
 import androidx.compose.ui.layout.*
 import jp.project2by2.musicplayer.*
@@ -129,7 +130,16 @@ fun PlaybackPianoRollView(
                 )
                 // Logical text size: legacy 32 physical pixels was about 11sp on a 3x phone,
                 // but became 32sp on a 1x desktop display.
-                drawText(textMeasurer, "${index + 1}", topLeft = Offset(x + measureLabelGap, 0f), style = TextStyle(color = Color.Gray.copy(alpha = 0.45f), fontSize = 11.sp))
+                // Measure independently of the remaining viewport width so edge labels never wrap.
+                val label = textMeasurer.measure(
+                    text = "${index + 1}",
+                    style = TextStyle(color = Color.Gray.copy(alpha = 0.45f), fontSize = 11.sp),
+                    softWrap = false,
+                    maxLines = 1
+                )
+                clipRect {
+                    drawText(label, topLeft = Offset(x + measureLabelGap, 0f))
+                }
             }
 
             notes.forEachIndexed { index, note ->
