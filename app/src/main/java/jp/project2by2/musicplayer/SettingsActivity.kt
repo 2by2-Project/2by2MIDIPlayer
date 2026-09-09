@@ -1,12 +1,10 @@
 package jp.project2by2.musicplayer
 
-import android.app.Activity
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import android.provider.OpenableColumns
 import androidx.activity.ComponentActivity
-import androidx.activity.compose.LocalActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -72,7 +70,7 @@ class SettingsActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             _2by2MusicPlayerTheme {
-                SettingsScreen(playbackService = boundService)
+                AndroidSettingsScreen(playbackService = boundService, onBack = { finish() })
             }
         }
     }
@@ -80,9 +78,8 @@ class SettingsActivity : ComponentActivity() {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun SettingsScreen(playbackService: PlaybackService?) {
+internal fun AndroidSettingsScreen(playbackService: PlaybackService?, onBack: () -> Unit) {
     val context = LocalContext.current
-    val activity = LocalActivity.current as Activity
     val scope = rememberCoroutineScope()
     val soundFontName by remember(context) {
         SettingsDataStore.soundFontNameFlow(context)
@@ -195,7 +192,7 @@ private fun SettingsScreen(playbackService: PlaybackService?) {
         soundFontLoading = soundFontLoading,
         effectsEnabled = effectsEnabled, reverbStrength = reverbStrength,
         loopEnabled = loopEnabled, shuffleEnabled = shuffleEnabled,
-        onBack = { activity.finish() }, onPickSoundFont = { soundFontPicker.launch("*/*") },
+        onBack = onBack, onPickSoundFont = { soundFontPicker.launch("*/*") },
         onRecommendedSoundFonts = { showSoundFontDialog = true },
         onMaxVoicesChange = { value -> svc?.setMaxVoices(value); scope.launch { SettingsDataStore.setMaxVoices(context, value) } },
         onEffectsChange = { value -> effectsEnabled = value; svc?.setEffectDisabled(!value); scope.launch { SettingsDataStore.setEffectsEnabled(context, value) } },

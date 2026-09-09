@@ -236,6 +236,7 @@ fun MusicPlayerMainScreen(
     var deletePlaylistTarget by remember { mutableStateOf<PlaylistSummary?>(null) }
     var openPlaylistInEditMode by remember { mutableStateOf(false) }
     var showNowPlaying by remember { mutableStateOf(false) }
+    var showSettings by rememberSaveable { mutableStateOf(false) }
     var showNowPlayingActions by remember { mutableStateOf(false) }
     var folderViewModeOrdinal by rememberSaveable { mutableStateOf(0) }
     var folderViewMode by remember { mutableStateOf(FolderViewMode.Grid) }
@@ -737,9 +738,6 @@ fun MusicPlayerMainScreen(
             }
         }
     }
-    BackHandler(enabled = showNowPlaying) {
-        showNowPlaying = false
-    }
 
     fun handleMidiTap(
         item: MidiFileItem,
@@ -766,6 +764,7 @@ fun MusicPlayerMainScreen(
             if (!ensureItemAvailable(item, listContext)) {
                 return@launch
             }
+            showSettings = false
             selectedMidiFileUri = item.uri
             if (configureTransientQueue) {
                 val queueItems = sourceItems
@@ -933,8 +932,56 @@ fun MusicPlayerMainScreen(
     val folderGridState = rememberLazyGridState()
     val folderListState = rememberLazyListState()
 
-    // Main screen start
-    Box(modifier = modifier.fillMaxSize()) {
+    // The Android host supplies the same screens and service callbacks at both sizes.
+    val playerContent: @Composable () -> Unit = {
+        if (selectedMidiFileUri == null) {
+            jp.project2by2.musicplayer.ui.player.EmptyNowPlayingPane()
+        } else {
+            NowPlayingPianoRollSheet(
+                fileUri = selectedMidiFileUri,
+                playbackService = playbackService,
+                pianoRollData = pianoRollData,
+                showActions = true,
+                onActionsClick = { showNowPlayingActions = true },
+                onSeekToMs = { ms -> controllerFuture.get().seekTo(ms) },
+                onPrevious = {
+                    scope.launch {
+                        val shuffleEnabled = SettingsDataStore.shuffleEnabledFlow(context).first()
+                        val currentPositionMs = playbackService?.getCurrentPositionMs() ?: 0L
+                        if (currentPositionMs > 3000L) {
+                            controllerFuture.get().seekTo(0)
+                        } else {
+                            playbackService?.playPreviousInQueue(shuffleEnabled)
+                        }
+                    }
+                },
+                onNext = {
+                    scope.launch {
+                        val shuffleEnabled = SettingsDataStore.shuffleEnabledFlow(context).first()
+                        playbackService?.playNextInQueue(shuffleEnabled)
+                    }
+                },
+                onClose = { showNowPlaying = false }
+            )
+        }
+    }
+    jp.project2by2.musicplayer.ui.player.ResponsivePlayerLayout(
+        showSettings = showSettings,
+        // Compact Android keeps its existing draggable overlay inside the library.
+        showPlayer = false,
+        onBack = { wide ->
+            if (showSettings) showSettings = false
+            else if (!wide) showNowPlaying = false
+        },
+        settings = {
+            BackHandler { showSettings = false }
+            AndroidSettingsScreen(playbackService, onBack = { showSettings = false })
+        },
+        player = { playerContent() },
+        modifier = modifier,
+        library = { wide ->
+    BackHandler(enabled = !wide && showNowPlaying) { showNowPlaying = false }
+    Box(modifier = Modifier.fillMaxSize()) {
     Scaffold(
         topBar = {
             jp.project2by2.musicplayer.ui.player.PlayerTopAppBar(
@@ -1030,7 +1077,8 @@ fun MusicPlayerMainScreen(
                         // Settings button
                         IconButton(
                             onClick = {
-                                context.startActivity(Intent(context, SettingsActivity::class.java))
+                                if (wide) showSettings = true
+                                else context.startActivity(Intent(context, SettingsActivity::class.java))
                             }
                         ) {
                             Icon(
@@ -1079,7 +1127,7 @@ fun MusicPlayerMainScreen(
         bottomBar = {
             Column {
                 AnimatedVisibility(
-                    visible = selectedMidiFileUri != null,
+                    visible = !wide && selectedMidiFileUri != null,
                     enter = slideInVertically(initialOffsetY = { it }, animationSpec = tween(400)) +
                             fadeIn(animationSpec = tween(400)),
                     exit = slideOutVertically(targetOffsetY = { it }, animationSpec = tween(400)) +
@@ -1450,7 +1498,7 @@ fun MusicPlayerMainScreen(
             }
         }
     }
-    if (!showNowPlaying && selectedMidiFileUri != null && miniLiftProgress > 0f) {
+    if (!wide && !showNowPlaying && selectedMidiFileUri != null && miniLiftProgress > 0f) {
         val configuration = LocalConfiguration.current
         val density = LocalDensity.current
         val screenPx = with(density) { configuration.screenHeightDp.dp.toPx() }
@@ -1492,7 +1540,7 @@ fun MusicPlayerMainScreen(
             )
         }
     }
-    if (showNowPlaying && selectedMidiFileUri != null) {
+    if (!wide && showNowPlaying && selectedMidiFileUri != null) {
         DraggableNowPlayingContainer(
             onClose = {
                 showNowPlaying = false
@@ -1501,35 +1549,12 @@ fun MusicPlayerMainScreen(
             animateIn = !skipNowPlayingEnterAnimation,
             modifier = Modifier.fillMaxSize().zIndex(3f)
         ) {
-            NowPlayingPianoRollSheet(
-                fileUri = selectedMidiFileUri,
-                playbackService = playbackService,
-                pianoRollData = pianoRollData,
-                showActions = true,
-                onActionsClick = { showNowPlayingActions = true },
-                onSeekToMs = { ms -> controllerFuture.get().seekTo(ms) },
-                onPrevious = {
-                    scope.launch {
-                        val shuffleEnabled = SettingsDataStore.shuffleEnabledFlow(context).first()
-                        val currentPositionMs = playbackService?.getCurrentPositionMs() ?: 0L
-                        if (currentPositionMs > 3000L) {
-                            controllerFuture.get().seekTo(0)
-                        } else {
-                            playbackService?.playPreviousInQueue(shuffleEnabled)
-                        }
-                    }
-                },
-                onNext = {
-                    scope.launch {
-                        val shuffleEnabled = SettingsDataStore.shuffleEnabledFlow(context).first()
-                        playbackService?.playNextInQueue(shuffleEnabled)
-                    }
-                },
-                onClose = { showNowPlaying = false }
-            )
+            playerContent()
         }
     }
     }
+
+    })
 
     if (showCreatePlaylistDialog) {
         CreatePlaylistDialog(
