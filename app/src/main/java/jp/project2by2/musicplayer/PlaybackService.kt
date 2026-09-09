@@ -18,7 +18,6 @@ import android.graphics.Color
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
-import android.os.SystemClock
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.session.CommandButton
@@ -31,8 +30,10 @@ import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
 import com.un4seen.bass.BASS
 import com.un4seen.bass.BASSMIDI
+import jp.project2by2.musicplayer.audio.MidiLoopStream
 import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -53,11 +54,13 @@ class PlaybackService : MediaSessionService() {
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val random = Random(System.currentTimeMillis())
 
-    private var handles: MidiHandles? = null
+    @Volatile private var handles: MidiHandles? = null
     private var loopPoint: LoopPoint? = null
     private var syncProc: BASS.SYNCPROC? = null
     private var syncHandle: Int = 0
     private var volumeSlideSyncHandle: Int = 0
+    private var volumeSlideSyncProc: BASS.SYNCPROC? = null
+    private val fadeEpoch = AtomicLong()
     private var loopRepeatCount: Int = 0
     private val transitionInProgress = AtomicBoolean(false)
     @Volatile private var loopEnabledSnapshot: Boolean = false
@@ -83,15 +86,33 @@ class PlaybackService : MediaSessionService() {
         PlaylistStore.repository(this)
     }
 
-    @Volatile private var sessionPositionAnchorMs: Long = 0L
-    @Volatile private var sessionAnchorUptimeMs: Long = 0L
-    @Volatile private var sessionAnchorValid: Boolean = false
-    @Volatile private var sessionLastLoopUptimeMs: Long = 0L
 
     // Temporary loop point for editing mode
-    private var temporaryLoopPointMs: Long? = null
-    private var temporaryEndPointMs: Long? = null
+    @Volatile private var temporaryLoopPointMs: Long? = null
+    @Volatile private var temporaryEndPointMs: Long? = null
     private var notificationPlaceholderArtworkUri: Uri? = null
+    private var notifiedLoopSource: MidiHandles? = null
+    private var notifiedLoopCount = 0L
+    private val positionUpdate = object : Runnable {
+        override fun run() {
+            updateLoopNotification()
+            mainHandler.postDelayed(this, 50)
+        }
+    }
+
+    @Synchronized private fun updateLoopNotification() {
+        val source = handles ?: return
+        val count = source.audio.audibleLoopCount()
+        if (source !== notifiedLoopSource) {
+            notifiedLoopSource = source
+            notifiedLoopCount = count
+        } else if (count != notifiedLoopCount) {
+            notifiedLoopCount = count
+            bassPlayer.notifyLoopDiscontinuity(source.audio.positionMs())
+            bassPlayer.invalidateFromBass()
+            triggerNotificationUpdate()
+        }
+    }
 
     inner class LocalBinder : Binder() {
         fun getService(): PlaybackService = this@PlaybackService
@@ -152,14 +173,13 @@ class PlaybackService : MediaSessionService() {
             updateNotificationControls()
         }
         Log.d(STARTUP_TRACE_TAG, "PlaybackService.onCreate took ${initMs}ms")
+        mainHandler.post(positionUpdate)
     }
 
     private fun observePlaybackSettings() {
         serviceScope.launch {
             SettingsDataStore.loopEnabledFlow(this@PlaybackService).collectLatest {
                 loopEnabledSnapshot = it
-                applyLoopRuntimeFlags()
-                refreshBoundarySync()
                 refreshPlayerUiAndNotification()
             }
         }
@@ -182,6 +202,7 @@ class PlaybackService : MediaSessionService() {
     }
 
     override fun onDestroy() {
+        mainHandler.removeCallbacks(positionUpdate)
         unregisterNoisyReceiver()
         abandonAudioFocus()
         mediaSession.release()
@@ -197,13 +218,6 @@ class PlaybackService : MediaSessionService() {
         return BASS.BASS_ChannelIsActive(h.stream) == BASS.BASS_ACTIVE_PLAYING
     }
 
-    private fun setBassPositionMs(ms: Long) {
-        val h = handles ?: return
-        val secs = ms.coerceAtLeast(0L).toDouble() / 1000.0
-        val bytes = BASS.BASS_ChannelSeconds2Bytes(h.stream, secs)
-        BASS.BASS_ChannelSetPosition(h.stream, bytes, BASS.BASS_POS_BYTE)
-    }
-
     fun loadMidi(uriString: String): Boolean {
         return loadMidiInternal(uriString, null)
     }
@@ -217,6 +231,7 @@ class PlaybackService : MediaSessionService() {
         return loadMidiInternal(uriString, seedLoopPoint)
     }
 
+    @Synchronized
     private fun loadMidiInternal(uriString: String, precomputedLoopPoint: LoopPoint?): Boolean {
         val uri = android.net.Uri.parse(uriString)
         loopRepeatCount = 0
@@ -274,8 +289,7 @@ class PlaybackService : MediaSessionService() {
         bassPlayer.invalidateFromBass()
 
         loopPoint = precomputedLoopPoint ?: findLoopPoint(cacheMidiFile)
-        val streamLengthBytes = BASS.BASS_ChannelGetLength(h.stream, BASS.BASS_POS_BYTE)
-        val streamLengthMs = (BASS.BASS_ChannelBytes2Seconds(h.stream, streamLengthBytes) * 1000.0).toLong()
+        val streamLengthMs = h.audio.durationMs
         val lp = loopPoint
         if (LOOP_DIAG) {
             Log.d(
@@ -286,51 +300,53 @@ class PlaybackService : MediaSessionService() {
         }
 
         BASS.BASS_ChannelSetAttribute(h.stream, BASS.BASS_ATTRIB_VOL, 1f)
-        applyLoopRuntimeFlags()
         if (LOOP_DIAG) {
-            val lenTick = BASS.BASS_ChannelGetLength(h.stream, BASSMIDI.BASS_POS_MIDI_TICK)
+            val lenTick = h.audio.durationTicks
             val flags = BASS.BASS_ChannelFlags(h.stream, 0, 0)
             Log.d(LOOP_TAG, "postFlags lenTick=$lenTick flags=$flags")
         }
 
         refreshBoundarySync()
-        setSessionPositionAnchor(positionMs = 0L)
 
         return true
     }
 
-    fun play() {
+    @Synchronized fun play() {
         if (!requestAudioFocus()) {
             return
         }
         registerNoisyReceiver()
 
-        handles?.let { BASS.BASS_ChannelPlay(it.stream, false) }
-        setSessionPositionAnchor(readRawPositionMs())
+        handles?.let {
+            if (it.audio.positionMs() >= it.audio.durationMs) it.audio.seek(0)
+            BASS.BASS_ChannelPlay(it.stream, false)
+        }
         bassPlayer.invalidateFromBass()
     }
 
-    fun pauseInternal(releaseFocus: Boolean) {
-        setSessionPositionAnchor(getSessionPositionMs())
+    @Synchronized fun pauseInternal(releaseFocus: Boolean) {
         unregisterNoisyReceiver()
         if (releaseFocus) {
             abandonAudioFocus()
         }
 
-        handles?.let { BASS.BASS_ChannelPause(it.stream) }
+        handles?.let {
+            BASS.BASS_ChannelPause(it.stream)
+            cancelFade(it)
+        }
         bassPlayer.invalidateFromBass()
     }
     fun pause() = pauseInternal(releaseFocus = true)
 
-    fun stop() {
+    @Synchronized fun stop() {
         unregisterNoisyReceiver()
         abandonAudioFocus()
 
         handles?.let {
             BASS.BASS_ChannelPause(it.stream)
-            BASS.BASS_ChannelSetPosition(it.stream, 0, BASS.BASS_POS_BYTE)
+            cancelFade(it)
+            it.audio.seek(0)
         }
-        setSessionPositionAnchor(0L)
         bassPlayer.invalidateFromBass()
     }
 
@@ -338,92 +354,44 @@ class PlaybackService : MediaSessionService() {
         return readRawPositionMs()
     }
 
-    private fun readRawPositionMs(): Long {
-        val h = handles ?: return 0L
-        val bytes = BASS.BASS_ChannelGetPosition(h.stream, BASS.BASS_POS_BYTE)
-        val secs = BASS.BASS_ChannelBytes2Seconds(h.stream, bytes)
-        return (secs * 1000.0).toLong()
+    @Synchronized private fun readRawPositionMs(): Long {
+        return handles?.audio?.positionMs() ?: 0L
     }
 
-    private fun getSessionPositionMs(): Long {
-        val now = SystemClock.uptimeMillis()
-        val rawMs = readRawPositionMs()
-        if (!sessionAnchorValid) {
-            setSessionPositionAnchor(rawMs, now)
-        }
+    private fun getSessionPositionMs(): Long = readRawPositionMs()
 
-        val elapsedMs = (now - sessionAnchorUptimeMs).coerceAtLeast(0L)
-        var predictedMs = if (isPlayingBass()) {
-            sessionPositionAnchorMs + elapsedMs
-        } else {
-            sessionPositionAnchorMs
-        }
-
-        val loopWindow = getActiveLoopWindowMs()
-        if (loopWindow != null) {
-            predictedMs = wrapPositionInLoopWindow(predictedMs, loopWindow.first, loopWindow.second)
-        }
-
-        val durationMs = getDurationMs()
-        if (durationMs > 0L) {
-            predictedMs = predictedMs.coerceIn(0L, durationMs)
-        } else {
-            predictedMs = predictedMs.coerceAtLeast(0L)
-        }
-
-        // Away from loop edges, snap back to raw if drift grows unexpectedly.
-        val elapsedSinceLoop = now - sessionLastLoopUptimeMs
-        if (elapsedSinceLoop > 500L && kotlin.math.abs(predictedMs - rawMs) > 1000L) {
-            setSessionPositionAnchor(rawMs, now)
-            if (LOOP_DIAG) {
-                Log.d(LOOP_TAG, "sessionPos drift snap predicted=$predictedMs raw=$rawMs")
-            }
-            return rawMs
-        }
-
-        return predictedMs
-    }
-
-    fun setCurrentPositionMs(ms: Long) {
+    @Synchronized fun setCurrentPositionMs(ms: Long) {
         val h = handles ?: return
-        val secs = ms.coerceAtLeast(0L).toDouble() / 1000.0
-        val bytes = BASS.BASS_ChannelSeconds2Bytes(h.stream, secs)
-        BASS.BASS_ChannelSetPosition(h.stream, bytes, BASS.BASS_POS_BYTE)
-        setSessionPositionAnchor(ms.coerceAtLeast(0L))
+        cancelFade(h)
+        h.audio.seek(ms)
         bassPlayer.invalidateFromBass()
     }
 
     fun getDurationMs(): Long {
-        val h = handles ?: return 0L
-        val bytes = BASS.BASS_ChannelGetLength(h.stream, BASS.BASS_POS_BYTE)
-        val secs = BASS.BASS_ChannelBytes2Seconds(h.stream, bytes)
-        return (secs * 1000.0).toLong()
+        return handles?.audio?.durationMs ?: 0L
     }
 
-    fun setEffectDisabled(value: Boolean) {
+    @Synchronized fun setEffectDisabled(value: Boolean) {
         val h = handles ?: return
         val flagsToSet = if (value) BASSMIDI.BASS_MIDI_NOFX else 0
-        BASS.BASS_ChannelFlags(
-            h.stream,
+        h.audio.setFlags(
             flagsToSet,
             BASSMIDI.BASS_MIDI_NOFX
         )
     }
 
-    fun setReverbStrength(value: Float) {
+    @Synchronized fun setReverbStrength(value: Float) {
         handles?.let {
-            BASS.BASS_ChannelSetAttribute(
-                it.stream,
+            it.audio.setAttribute(
                 BASSMIDI.BASS_ATTRIB_MIDI_REVERB,
                 value
             )
         }
     }
 
-    fun setMaxVoices(value: Int) {
+    @Synchronized fun setMaxVoices(value: Int) {
         handles?.let {
-            BASS.BASS_ChannelSetAttribute(
-                it.stream,
+            it.audio.setAttribute(
                 BASSMIDI.BASS_ATTRIB_MIDI_VOICES,
                 value.toFloat()
             )
@@ -432,16 +400,15 @@ class PlaybackService : MediaSessionService() {
 
     fun getLoopPoint(): LoopPoint? = loopPoint
 
-    fun setTemporaryLoopPoint(loopMs: Long?) {
+    @Synchronized fun setTemporaryLoopPoint(loopMs: Long?) {
         temporaryLoopPointMs = loopMs
-        applyLoopRuntimeFlags()
+        refreshBoundarySync()
     }
 
     fun getTemporaryLoopPoint(): Long? = temporaryLoopPointMs
 
-    fun setTemporaryEndPoint(endMs: Long?) {
+    @Synchronized fun setTemporaryEndPoint(endMs: Long?) {
         temporaryEndPointMs = endMs?.coerceAtLeast(0L)
-        applyLoopRuntimeFlags()
         refreshBoundarySync()
     }
 
@@ -452,8 +419,12 @@ class PlaybackService : MediaSessionService() {
         return BASS.BASS_ChannelIsActive(h.stream) == BASS.BASS_ACTIVE_PLAYING
     }
 
+    @Synchronized
     private fun releaseHandles() {
-        handles?.let {
+        val previous = handles
+        handles = null // Invalidate boundary callbacks before waiting for the output to stop.
+        fadeEpoch.incrementAndGet()
+        previous?.let {
             if (syncHandle != 0) {
                 BASS.BASS_ChannelRemoveSync(it.stream, syncHandle)
                 syncHandle = 0
@@ -462,177 +433,65 @@ class PlaybackService : MediaSessionService() {
                 BASS.BASS_ChannelRemoveSync(it.stream, volumeSlideSyncHandle)
                 volumeSlideSyncHandle = 0
             }
-            BASS.BASS_StreamFree(it.stream)
+            it.audio.close()
             BASSMIDI.BASS_MIDI_FontFree(it.font)
         }
         loopRepeatCount = 0
+        syncProc = null
+        volumeSlideSyncProc = null
         transitionInProgress.set(false)
         handles = null
     }
 
-    private fun handlePlaybackBoundary(lp: LoopPoint, streamHandle: Int) {
-        if (handles?.stream != streamHandle) return
-        val currentTick = BASS.BASS_ChannelGetPosition(streamHandle, BASSMIDI.BASS_POS_MIDI_TICK).coerceAtLeast(0L)
-        if (LOOP_DIAG) {
-            val curBytes = BASS.BASS_ChannelGetPosition(streamHandle, BASS.BASS_POS_BYTE)
-            val curMs = (BASS.BASS_ChannelBytes2Seconds(streamHandle, curBytes) * 1000.0).toLong()
-            Log.d(
-                LOOP_TAG,
-                "boundary fired curTick=$currentTick curMs=$curMs loopStartTick=${lp.startTick} " +
-                    "loopEndTick=${lp.endTick} tempEndMs=$temporaryEndPointMs loopEnabled=$loopEnabledSnapshot"
-            )
-        }
-
-        // Pseudo boundary for loop-point editor.
-        val tempEnd = temporaryEndPointMs
-        if (tempEnd != null) {
-            val loopTarget = (temporaryLoopPointMs ?: lp.startMs).coerceIn(0L, tempEnd)
-            setCurrentPositionMs(loopTarget)
-            return
-        }
-
-        // Check for temporary loop point (editing mode)
-        val tempLoop = temporaryLoopPointMs
-        if (tempLoop != null) {
-            setCurrentPositionMs(tempLoop)
-            return
-        }
-
-        val shuffleEnabled = shuffleEnabledSnapshot
-        if (loopEnabledSnapshot) {
+    // Called inside PCM rendering. Never call MidiLoopStream control methods here:
+    // a control thread may be waiting on the native output lock.
+    private fun handlePlaybackBoundary(lp: LoopPoint, streamHandle: Int): Boolean {
+        if (handles?.stream != streamHandle) return false
+        val temporary = temporaryLoopPointMs != null || temporaryEndPointMs != null
+        if (temporary || loopEnabledSnapshot) {
             loopRepeatCount = 0
-            seekToLoopStart(streamHandle, lp)
-            return
+            return true
         }
-
-        if (!lp.hasLoopStartMarker) {
-            loopRepeatCount = 0
-            serviceScope.launch { playNextInQueue(shuffleEnabled) }
-            return
-        }
-
+        if (!lp.hasLoopStartMarker) return false // Output END sync advances the queue at playtime.
+        if (transitionInProgress.get()) return true // Keep looping underneath the full track fade.
         if (loopRepeatCount < LOOP_REPEAT_BEFORE_FADE_COUNT) {
             loopRepeatCount += 1
-            seekToLoopStart(streamHandle, lp)
-            return
+            return true
         }
-
         loopRepeatCount = 0
-        fadeOutFromLoopStartThenPlayNext(streamHandle, lp, shuffleEnabled)
+        fadeOutThenPlayNext(streamHandle, shuffleEnabledSnapshot)
+        return true
     }
 
-    private fun seekToLoopStart(streamHandle: Int, lp: LoopPoint) {
-        // When there is no explicit loop marker and loop start is 0, BASS_SAMPLE_LOOP already wraps to 0.
-        // Re-seeking to 0 here can retrigger attacks and cause audible doubling.
-        if (!lp.hasLoopStartMarker && lp.startTick <= 0) {
-            notifyLooped(0L)
-            return
-        }
-        BASS.BASS_ChannelSetPosition(
-            streamHandle,
-            lp.startTick.toLong(),
-            BASSMIDI.BASS_POS_MIDI_TICK or BASSMIDI.BASS_MIDI_DECAYSEEK
-        )
-        notifyLooped(lp.startMs)
-    }
-
-    private fun fadeOutFromLoopStartThenPlayNext(streamHandle: Int, lp: LoopPoint, shuffleEnabled: Boolean) {
-        if (!transitionInProgress.compareAndSet(false, true)) return
-        if (handles?.stream != streamHandle) {
-            transitionInProgress.set(false)
-            return
-        }
-
-        seekToLoopStart(streamHandle, lp)
-        val fadeDuration = FADE_OUT_DURATION_MS
-        fadeOutThenPlayNext(streamHandle, shuffleEnabled, fadeDuration, alreadyLocked = true)
-    }
-
+    @Synchronized
     private fun refreshBoundarySync() {
         val h = handles ?: return
         val lp = loopPoint ?: return
-
-        if (syncHandle != 0) {
-            BASS.BASS_ChannelRemoveSync(h.stream, syncHandle)
-            syncHandle = 0
-        }
-        syncProc = BASS.SYNCPROC { _, _, _, _ ->
-            handlePlaybackBoundary(lp, h.stream)
-        }
-
-        val syncType: Int
-        val syncParam: Long
-        val syncLabel: String
-        val tempEnd = temporaryEndPointMs
-        if (tempEnd != null) {
-            val totalBytes = BASS.BASS_ChannelGetLength(h.stream, BASS.BASS_POS_BYTE)
-            val totalSecs = BASS.BASS_ChannelBytes2Seconds(h.stream, totalBytes)
-            val totalMs = (totalSecs * 1000.0).toLong().coerceAtLeast(1L)
-            val endMs = tempEnd.coerceIn(1L, totalMs)
-            val endBytes = BASS.BASS_ChannelSeconds2Bytes(h.stream, endMs.toDouble() / 1000.0)
-            syncType = BASS.BASS_SYNC_POS or BASS.BASS_SYNC_MIXTIME
-            syncParam = endBytes
-            syncLabel = "TEMP_END_MS"
-        } else if (lp.hasLoopStartMarker) {
-            syncType = BASSMIDI.BASS_SYNC_MIDI_TICK or BASS.BASS_SYNC_MIXTIME
-            syncParam = lp.endTick.toLong().coerceAtLeast(1L)
-            syncLabel = "EOT_TICK_MIXTIME"
+        val outputHandle = h.stream
+        val repeat = { handlePlaybackBoundary(lp, outputHandle) }
+        if (temporaryLoopPointMs != null || temporaryEndPointMs != null) {
+            val end = (temporaryEndPointMs ?: h.audio.durationMs).coerceIn(0L, h.audio.durationMs)
+            val start = (temporaryLoopPointMs ?: lp.startMs).coerceIn(0L, (end - 1).coerceAtLeast(0L))
+            h.audio.configure(start, end, repeat)
+        } else if (lp.hasLoopStartMarker && lp.endTick > 0) {
+            h.audio.configureTicks(lp.startTick.toLong(), lp.endTick.toLong(), repeat)
+        } else if (lp.hasLoopStartMarker && lp.endMs > 0) {
+            // The editor can provide positions before the MIDI has been parsed into ticks.
+            h.audio.configure(lp.startMs, lp.endMs, repeat)
         } else {
-            syncType = BASS.BASS_SYNC_END
-            syncParam = 0L
-            syncLabel = "END"
+            h.audio.configureTicks(0, h.audio.durationTicks, repeat)
         }
-
-        syncHandle = BASS.BASS_ChannelSetSync(
-            h.stream,
-            syncType,
-            syncParam,
-            syncProc,
-            0
-        )
-        if (syncHandle == 0 && lp.hasLoopStartMarker) {
-            // Fallback path if tick+mixtime sync is not accepted on this runtime.
-            syncHandle = BASS.BASS_ChannelSetSync(
-                h.stream,
-                BASS.BASS_SYNC_END or BASS.BASS_SYNC_MIXTIME,
-                0L,
-                syncProc,
-                0
-            )
-        }
-        if (LOOP_DIAG) {
-            val lenTick = BASS.BASS_ChannelGetLength(h.stream, BASSMIDI.BASS_POS_MIDI_TICK)
-            val lenBytes = BASS.BASS_ChannelGetLength(h.stream, BASS.BASS_POS_BYTE)
-            val lenMs = (BASS.BASS_ChannelBytes2Seconds(h.stream, lenBytes) * 1000.0).toLong()
-            val flags = BASS.BASS_ChannelFlags(h.stream, 0, 0)
-            Log.d(
-                LOOP_TAG,
-                "sync set handle=$syncHandle type=$syncLabel param=$syncParam " +
-                    "loopStartTick=${lp.startTick} loopEndTick=${lp.endTick} loopStartMs=${lp.startMs} loopEndMs=${lp.endMs} " +
-                    "lenTick=$lenTick lenMs=$lenMs flags=$flags"
-            )
-        }
-    }
-
-    private fun applyLoopRuntimeFlags() {
-        val h = handles ?: return
-        val lp = loopPoint
-        val hasTemporaryLoop = temporaryLoopPointMs != null || temporaryEndPointMs != null
-        val enableSampleLoop = loopEnabledSnapshot || hasTemporaryLoop
-        val sampleLoopFlags = if (enableSampleLoop) BASS.BASS_SAMPLE_LOOP else 0
-        BASS.BASS_ChannelFlags(h.stream, sampleLoopFlags, BASS.BASS_SAMPLE_LOOP)
-
-        val enableDecay = enableSampleLoop && lp?.hasLoopStartMarker == true
-        val decayMask = BASSMIDI.BASS_MIDI_DECAYSEEK or BASSMIDI.BASS_MIDI_DECAYEND
-        val decayFlags = if (enableDecay) decayMask else 0
-        BASS.BASS_ChannelFlags(h.stream, decayFlags, decayMask)
-        if (LOOP_DIAG) {
-            Log.d(
-                LOOP_TAG,
-                "applyLoopRuntimeFlags loopEnabled=$loopEnabledSnapshot hasTemporaryLoop=$hasTemporaryLoop " +
-                    "hasLoopMarker=${lp?.hasLoopStartMarker} sampleLoopEnabled=$enableSampleLoop " +
-                    "decayEnabled=$enableDecay flags=${BASS.BASS_ChannelFlags(h.stream, 0, 0)}"
-            )
+        if (syncHandle == 0) {
+            // Queue transitions belong to the consumed output boundary, not the decode-ahead boundary.
+            syncProc = BASS.SYNCPROC { _, channel, _, _ ->
+                if (handles === h && h.audio.failure == null) {
+                    val epoch = fadeEpoch.get()
+                    serviceScope.launch {
+                        if (h.stream == channel) playNextInQueueNow(shuffleEnabledSnapshot, source = h, epoch = epoch)
+                    }
+                }
+            }
+            syncHandle = BASS.BASS_ChannelSetSync(h.stream, BASS.BASS_SYNC_END, 0, syncProc, null)
         }
     }
 
@@ -647,6 +506,8 @@ class PlaybackService : MediaSessionService() {
             transitionInProgress.set(false)
             return
         }
+        val source = handles ?: return
+        val epoch = fadeEpoch.incrementAndGet()
 
         if (volumeSlideSyncHandle != 0) {
             BASS.BASS_ChannelRemoveSync(streamHandle, volumeSlideSyncHandle)
@@ -661,21 +522,41 @@ class PlaybackService : MediaSessionService() {
         )
         if (!sliding) {
             transitionInProgress.set(false)
-            serviceScope.launch { playNextInQueue(shuffleEnabled, alreadyLocked = false) }
+            serviceScope.launch {
+                playNextInQueueNow(shuffleEnabled, source = source, epoch = epoch)
+            }
             return
         }
 
+        volumeSlideSyncProc = BASS.SYNCPROC { _, _, _, _ ->
+            serviceScope.launch {
+                playNextInQueueNow(shuffleEnabled, alreadyLocked = true, source = source, epoch = epoch)
+            }
+        }
         volumeSlideSyncHandle = BASS.BASS_ChannelSetSync(
             streamHandle,
             BASS.BASS_SYNC_SLIDE,
             BASS.BASS_ATTRIB_VOL.toLong(),
-            BASS.SYNCPROC { _, _, _, _ ->
-                serviceScope.launch {
-                    playNextInQueue(shuffleEnabled, alreadyLocked = true)
-                }
-            },
+            volumeSlideSyncProc,
             0
         )
+    }
+
+    // BASS attribute slides continue even when paused. Cancel the old automatic transition
+    // on explicit transport commands, otherwise a paused/stopped track can start the next one.
+    private fun cancelFade(h: MidiHandles) {
+        BASS.BASS_ChannelLock(h.stream, true)
+        try {
+            fadeEpoch.incrementAndGet()
+            if (volumeSlideSyncHandle != 0) {
+                BASS.BASS_ChannelRemoveSync(h.stream, volumeSlideSyncHandle)
+                volumeSlideSyncHandle = 0
+                volumeSlideSyncProc = null
+                BASS.BASS_ChannelSlideAttribute(h.stream, BASS.BASS_ATTRIB_VOL, 1f, 0)
+            }
+            loopRepeatCount = 0
+            transitionInProgress.set(false)
+        } finally { BASS.BASS_ChannelLock(h.stream, false) }
     }
 
     fun setTransientQueue(items: List<String>, title: String?, startUri: String? = null): Boolean {
@@ -739,6 +620,16 @@ class PlaybackService : MediaSessionService() {
     }
 
     suspend fun playNextInQueue(shuffleEnabled: Boolean, alreadyLocked: Boolean = false) {
+        playNextInQueueNow(shuffleEnabled, alreadyLocked)
+    }
+
+    @Synchronized
+    private fun playNextInQueueNow(
+        shuffleEnabled: Boolean, alreadyLocked: Boolean = false,
+        source: MidiHandles? = null, epoch: Long? = null,
+    ) {
+        if (source != null && handles !== source) return
+        if (epoch != null && fadeEpoch.get() != epoch) return
         if (!alreadyLocked && !transitionInProgress.compareAndSet(false, true)) return
 
         val nextUriString = findNextUriInActiveQueue(shuffleEnabled)
@@ -749,10 +640,16 @@ class PlaybackService : MediaSessionService() {
 
         val loaded = loadMidi(nextUriString)
         if (loaded) {
+            val loadedSource = handles
+            val loadedEpoch = fadeEpoch.get()
             mainHandler.post {
-                play()
-                bassPlayer.invalidateFromBass()
-                triggerNotificationUpdate()
+                synchronized(this@PlaybackService) {
+                    if (handles === loadedSource && fadeEpoch.get() == loadedEpoch) {
+                        play()
+                        bassPlayer.invalidateFromBass()
+                        triggerNotificationUpdate()
+                    }
+                }
             }
         }
         transitionInProgress.set(false)
@@ -874,23 +771,16 @@ class PlaybackService : MediaSessionService() {
         BassRuntime.release()
     }
 
-    private fun bassLoadMidiWithSoundFont(midiPath: String, sf2Path: String): MidiHandles {
+    private fun bassLoadMidiWithSoundFont(midiPath: String, sf2Path: String): MidiHandles? {
         val soundFontHandle = BASSMIDI.BASS_MIDI_FontInit(sf2Path, 0)
-        val midiFlags = BASSMIDI.BASS_MIDI_NOCROP
-        val stream = BASSMIDI.BASS_MIDI_StreamCreateFile(midiPath, 0, 0, 0, midiFlags)
-        if (LOOP_DIAG) {
-            Log.d(LOOP_TAG, "createStream flags=$midiFlags stream=$stream")
+        if (soundFontHandle == 0) return null
+        return try {
+            MidiHandles(createAndroidLoopStream(midiPath, soundFontHandle), soundFontHandle)
+        } catch (error: Exception) {
+            BASSMIDI.BASS_MIDI_FontFree(soundFontHandle)
+            Log.e("MidiLoop", "Cannot load MIDI", error)
+            null
         }
-        val fonts = arrayOf(
-            BASSMIDI.BASS_MIDI_FONT().apply {
-                font = soundFontHandle
-                preset = -1
-                bank = 0
-            }
-        )
-        BASSMIDI.BASS_MIDI_StreamSetFonts(stream, fonts, 1)
-        BASSMIDI.BASS_MIDI_StreamLoadSamples(stream)
-        return MidiHandles(stream, soundFontHandle)
     }
 
     fun getCurrentUriString(): String? = currentUriString
@@ -1008,8 +898,6 @@ class PlaybackService : MediaSessionService() {
 
     private fun setLoopEnabledFromController(enabled: Boolean) {
         loopEnabledSnapshot = enabled
-        applyLoopRuntimeFlags()
-        refreshBoundarySync()
         runBlocking {
             SettingsDataStore.setLoopEnabled(this@PlaybackService, enabled)
         }
@@ -1165,20 +1053,24 @@ class PlaybackService : MediaSessionService() {
         private const val LOOP_DIAG = true
     }
 
-    private fun playInternalFromController() {
+    @Synchronized private fun playInternalFromController() {
         if (!requestAudioFocus()) {
             bassPlayer.invalidateFromBass()
             return
         }
         registerNoisyReceiver()
-        handles?.let { BASS.BASS_ChannelPlay(it.stream, false) }
-        setSessionPositionAnchor(readRawPositionMs())
+        handles?.let {
+            if (it.audio.positionMs() >= it.audio.durationMs) it.audio.seek(0)
+            BASS.BASS_ChannelPlay(it.stream, false)
+        }
         bassPlayer.invalidateFromBass()
     }
 
-    private fun pauseInternalFromController(releaseFocus: Boolean) {
-        setSessionPositionAnchor(getSessionPositionMs())
-        handles?.let { BASS.BASS_ChannelPause(it.stream) }
+    @Synchronized private fun pauseInternalFromController(releaseFocus: Boolean) {
+        handles?.let {
+            BASS.BASS_ChannelPause(it.stream)
+            cancelFade(it)
+        }
         unregisterNoisyReceiver()
         if (releaseFocus) abandonAudioFocus()
         bassPlayer.invalidateFromBass()
@@ -1189,48 +1081,6 @@ class PlaybackService : MediaSessionService() {
         bassPlayer.invalidateFromBass()
     }
 
-    private fun notifyLooped(startMs: Long) {
-        val now = SystemClock.uptimeMillis()
-        sessionLastLoopUptimeMs = now
-        setSessionPositionAnchor(startMs, now)
-        if (LOOP_DIAG) {
-            Log.d(LOOP_TAG, "notifyLooped anchor=$startMs raw=${readRawPositionMs()}")
-        }
-
-        mainHandler.post {
-            bassPlayer.notifyLoopDiscontinuity(startMs)
-            bassPlayer.invalidateFromBass()
-            triggerNotificationUpdate()
-        }
-    }
-
-    private fun setSessionPositionAnchor(positionMs: Long, uptimeMs: Long = SystemClock.uptimeMillis()) {
-        sessionPositionAnchorMs = positionMs.coerceAtLeast(0L)
-        sessionAnchorUptimeMs = uptimeMs
-        sessionAnchorValid = true
-    }
-
-    private fun getActiveLoopWindowMs(): Pair<Long, Long>? {
-        val tempEnd = temporaryEndPointMs
-        if (tempEnd != null && tempEnd > 0L) {
-            val start = (temporaryLoopPointMs ?: loopPoint?.startMs ?: 0L).coerceIn(0L, tempEnd - 1L)
-            val end = tempEnd.coerceAtLeast(start + 1L)
-            return start to end
-        }
-
-        if (!loopEnabledSnapshot) return null
-        val lp = loopPoint ?: return null
-        if (!lp.hasLoopStartMarker) return null
-        if (lp.endMs <= lp.startMs) return null
-        return lp.startMs to lp.endMs
-    }
-
-    private fun wrapPositionInLoopWindow(positionMs: Long, startMs: Long, endMs: Long): Long {
-        val length = (endMs - startMs).coerceAtLeast(1L)
-        if (positionMs < startMs) return startMs
-        val delta = (positionMs - startMs) % length
-        return startMs + delta
-    }
 }
 
 data class LoopPoint(
@@ -1242,6 +1092,8 @@ data class LoopPoint(
 )
 
 data class MidiHandles(
-    val stream: Int,
+    val audio: MidiLoopStream,
     val font: Int
-)
+) {
+    val stream: Int get() = audio.output
+}

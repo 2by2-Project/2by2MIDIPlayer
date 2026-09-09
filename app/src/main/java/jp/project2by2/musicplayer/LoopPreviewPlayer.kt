@@ -16,13 +16,11 @@ class LoopPreviewPlayer(
     private val context: Context
 ) {
     private var handles: MidiHandles? = null
-    private var syncProc: BASS.SYNCPROC? = null
-    private var syncHandle: Int = 0
     private var tempMidiFile: File? = null
     private var bassAcquired = false
     private var previewWindow: PreviewWindow? = null
 
-    fun load(uri: Uri, previewWindow: PreviewWindow? = null): Boolean {
+    @Synchronized fun load(uri: Uri, previewWindow: PreviewWindow? = null): Boolean {
         val soundFontFile = File(context.cacheDir, "soundfont.sf2")
         if (!soundFontFile.exists()) return false
         if (!bassAcquired) {
@@ -40,46 +38,39 @@ class LoopPreviewPlayer(
         return true
     }
 
-    fun setPreviewWindow(loopStartMs: Long?, endMs: Long?) {
+    @Synchronized fun setPreviewWindow(loopStartMs: Long?, endMs: Long?) {
         previewWindow = PreviewWindow(loopStartMs = loopStartMs, endMs = endMs)
         refreshBoundarySync()
     }
 
-    fun play(): Boolean {
-        val stream = handles?.stream ?: return false
-        return BASS.BASS_ChannelPlay(stream, false)
+    @Synchronized fun play(): Boolean {
+        val h = handles ?: return false
+        if (h.audio.positionMs() >= h.audio.durationMs) h.audio.seek(0)
+        return BASS.BASS_ChannelPlay(h.stream, false)
     }
 
-    fun pause() {
+    @Synchronized fun pause() {
         handles?.let { BASS.BASS_ChannelPause(it.stream) }
     }
 
-    fun seekTo(ms: Long) {
-        val stream = handles?.stream ?: return
-        val durationMs = getDurationMs().coerceAtLeast(0L)
-        val clamped = ms.coerceIn(0L, durationMs)
-        val bytes = BASS.BASS_ChannelSeconds2Bytes(stream, clamped.toDouble() / 1000.0)
-        BASS.BASS_ChannelSetPosition(stream, bytes, BASS.BASS_POS_BYTE)
+    @Synchronized fun seekTo(ms: Long) {
+        handles?.audio?.seek(ms)
     }
 
-    fun getCurrentPositionMs(): Long {
-        val stream = handles?.stream ?: return 0L
-        val bytes = BASS.BASS_ChannelGetPosition(stream, BASS.BASS_POS_BYTE)
-        return (BASS.BASS_ChannelBytes2Seconds(stream, bytes) * 1000.0).toLong()
+    @Synchronized fun getCurrentPositionMs(): Long {
+        return handles?.audio?.positionMs() ?: 0L
     }
 
-    fun getDurationMs(): Long {
-        val stream = handles?.stream ?: return 0L
-        val bytes = BASS.BASS_ChannelGetLength(stream, BASS.BASS_POS_BYTE)
-        return (BASS.BASS_ChannelBytes2Seconds(stream, bytes) * 1000.0).toLong()
+    @Synchronized fun getDurationMs(): Long {
+        return handles?.audio?.durationMs ?: 0L
     }
 
-    fun isPlaying(): Boolean {
+    @Synchronized fun isPlaying(): Boolean {
         val stream = handles?.stream ?: return false
         return BASS.BASS_ChannelIsActive(stream) == BASS.BASS_ACTIVE_PLAYING
     }
 
-    fun release() {
+    @Synchronized fun release() {
         releaseHandles()
         tempMidiFile?.delete()
         tempMidiFile = null
@@ -108,75 +99,30 @@ class LoopPreviewPlayer(
     }
 
     private fun loadStream(midiFile: File, soundFontFile: File): MidiHandles? {
-        val soundFontHandle = BASSMIDI.BASS_MIDI_FontInit(soundFontFile.absolutePath, 0)
-        if (soundFontHandle == 0) return null
-        val stream = BASSMIDI.BASS_MIDI_StreamCreateFile(
-            midiFile.absolutePath,
-            0,
-            0,
-            0,
-            BASSMIDI.BASS_MIDI_NOCROP
-        )
-        if (stream == 0) {
-            BASSMIDI.BASS_MIDI_FontFree(soundFontHandle)
-            return null
+        val font = BASSMIDI.BASS_MIDI_FontInit(soundFontFile.absolutePath, 0)
+        if (font == 0) return null
+        return try {
+            MidiHandles(createAndroidLoopStream(midiFile.absolutePath, font), font)
+        } catch (error: Exception) {
+            BASSMIDI.BASS_MIDI_FontFree(font)
+            Log.e("LoopPreviewPlayer", "Cannot load MIDI", error)
+            null
         }
-        val fonts = arrayOf(
-            BASSMIDI.BASS_MIDI_FONT().apply {
-                font = soundFontHandle
-                preset = -1
-                bank = 0
-            }
-        )
-        BASSMIDI.BASS_MIDI_StreamSetFonts(stream, fonts, 1)
-        BASSMIDI.BASS_MIDI_StreamLoadSamples(stream)
-        BASS.BASS_ChannelSetAttribute(stream, BASS.BASS_ATTRIB_VOL, 1f)
-        return MidiHandles(stream = stream, font = soundFontHandle)
     }
 
     private fun refreshBoundarySync() {
-        val stream = handles?.stream ?: return
-        if (syncHandle != 0) {
-            BASS.BASS_ChannelRemoveSync(stream, syncHandle)
-            syncHandle = 0
-        }
-        val endMs = previewWindow?.endMs ?: return
-        val durationMs = getDurationMs().coerceAtLeast(1L)
-        val clampedEndMs = endMs.coerceIn(1L, durationMs)
-        val endBytes = BASS.BASS_ChannelSeconds2Bytes(stream, clampedEndMs.toDouble() / 1000.0)
-        syncProc = BASS.SYNCPROC { _, _, _, _ ->
-            handleBoundaryReached(stream, clampedEndMs)
-        }
-        syncHandle = BASS.BASS_ChannelSetSync(
-            stream,
-            BASS.BASS_SYNC_POS or BASS.BASS_SYNC_MIXTIME,
-            endBytes,
-            syncProc,
-            0
-        )
-    }
-
-    private fun handleBoundaryReached(stream: Int, clampedEndMs: Long) {
-        if (handles?.stream != stream) return
-        val loopStartMs = previewWindow?.loopStartMs?.coerceIn(0L, (clampedEndMs - 1L).coerceAtLeast(0L))
-        if (loopStartMs != null) {
-            seekTo(loopStartMs)
-        } else {
-            pause()
-            seekTo(clampedEndMs)
-        }
+        val audio = handles?.audio ?: return
+        val end = (previewWindow?.endMs ?: audio.durationMs).coerceIn(0L, audio.durationMs)
+        val start = previewWindow?.loopStartMs?.coerceIn(0L, (end - 1L).coerceAtLeast(0L))
+        val repeat = start != null && previewWindow?.endMs != null
+        audio.configure(start ?: 0, end) { repeat }
     }
 
     private fun releaseHandles() {
         handles?.let {
-            if (syncHandle != 0) {
-                BASS.BASS_ChannelRemoveSync(it.stream, syncHandle)
-                syncHandle = 0
-            }
-            BASS.BASS_StreamFree(it.stream)
+            it.audio.close()
             BASSMIDI.BASS_MIDI_FontFree(it.font)
         }
-        syncProc = null
         handles = null
     }
 }

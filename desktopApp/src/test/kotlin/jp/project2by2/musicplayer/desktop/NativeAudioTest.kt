@@ -109,7 +109,7 @@ class NativeAudioTest {
 }
 
 // Tiny generated sine-wave SoundFont. No third-party sample or SoundFont download is needed.
-private fun testSoundFont(): ByteArray {
+internal fun testSoundFont(releaseTimecents: Int = -12000): ByteArray {
     fun text(s: String) = s.toByteArray(Charsets.US_ASCII)
     fun words(vararg values: Int) = ByteArrayOutputStream().apply {
         values.forEach { write(it and 255); write((it ushr 8) and 255) }
@@ -127,7 +127,7 @@ private fun testSoundFont(): ByteArray {
         chunk("phdr", name("Sine") + words(0, 0, 0) + dwords(0,0,0) + name("EOP") + words(0,0,1) + dwords(0,0,0)),
         chunk("pbag", words(0,0,1,0)), chunk("pmod", ByteArray(10)), chunk("pgen", words(41,0,0,0)),
         chunk("inst", name("Sine") + words(0) + name("EOI") + words(1)),
-        chunk("ibag", words(0,0,2,0)), chunk("imod", ByteArray(10)), chunk("igen", words(54,1,53,0,0,0)),
+        chunk("ibag", words(0,0,3,0)), chunk("imod", ByteArray(10)), chunk("igen", words(38,releaseTimecents,54,1,53,0,0,0)),
         chunk("shdr", name("Sine") + dwords(0,512,0,512,44100) + byteArrayOf(60,0) + words(0,1) + name("EOS") + ByteArray(26)))
     return chunk("RIFF", text("sfbk") + info + sdta + pdta)
 }

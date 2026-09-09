@@ -16,6 +16,9 @@ kotlin {
         compilerOptions.jvmTarget.set(JvmTarget.JVM_11)
     }
     sourceSets {
+        // Platform-neutral JVM audio lifecycle code, shared by JNI (Android) and JNA (desktop).
+        androidMain { kotlin.srcDir("src/jvmMain/kotlin") }
+        named("desktopMain") { kotlin.srcDir("src/jvmMain/kotlin") }
         commonMain.dependencies {
             implementation(libs.compose.runtime)
             implementation(libs.compose.foundation)

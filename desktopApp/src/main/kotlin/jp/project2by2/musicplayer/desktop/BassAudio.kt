@@ -5,6 +5,8 @@ import com.sun.jna.Library
 import com.sun.jna.Memory
 import com.sun.jna.Native
 import com.sun.jna.Pointer
+import com.sun.jna.ptr.FloatByReference
+import jp.project2by2.musicplayer.audio.MidiLoopStream
 import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -30,6 +32,8 @@ internal interface BassCore : Library {
     fun BASS_Free(): Boolean
     fun BASS_ErrorGetCode(): Int
     fun BASS_StreamFree(handle: Int): Boolean
+    fun BASS_StreamCreate(frequency: Int, channels: Int, flags: Int, callback: PcmStreamProc, user: Pointer?): Int
+    fun BASS_ChannelLock(handle: Int, locked: Boolean): Boolean
     fun BASS_ChannelPlay(handle: Int, restart: Boolean): Boolean
     fun BASS_ChannelPause(handle: Int): Boolean
     fun BASS_ChannelGetPosition(handle: Int, mode: Int): Long
@@ -39,6 +43,7 @@ internal interface BassCore : Library {
     fun BASS_ChannelSetPosition(handle: Int, position: Long, mode: Int): Boolean
     fun BASS_ChannelIsActive(handle: Int): Int
     fun BASS_ChannelSetAttribute(handle: Int, attribute: Int, value: Float): Boolean
+    fun BASS_ChannelGetAttribute(handle: Int, attribute: Int, value: FloatByReference): Boolean
     fun BASS_ChannelFlags(handle: Int, flags: Int, mask: Int): Int
     fun BASS_ChannelGetData(handle: Int, buffer: Pointer, length: Int): Int
     fun BASS_ChannelSetSync(handle: Int, type: Int, parameter: Long, callback: EndSync, user: Pointer?): Int
@@ -54,6 +59,17 @@ internal interface BassMidi : Library {
     fun BASS_MIDI_FontInit(file: Pointer, flags: Int): Int
     fun BASS_MIDI_FontFree(font: Int): Boolean
     fun BASS_MIDI_StreamSetFonts(stream: Int, fonts: Pointer, count: Int): Boolean
+    fun BASS_MIDI_StreamEvent(stream: Int, channel: Int, event: Int, parameter: Int): Boolean
+    fun BASS_MIDI_StreamSetFilter(stream: Int, seeking: Boolean, callback: MidiFilter, user: Pointer?): Boolean
+    fun BASS_MIDI_StreamLoadSamples(stream: Int): Boolean
+}
+
+internal fun interface MidiFilter : Callback {
+    fun invoke(stream: Int, track: Int, event: Pointer, seeking: Boolean, user: Pointer?): Boolean
+}
+
+internal fun interface PcmStreamProc : Callback {
+    fun invoke(handle: Int, buffer: Pointer, length: Int, user: Pointer?): Int
 }
 
 data class AudioPosition(val positionMs: Long = 0, val durationMs: Long = 0, val playing: Boolean = false)
@@ -64,7 +80,7 @@ class BassAudio(private val device: Int = -1) : AutoCloseable {
     private var midi: BassMidi? = null
     private var stream = 0
     private var font = 0
-    private var endSync: EndSync? = null // Keep the native callback alive until StreamFree returns.
+    private var audio: MidiLoopStream? = null
     private val looping = AtomicBoolean(false)
     private var maxVoices = 40
     private var effectsEnabled = false
@@ -100,8 +116,15 @@ class BassAudio(private val device: Int = -1) : AutoCloseable {
         val next = pathMemory(file).use { api.BASS_MIDI_FontInit(it, unicodeFlag) }
         check(next != 0) { failure("SoundFontを読み込めません") }
         try {
-            if (stream != 0) attachFont(stream, next)
+            audio?.setFont(next)
         } catch (e: Exception) {
+            try {
+                if (font != 0) audio?.setFont(font)
+            } catch (restore: Exception) {
+                // Stop both decoders before freeing a font that one of them may still use.
+                unload()
+                e.addSuppressed(restore)
+            }
             api.BASS_MIDI_FontFree(next)
             throw e
         }
@@ -110,38 +133,23 @@ class BassAudio(private val device: Int = -1) : AutoCloseable {
         if (previous != 0) api.BASS_MIDI_FontFree(previous)
     }
 
-    private fun attachFont(target: Int, soundFont: Int) {
-        // BASS_MIDI_FONT: DWORD font, int preset, int bank (three 32-bit fields).
-        Memory(12).use {
-            it.setInt(0, soundFont); it.setInt(4, -1); it.setInt(8, 0)
-            check(midi!!.BASS_MIDI_StreamSetFonts(target, it, 1)) { failure("SoundFontを割り当てられません") }
-        }
-    }
-
     @Synchronized
     fun load(file: File, loopStartTick: Int?, volume: Float) {
         initialize()
         check(font != 0) { "設定からSoundFont (.sf2 / .sf3 / .sfz) を選択してください" }
         val bass = core!!
-        val next = pathMemory(file).use {
-            midi!!.BASS_MIDI_StreamCreateFile(0, it, 0, 0, unicodeFlag or 0x8000, 44100)
-        }
-        check(next != 0) { failure("MIDIを開けません") }
-        val nextSync = EndSync { _, channel, _, _ ->
-            if (looping.get()) bass.BASS_ChannelSetPosition(channel, (loopStartTick ?: 0).toLong(), 2)
-        }
+        val next = createDesktopLoopStream(bass, midi!!, file, font)
         try {
-            attachFont(next, font)
             applySynthSettings(next)
-            check(bass.BASS_ChannelSetAttribute(next, 2, volume.coerceIn(0f, 1f))) { failure("音量を設定できません") }
-            check(bass.BASS_ChannelSetSync(next, 2 or 0x40000000, 0, nextSync, null) != 0) { failure("ループを設定できません") }
+            next.configureTicks((loopStartTick ?: 0).toLong(), next.durationTicks) { looping.get() }
+            check(bass.BASS_ChannelSetAttribute(next.output, 2, volume.coerceIn(0f, 1f))) { failure("音量を設定できません") }
         } catch (e: Exception) {
-            bass.BASS_StreamFree(next)
+            next.close()
             throw e
         }
-        if (stream != 0) bass.BASS_StreamFree(stream)
-        stream = next
-        endSync = nextSync
+        audio?.close()
+        audio = next
+        stream = next.output
     }
 
     @Synchronized fun play() {
@@ -153,8 +161,7 @@ class BassAudio(private val device: Int = -1) : AutoCloseable {
     @Synchronized fun pause() { if (stream != 0) check(core!!.BASS_ChannelPause(stream)) { failure("一時停止できません") } }
     @Synchronized fun seek(ms: Long) {
         if (stream != 0) {
-            val pos = core!!.BASS_ChannelSeconds2Bytes(stream, ms.coerceAtLeast(0) / 1000.0)
-            check(core!!.BASS_ChannelSetPosition(stream, pos, 0)) { failure("シークできません") }
+            audio!!.seek(ms)
         }
     }
     @Synchronized fun volume(value: Float) {
@@ -165,28 +172,26 @@ class BassAudio(private val device: Int = -1) : AutoCloseable {
         maxVoices = voices.coerceIn(1, 1000)
         effectsEnabled = effects
         reverbStrength = reverb.coerceIn(0f, 3f)
-        if (stream != 0) applySynthSettings(stream)
+        audio?.let(::applySynthSettings)
     }
-    private fun applySynthSettings(handle: Int) {
-        val bass = core!!
-        check(bass.BASS_ChannelSetAttribute(handle, 0x12003, maxVoices.toFloat())) { failure("最大発音数を設定できません") }
-        check(bass.BASS_ChannelSetAttribute(handle, 0x12009, reverbStrength)) { failure("リバーブを設定できません") }
-        check(bass.BASS_ChannelFlags(handle, if (effectsEnabled) 0 else 0x2000, 0x2000) != -1) { failure("エフェクトを設定できません") }
+    private fun applySynthSettings(audio: MidiLoopStream) {
+        audio.setAttribute(0x12003, maxVoices.toFloat())
+        audio.setAttribute(0x12009, reverbStrength)
+        audio.setFlags(if (effectsEnabled) 0 else 0x2000, 0x2000)
     }
     @Synchronized fun unload() {
-        if (stream != 0) core?.BASS_StreamFree(stream)
-        stream = 0; endSync = null
+        audio?.close()
+        audio = null; stream = 0
     }
     @Synchronized fun position(): AudioPosition {
         if (stream == 0) return AudioPosition()
         val bass = core!!
-        fun millis(bytes: Long) = if (bytes < 0) 0L else (bass.BASS_ChannelBytes2Seconds(stream, bytes) * 1000).toLong()
-        return AudioPosition(millis(bass.BASS_ChannelGetPosition(stream, 0)), millis(bass.BASS_ChannelGetLength(stream, 0)), bass.BASS_ChannelIsActive(stream) == 1)
+        audio!!.failure?.let { throw IllegalStateException("MIDIの音声生成に失敗しました", it) }
+        return AudioPosition(audio!!.positionMs(), audio!!.durationMs, bass.BASS_ChannelIsActive(stream) == 1)
     }
     @Synchronized override fun close() {
         looping.set(false)
-        if (stream != 0) core?.BASS_StreamFree(stream)
-        stream = 0; endSync = null
+        unload()
         if (font != 0) midi?.BASS_MIDI_FontFree(font)
         font = 0
         core?.BASS_Free()
