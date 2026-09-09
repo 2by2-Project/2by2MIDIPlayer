@@ -27,7 +27,26 @@ import java.io.File
 @Composable
 fun DesktopApp(controller: DesktopController) {
     val state by controller.state.collectAsState()
-    jp.project2by2.musicplayer.ui.settings.SoundFontLoadingDialog(state.soundFontLoading)
+    var recommendedFonts by remember { mutableStateOf(false) }
+    var checkedInitialFont by remember { mutableStateOf(false) }
+    val windowsFont = remember { windowsSoundFont() }
+    LaunchedEffect(state.audioReady, state.soundFont) {
+        if (state.audioReady && !checkedInitialFont) {
+            checkedInitialFont = true
+            if (state.soundFont == null) recommendedFonts = true
+        }
+    }
+    jp.project2by2.musicplayer.ui.settings.SoundFontLoadingDialog(state.soundFontLoading && !recommendedFonts)
+    if (recommendedFonts) jp.project2by2.musicplayer.ui.settings.RecommendedSoundFontDialog(
+        onDismiss = { recommendedFonts = false },
+        isDownloading = state.soundFontLoading,
+        downloadProgress = state.soundFontDownloadProgress,
+        onDownload = { option -> controller.downloadFont(option) { success -> if (success) recommendedFonts = false } },
+        onUseWindowsSoundFont = windowsFont?.let { file -> {
+            recommendedFonts = false
+            controller.setFont(file)
+        } },
+    )
     val artworkLoader = remember { DesktopArtwork() }
     val currentArtwork = rememberDesktopArtwork(artworkLoader,
         state.current?.let { controller.midiFiles.resolve(it).parentFile })
@@ -95,6 +114,7 @@ fun DesktopApp(controller: DesktopController) {
                 maxVoices = state.maxVoices, effectsEnabled = state.effectsEnabled, reverbStrength = state.reverbStrength,
                 loopEnabled = state.loop, shuffleEnabled = state.shuffle, onBack = { settings = false },
                 onPickSoundFont = { chooseFiles(soundFont = true) { it.firstOrNull()?.let(controller::setFont) } },
+                onRecommendedSoundFonts = { recommendedFonts = true },
                 onMaxVoicesChange = controller::setMaxVoices, onEffectsChange = controller::setEffectsEnabled,
                 onReverbChange = controller::setReverbStrength,
                 onLoopChange = { if (it != state.loop) controller.toggleLoop() },

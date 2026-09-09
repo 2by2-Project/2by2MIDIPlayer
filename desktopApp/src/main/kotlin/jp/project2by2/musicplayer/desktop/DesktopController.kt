@@ -28,6 +28,7 @@ data class DesktopState(
     val audio: AudioPosition = AudioPosition(),
     val soundFont: String? = null,
     val soundFontLoading: Boolean = false,
+    val soundFontDownloadProgress: Float? = null,
     val volume: Float = 0.7f,
     val loop: Boolean = false,
     val shuffle: Boolean = false,
@@ -193,32 +194,56 @@ class DesktopController(
         engine.seek(ms.coerceIn(0, mutable.value.audio.durationMs.coerceAtLeast(0)))
         mutable.update { it.copy(audio = engine.position()) }
     }
-    fun setFont(file: File) {
+    fun setFont(file: File) = importFont { file }
+
+    fun downloadFont(option: jp.project2by2.musicplayer.ui.settings.SoundFontOption, onComplete: (Boolean) -> Unit) =
+        importFont(download = true, onComplete = onComplete) {
+            val context = currentCoroutineContext()
+            val directory = File(System.getProperty("user.home"), ".2by2MusicPlayer/soundfonts/${UUID.randomUUID()}")
+            try {
+                val downloaded = jp.project2by2.musicplayer.soundfont.SoundFontDownloader.download(option.url, directory,
+                    checkpoint = { context.ensureActive() },
+                    onProgress = { progress -> mutable.update { it.copy(soundFontDownloadProgress = progress) } })
+                val named = File(directory, option.url.substringAfterLast('/'))
+                try { Files.move(downloaded.toPath(), named.toPath()); named }
+                catch (failure: Exception) { downloaded.delete(); throw failure }
+            } catch (failure: Exception) { directory.delete(); throw failure }
+        }
+
+    private fun importFont(download: Boolean = false, onComplete: (Boolean) -> Unit = {}, source: suspend () -> File) {
         if (closed || !fontImportActive.compareAndSet(false, true)) return
         scope.launch {
-            mutable.update { it.copy(soundFontLoading = true) }
+            mutable.update { it.copy(soundFontLoading = true, soundFontDownloadProgress = null, error = null) }
             var candidate: PreparedSoundFont? = null
+            var sourceFile: File? = null
+            var installed = false
+            var success = false
             try {
                 // Conversion runs independently from the serial BASS device thread.
                 withContext(Dispatchers.IO) {
                     val context = currentCoroutineContext()
-                    candidate = SoundFontFiles.prepare(file, fontCache) { context.ensureActive() }
+                    sourceFile = source()
+                    candidate = SoundFontFiles.prepare(sourceFile!!, fontCache) { context.ensureActive() }
                 }
                 ensureActive()
                 engine.setSoundFont(candidate!!.file)
+                installed = true
                 val old = preparedFont
                 preparedFont = candidate
                 candidate = null
                 old?.close()
                 // Persist the original DLS path: rebuild a deleted temporary SF2 on restart.
-                mutable.update { it.copy(soundFont = file.canonicalPath, audioReady = true) }
+                mutable.update { it.copy(soundFont = sourceFile!!.canonicalPath, audioReady = true) }
                 save()
+                success = true
             } catch (e: CancellationException) { throw e }
             catch (e: Exception) { mutable.update { it.copy(error = e.message ?: "SoundFont import failed") } }
             finally {
                 candidate?.close()
+                if (download && !installed) sourceFile?.let { it.delete(); it.parentFile.delete() }
                 fontImportActive.set(false)
                 mutable.update { it.copy(soundFontLoading = false) }
+                onComplete(success)
             }
         }
     }

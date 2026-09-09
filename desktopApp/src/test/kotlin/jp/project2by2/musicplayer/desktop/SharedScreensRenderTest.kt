@@ -71,6 +71,16 @@ class SharedScreensRenderTest {
         SettingsScreen("Example.sf2", true, 40, true, 1f, true, false,
             {}, {}, onMaxVoicesChange = {}, onEffectsChange = {}, onReverbChange = {}, onLoopChange = {}, onShuffleChange = {})
     }
+    @Test fun recommendedFontsWithAndWithoutWindowsCard() {
+        val previous = java.util.Locale.getDefault()
+        try {
+            java.util.Locale.setDefault(java.util.Locale.JAPANESE)
+            for (windows in listOf(false, true)) render("recommended-fonts-$windows") {
+                jp.project2by2.musicplayer.ui.settings.RecommendedSoundFontDialog(
+                    onDismiss = {}, onDownload = {}, onUseWindowsSoundFont = if (windows) ({}) else null)
+            }
+        } finally { java.util.Locale.setDefault(previous) }
+    }
     @Test fun nowPlaying() = render("now-playing") {
         val data = PianoRollData(listOf(PianoRollNote(60, 0, 2000, 0, 1920, 100, 0, 0)), 8000,
             listOf(0, 2000, 4000, 6000, 8000), listOf(0, 1920, 3840, 5760, 7680), 7680,

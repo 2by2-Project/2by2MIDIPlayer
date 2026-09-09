@@ -3,6 +3,21 @@ import androidx.compose.runtime.Composable
 import java.util.Locale
 @Composable actual fun playerString(key: String): String = (if (Locale.getDefault().language == "ja") japanese else english)[key] ?: key
 private val english = mapOf(
+    "soundfont_dialog_title" to "Choose SoundFont",
+    "soundfont_dialog_message" to "You need Soundfont for playing MIDI file. You can choose recommended soundfont from below.\n\n* The large soundfont takes several time for downloading.",
+    "soundfont_fluidr3_gm_gs" to "FluidR3 GM-GS",
+    "soundfont_general_user_gs" to "General User GS",
+    "soundfont_sgm_v2_01" to "SGM-V2.01",
+    "soundfont_download_button" to "Download and Set",
+    "soundfont_dialog_dismiss" to "Later",
+    "soundfont_downloading" to "Downloading…",
+    "soundfont_download_success" to "SoundFont set successfully!",
+    "soundfont_download_failed" to "Failed to download SoundFont",
+    "soundfont_size_small" to "Small",
+    "soundfont_size_medium" to "Medium",
+    "soundfont_size_large" to "Large",
+    "soundfont_windows_title" to "Use the standard sound bank included with Windows",
+    "soundfont_windows_action" to "Tap to load",
     "info_no_file_selected" to "No file selected",
     "action_add_to_playlist" to "Add to playlist",
     "action_create" to "Create",
@@ -52,6 +67,18 @@ private val english = mapOf(
     "view_list" to "List"
 )
 private val japanese = mapOf(
+    "soundfont_dialog_title" to "サウンドフォントを選択",
+    "soundfont_dialog_message" to "MIDI音楽を再生するには、サウンドフォントが必要です。以下のおすすめサウンドフォントよりお選びいただけます。\n\n※高品質なサウンドフォントは、ダウンロードに時間がかかります。",
+    "soundfont_download_button" to "ダウンロードして設定",
+    "soundfont_dialog_dismiss" to "後で",
+    "soundfont_downloading" to "ダウンロードしています...",
+    "soundfont_download_success" to "サウンドフォントの設定が完了しました",
+    "soundfont_download_failed" to "サウンドフォントをダウンロードできませんでした",
+    "soundfont_size_small" to "軽量",
+    "soundfont_size_medium" to "中程度",
+    "soundfont_size_large" to "高品質",
+    "soundfont_windows_title" to "Windows に付属している標準音源を利用できます",
+    "soundfont_windows_action" to "タップして読み込み",
     "info_no_file_selected" to "ファイルが選択されていません",
     "action_add_to_playlist" to "プレイリストに追加",
     "action_create" to "作成",
