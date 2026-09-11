@@ -285,6 +285,7 @@ private fun MidiFileRow(
                     shape = RoundedCornerShape(8.dp),
                     clip = false
                 )
+                .desktopContextClick(enabled = !showReorderHandle && !isRemoving) { showActions = true }
                 .combinedClickable(
                     onClick = { if (!isRemoving) onClick() },
                     onLongClick = {

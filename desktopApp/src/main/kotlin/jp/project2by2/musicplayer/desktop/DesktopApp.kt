@@ -65,6 +65,8 @@ fun DesktopApp(controller: DesktopController) {
     var playlistActions by remember { mutableStateOf<DesktopPlaylist?>(null) }
     var renamePlaylist by remember { mutableStateOf<DesktopPlaylist?>(null) }
     var deletePlaylist by remember { mutableStateOf<DesktopPlaylist?>(null) }
+    var folderActions by remember { mutableStateOf<LibraryFolder?>(null) }
+    var renameFolder by remember { mutableStateOf<LibraryFolder?>(null) }
     var addTrack by remember { mutableStateOf<String?>(null) }
     var editing by remember { mutableStateOf(false) }
     val playlist = state.playlists.find { it.id == playlistId }
@@ -102,7 +104,7 @@ fun DesktopApp(controller: DesktopController) {
             else -> backLibrary()
         }
     }
-    Box(Modifier.fillMaxSize()) {
+    Box(Modifier.fillMaxSize().desktopFileDropTarget(controller)) {
         ResponsivePlayerLayout(
             showSettings = settings,
             showPlayer = nowPlaying && state.current != null,
@@ -135,8 +137,8 @@ fun DesktopApp(controller: DesktopController) {
                     },
                     actions = {
                         if (!playlistsSelected) {
+                            IconButton(onClick = { chooseFiles(result = controller::openFiles) }) { Icon(Icons.Default.AudioFile, "MIDIファイルを開いて再生") }
                             IconButton(onClick = { chooseFiles(directory = true, result = controller::importFiles) }) { Icon(Icons.Default.CreateNewFolder, "フォルダを追加") }
-                            IconButton(onClick = { chooseFiles(result = controller::importFiles) }) { Icon(Icons.Default.NoteAdd, "MIDIファイルを追加") }
                         }
                         if (playlist != null) IconButton(onClick = { editing = !editing }) { Icon(if (editing) Icons.Default.Done else Icons.Default.Edit, "編集") }
                         if (!playlistsSelected) IconButton(onClick = { search = !search; query = "" }) {
@@ -171,7 +173,8 @@ fun DesktopApp(controller: DesktopController) {
                         !playlistsSelected && folderKey == null && !demos && (!search || query.isBlank()) -> BrowseScreen(
                             folders, cover = { folder -> rememberDesktopArtwork(artworkLoader, File(folder.key)) },
                             onFolderClick = { folderKey = it.key }, onDemoMusicClick = { demos = true; controller.loadDemos() },
-                            viewMode = viewMode, onViewModeChange = { viewMode = it })
+                            viewMode = viewMode, onViewModeChange = { viewMode = it },
+                            onFolderActions = { folderActions = it })
                         else -> TrackList(tracks,
                             listContext = if (playlistsSelected) MidiListContext.Playlist else if (search) MidiListContext.Search else MidiListContext.Browse,
                             isLoading = state.busy, isEditMode = editing && !search, selectedUri = state.current,
@@ -217,6 +220,18 @@ fun DesktopApp(controller: DesktopController) {
     }
     shareTrack?.let { path ->
         DesktopShareDialog(file = controller.midiFiles.resolve(path), onDismiss = { shareTrack = null })
+    }
+    folderActions?.let { folder ->
+        FolderActionsDialog(folder.name, folder.key, { folderActions = null },
+            onOpen = { folderActions = null; controller.openFolder(folder.key) },
+            onRename = { folderActions = null; renameFolder = folder },
+            onRemove = { folderActions = null; controller.removeLibraryFolder(folder.key) })
+    }
+    renameFolder?.let { folder ->
+        RenameFolderDialog(folder.name, { renameFolder = null }) { name ->
+            controller.renameFolder(folder.key, name)
+            renameFolder = null
+        }
     }
     if (createPlaylist) CreatePlaylistDialog({ createPlaylist = false }, { controller.createPlaylist(it); createPlaylist = false })
     playlistActions?.let { selected -> PlaylistActionsDialog(selected.name, { playlistActions = null },

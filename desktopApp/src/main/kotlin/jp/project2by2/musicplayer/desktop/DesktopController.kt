@@ -142,6 +142,69 @@ class DesktopController(
     }
     private fun save() = store.save(mutable.value)
     fun dismissError() { mutable.update { it.copy(error = null) } }
+    fun reportError(failure: Exception) { mutable.update { it.copy(error = failure.message ?: failure.javaClass.simpleName) } }
+    fun handleDroppedFiles(files: List<File>): Boolean {
+        val directories = files.filter { it.isDirectory }
+        val midi = files.filter { it.isFile && it.extension.lowercase() in listOf("mid", "midi") }
+        if (midi.isNotEmpty()) openFiles(midi)
+        if (directories.isNotEmpty()) importFiles(directories)
+        return midi.isNotEmpty() || directories.isNotEmpty()
+    }
+    fun openFolder(path: String) = operation {
+        val folder = File(path)
+        require(folder.isDirectory) { "フォルダが見つかりません: $path" }
+        java.awt.Desktop.getDesktop().open(folder)
+    }
+    fun removeLibraryFolder(path: String) = operation {
+        val folder = File(path).canonicalFile
+        mutable.update { state -> state.copy(files = state.files.filterNot { File(it).parentFile?.canonicalFile == folder }) }
+        save()
+    }
+    fun renameFolder(path: String, name: String) = operation {
+        val source = File(path).canonicalFile.toPath()
+        val trimmed = name.trim()
+        require(trimmed.isNotEmpty() && trimmed !in listOf(".", "..") &&
+            trimmed.none { it in "<>:\"/\\|?*" || it.code < 32 } && !trimmed.endsWith('.')) { "有効なフォルダ名を入力してください" }
+        val parent = requireNotNull(source.parent) { "ルートフォルダの名前は変更できません" }
+        val target = parent.resolve(trimmed).normalize()
+        require(target.parent == parent) { "同じ親フォルダ内の名前を指定してください" }
+        require(Files.isDirectory(source)) { "フォルダが見つかりません: $path" }
+        if (source.fileName.toString() == trimmed) return@operation
+        require(!Files.exists(target) || Files.isSameFile(source, target)) { "同じ名前のファイルまたはフォルダが既にあります" }
+        fun remap(value: String): String {
+            if (DesktopMidiFiles.isDemo(value)) return value
+            val file = File(value).toPath().toAbsolutePath().normalize()
+            return if (file.startsWith(source)) target.resolve(source.relativize(file)).toString() else value
+        }
+        val active = loaded?.takeIf { remap(it) != it }
+        val position = active?.let { engine.position() }
+        if (active != null) { engine.unload(); loaded = null }
+        try {
+            // Both absolute paths are validated above; move never replaces an existing directory.
+            Files.move(source, target)
+            queue = queue.map(::remap)
+            mutable.update { state -> state.copy(
+                files = state.files.map(::remap),
+                playlists = state.playlists.map { it.copy(paths = it.paths.map(::remap)) },
+                current = state.current?.let(::remap),
+                soundFont = state.soundFont?.let(::remap),
+                metadata = state.metadata.mapKeys { remap(it.key) },
+            ) }
+            save()
+        } finally {
+            // Windows requires releasing the MIDI handle before moving its parent directory.
+            // Restore the same playback position on success and after a failed move.
+            if (position != null) {
+                val state = mutable.value
+                val current = requireNotNull(state.current)
+                engine.load(midiFiles.resolve(current), state.index?.loopPointTick, state.volume)
+                loaded = current
+                engine.seek(position.positionMs)
+                if (position.playing) engine.play()
+                mutable.update { it.copy(audio = engine.position()) }
+            }
+        }
+    }
     fun importFiles(files: List<File>) = operation {
         mutable.update { it.copy(busy = true) }
         val found = files.flatMap { file ->
@@ -153,6 +216,14 @@ class DesktopController(
         mutable.update { it.copy(files = (it.files + found).distinct().sortedBy { path -> File(path).name.lowercase() }) }
         refreshMetadata(found)
         save()
+    }
+    fun openFiles(files: List<File>) = operation {
+        val paths = files.map { it.canonicalPath }.distinct()
+        val first = paths.firstOrNull() ?: return@operation
+        // Opening files creates a temporary playback queue without changing the saved library.
+        queue = paths
+        refreshMetadata(paths)
+        loadTrack(first, autoplay = true)
     }
     fun select(path: String, playbackQueue: List<String>) = operation {
         queue = playbackQueue.toList()

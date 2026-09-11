@@ -37,7 +37,8 @@ fun BrowseScreen(
     onFolderClick: (LibraryFolder) -> Unit,
     onDemoMusicClick: (() -> Unit)?,
     viewMode: FolderViewMode,
-    onViewModeChange: (FolderViewMode) -> Unit
+    onViewModeChange: (FolderViewMode) -> Unit,
+    onFolderActions: ((LibraryFolder) -> Unit)? = null
 ) {
     var headerVisible by rememberSaveable { mutableStateOf(true) }
 
@@ -119,7 +120,8 @@ fun BrowseScreen(
                         FolderCard(
                             folder = folder,
                             cover = cover,
-                            onClick = { onFolderClick(folder) }
+                            onClick = { onFolderClick(folder) },
+                            onActions = onFolderActions?.let { { it(folder) } }
                         )
                     }
                 }
@@ -138,7 +140,8 @@ fun BrowseScreen(
                 listState = listState,
                 animationToken = animationToken,
                 onFolderClick = onFolderClick,
-                onDemoMusicClick = onDemoMusicClick
+                onDemoMusicClick = onDemoMusicClick,
+                onFolderActions = onFolderActions
             )
         }
     }
@@ -151,7 +154,8 @@ private fun FolderList(
     listState: LazyListState = rememberLazyListState(),
     animationToken: Long = 0L,
     onFolderClick: (LibraryFolder) -> Unit,
-    onDemoMusicClick: (() -> Unit)?
+    onDemoMusicClick: (() -> Unit)?,
+    onFolderActions: ((LibraryFolder) -> Unit)?
 ) {
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -167,7 +171,8 @@ private fun FolderList(
                 FolderListRow(
                     folder = folder,
                     cover = cover,
-                    onClick = { onFolderClick(folder) }
+                    onClick = { onFolderClick(folder) },
+                    onActions = onFolderActions?.let { { it(folder) } }
                 )
             }
         }
@@ -184,12 +189,14 @@ private fun FolderList(
 private fun FolderListRow(
     folder: LibraryFolder,
     cover: @Composable (LibraryFolder) -> ImageBitmap? = { null },
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    onActions: (() -> Unit)?
 ) {
     val coverBitmap = cover(folder)
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .desktopContextClick(enabled = onActions != null) { onActions?.invoke() }
             .clickable(onClick = onClick)
             .padding(horizontal = 16.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically
@@ -233,12 +240,14 @@ private fun FolderListRow(
 private fun FolderCard(
     folder: LibraryFolder,
     cover: @Composable (LibraryFolder) -> ImageBitmap? = { null },
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    onActions: (() -> Unit)?
 ) {
     val coverBitmap = cover(folder)
     Card(
         onClick = onClick,
         modifier = Modifier.fillMaxWidth()
+            .desktopContextClick(enabled = onActions != null) { onActions?.invoke() }
     ) {
         Column(
             modifier = Modifier.fillMaxWidth()

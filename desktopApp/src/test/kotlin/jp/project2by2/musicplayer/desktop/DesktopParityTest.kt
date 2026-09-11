@@ -10,6 +10,47 @@ import kotlinx.coroutines.flow.first
 import kotlin.test.*
 
 class DesktopParityTest {
+    @Test fun openingFilesPlaysImmediatelyWithoutChangingSavedLibrary() = runBlocking<Unit> {
+        val temp = Files.createTempDirectory("open-midi-controller").toFile()
+        val font = File(temp, "test.dls").apply { writeBytes(testDls(percussion = false)) }
+        val store = DesktopStore(File(temp, "settings.properties"))
+        val library = DesktopMidiFiles(File(System.getProperty("midi.demo.dir")))
+        val files = library.demos().take(3).map(library::resolve)
+        val initial = DesktopState(files = listOf(files[0].canonicalPath),
+            playlists = listOf(DesktopPlaylist("saved", "Saved", listOf(files[0].canonicalPath))))
+        store.save(initial)
+        val cache = File(temp, "cache")
+        try {
+            DesktopController(store, library, BassAudio(device = 0), cache).use { player ->
+                suspend fun awaitState(predicate: (DesktopState) -> Boolean) =
+                    withTimeout(30_000) { player.state.first(predicate) }
+                assertNull(awaitState { it.audioReady || it.error != null }.error)
+                player.setFont(font)
+                assertNull(awaitState { it.soundFont != null && !it.soundFontLoading || it.error != null }.error)
+                player.select(files[0].canonicalPath, listOf(files[0].canonicalPath)).join()
+                player.openFiles(files.drop(1)).join()
+                val opened = awaitState { it.audio.playing || it.error != null }
+                assertNull(opened.error)
+                assertEquals(files[1].canonicalPath, opened.current)
+                assertEquals(initial.files, opened.files)
+                assertEquals(initial.playlists, opened.playlists)
+                player.next(1).join()
+                assertEquals(files[2].canonicalPath, player.state.value.current)
+                player.openFiles(emptyList()).join()
+                assertEquals(files[2].canonicalPath, player.state.value.current)
+                // A later settings save must not persist the temporary queue as library entries.
+                player.setVolume(0.5f).join()
+                assertEquals(initial.files, store.load().files)
+                assertEquals(initial.playlists, store.load().playlists)
+            }
+        } finally {
+            cache.listFiles()?.forEach { it.delete() }
+            cache.delete()
+            temp.listFiles()?.forEach { it.delete() }
+            temp.delete()
+        }
+    }
+
     @Test fun demoCatalogCanOpenAndPersistInPlaylistWithoutAudioOutput() = runBlocking<Unit> {
         val temp = Files.createTempDirectory("demo-controller").toFile()
         val library = DesktopMidiFiles(File(System.getProperty("midi.demo.dir")))
