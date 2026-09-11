@@ -15,7 +15,7 @@ java {
 dependencies {
     implementation(project(":shared"))
     implementation(compose.desktop.currentOs)
-    implementation(libs.compose.desktop.material3)
+    implementation(libs.compose.material3)
     implementation(libs.compose.material.icons)
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-swing:1.10.2")
     implementation("net.java.dev.jna:jna:5.17.0")

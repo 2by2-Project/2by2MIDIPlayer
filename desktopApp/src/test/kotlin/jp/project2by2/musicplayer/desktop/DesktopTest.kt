@@ -1,6 +1,7 @@
 package jp.project2by2.musicplayer.desktop
 
 import java.nio.file.Files
+import jp.project2by2.musicplayer.platform.Platform
 import kotlin.test.*
 
 class DesktopTest {
@@ -14,10 +15,10 @@ class DesktopTest {
         assertTrue(NoteViewport(emptyList()).visible(0, 100).isEmpty())
     }
     @Test fun platformSelectionRejectsWrongArchitecture() {
-        assertEquals(NativePlatform.Windows, NativePlatform.detect("Windows 11", "amd64"))
-        assertEquals(NativePlatform.Linux, NativePlatform.detect("Linux", "x86_64"))
-        assertFailsWith<IllegalArgumentException> { NativePlatform.detect("Linux", "aarch64") }
-        assertFailsWith<IllegalStateException> { NativePlatform.detect("Mac OS X", "x86_64") }
+        assertEquals(NativePlatform.Windows, NativePlatform.detect(Platform.Windows, "amd64"))
+        assertEquals(NativePlatform.Linux, NativePlatform.detect(Platform.Linux, "x86_64"))
+        assertFailsWith<IllegalArgumentException> { NativePlatform.detect(Platform.Linux, "aarch64") }
+        assertFailsWith<IllegalStateException> { NativePlatform.detect(Platform.Android, "x86_64") }
     }
     @Test fun settingsAndPlaylistsSurviveRestartWithUnicodePaths() {
         val file = Files.createTempDirectory("desktop-store-test").resolve("settings.properties").toFile()

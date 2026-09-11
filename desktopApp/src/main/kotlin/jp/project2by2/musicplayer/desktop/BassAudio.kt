@@ -7,6 +7,8 @@ import com.sun.jna.Native
 import com.sun.jna.Pointer
 import com.sun.jna.ptr.FloatByReference
 import jp.project2by2.musicplayer.audio.MidiLoopStream
+import jp.project2by2.musicplayer.platform.Platform
+import jp.project2by2.musicplayer.platform.currentPlatform
 import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -15,12 +17,12 @@ enum class NativePlatform(val directory: String, val core: String, val midi: Str
     Linux("linux-x64", "libbass.so", "libbassmidi.so");
 
     companion object {
-        fun detect(os: String = System.getProperty("os.name"), arch: String = System.getProperty("os.arch")): NativePlatform {
+        fun detect(platform: Platform = currentPlatform, arch: String = System.getProperty("os.arch")): NativePlatform {
             require(arch.lowercase() in listOf("amd64", "x86_64")) { "対応するCPUはWindows/Linux x64です: $arch" }
-            return when {
-                os.startsWith("Windows", true) -> Windows
-                os.startsWith("Linux", true) -> Linux
-                else -> error("対応するOSはWindows/Linuxです: $os")
+            return when (platform) {
+                Platform.Windows -> Windows
+                Platform.Linux -> Linux
+                Platform.Android -> error("対応するOSはWindows/Linuxです: $platform")
             }
         }
     }
@@ -86,7 +88,7 @@ class BassAudio(private val device: Int = -1) : AutoCloseable {
     private var effectsEnabled = false
     private var reverbStrength = 1f
     private val platform = NativePlatform.detect()
-    private val unicodeFlag get() = if (platform == NativePlatform.Windows) Int.MIN_VALUE else 0
+    private val unicodeFlag get() = if (currentPlatform.isWindows) Int.MIN_VALUE else 0
 
     @Synchronized
     fun initialize(): String {
@@ -199,7 +201,7 @@ class BassAudio(private val device: Int = -1) : AutoCloseable {
     }
     private fun failure(message: String) = "$message (BASS ${core?.BASS_ErrorGetCode()})"
     private fun pathMemory(file: File): Memory {
-        val bytes = if (platform == NativePlatform.Windows) (file.absolutePath + '\u0000').toByteArray(Charsets.UTF_16LE)
+        val bytes = if (currentPlatform.isWindows) (file.absolutePath + '\u0000').toByteArray(Charsets.UTF_16LE)
             else (file.absolutePath + '\u0000').toByteArray(Charsets.UTF_8)
         return Memory(bytes.size.toLong()).apply { write(0, bytes, 0, bytes.size) }
     }

@@ -12,6 +12,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.DialogProperties
 import jp.project2by2.musicplayer.ui.player.playerString
+import jp.project2by2.musicplayer.platform.currentPlatform
 
 data class SoundFontOption(val name: String, val url: String, val sizeKey: String)
 
@@ -21,7 +22,7 @@ val recommendedSoundFonts = listOf(
     SoundFontOption("SGM-V2.01", "https://archive.org/download/SGM-V2.01/SGM-V2.01.sf2", "soundfont_size_large")
 )
 
-/** Hosts supply I/O and the optional Windows action; presentation is shared on every platform. */
+/** Shared UI decides OS visibility; hosts supply I/O and the optional Windows action. */
 @Composable
 fun RecommendedSoundFontDialog(
     onDismiss: () -> Unit,
@@ -37,7 +38,7 @@ fun RecommendedSoundFontDialog(
         title = { Text(playerString("soundfont_dialog_title")) },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                if (onUseWindowsSoundFont != null) Card(
+                if (currentPlatform.isWindows && onUseWindowsSoundFont != null) Card(
                     onClick = onUseWindowsSoundFont, enabled = !isDownloading,
                     modifier = Modifier.fillMaxWidth(),
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),

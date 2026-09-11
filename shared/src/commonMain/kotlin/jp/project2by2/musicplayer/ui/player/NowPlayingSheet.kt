@@ -55,7 +55,9 @@ fun NowPlayingSheet(
         targetPositionMs = raw
     }
 
-    LaunchedEffect(ui?.isPlaying, ui?.durationMs, ui?.loopStartMs, ui?.loopEndMs, targetPositionMs) {
+    // Keep the frame clock running across audio position updates; restarting skips a frame.
+    // Read targetPositionMs inside the loop so rendering follows the display refresh rate.
+    LaunchedEffect(trackKey, ui?.isPlaying, ui?.durationMs, ui?.loopStartMs, ui?.loopEndMs) {
         var lastFrameNanos = 0L
         while (kotlinx.coroutines.currentCoroutineContext().isActive) {
             withFrameNanos { now ->

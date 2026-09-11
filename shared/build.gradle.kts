@@ -31,11 +31,6 @@ kotlin {
         commonTest.dependencies {
             implementation(kotlin("test"))
         }
-        // Compile the shared UI against the desktop-compatible API for this target only.
-        // Android continues resolving Material3 1.3.0 through the common dependency.
-        val desktopMain by getting {
-            dependencies { api(libs.compose.desktop.material3) }
-        }
         // Reuse the shipped MIDI corpus without copying it into the shared library.
         val desktopTest by getting {
             resources.srcDir("../app/src/main/assets")

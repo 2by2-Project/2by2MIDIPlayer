@@ -5,6 +5,7 @@ import com.sun.jna.Native
 import com.sun.jna.Memory
 import com.sun.jna.ptr.FloatByReference
 import jp.project2by2.musicplayer.audio.*
+import jp.project2by2.musicplayer.platform.currentPlatform
 import java.io.File
 import java.nio.ByteBuffer
 
@@ -53,7 +54,7 @@ internal class DesktopMidiDecoder(
 
     init {
         try {
-            val unicode = if (NativePlatform.detect() == NativePlatform.Windows) Int.MIN_VALUE else 0
+            val unicode = if (currentPlatform.isWindows) Int.MIN_VALUE else 0
             val bytes = (file.absolutePath + '\u0000').toByteArray(if (unicode != 0) Charsets.UTF_16LE else Charsets.UTF_8)
             handle = Memory(bytes.size.toLong()).use {
                 it.write(0, bytes, 0, bytes.size)

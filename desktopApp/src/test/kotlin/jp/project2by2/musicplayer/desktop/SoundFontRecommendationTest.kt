@@ -2,6 +2,7 @@ package jp.project2by2.musicplayer.desktop
 
 import com.sun.net.httpserver.HttpServer
 import jp.project2by2.musicplayer.soundfont.SoundFontDownloader
+import jp.project2by2.musicplayer.platform.Platform
 import java.net.InetSocketAddress
 import java.nio.file.Files
 import java.util.concurrent.CancellationException
@@ -9,10 +10,10 @@ import kotlin.test.*
 
 class SoundFontRecommendationTest {
     @Test fun windowsBankUsesSystemRootAndIsAbsentOnOtherPlatforms() {
-        assertNull(windowsSoundFont("Linux", "/windows"))
-        assertNull(windowsSoundFont("Android", null))
-        assertEquals("gm.dls", windowsSoundFont("Windows 11", "D:/Windows")!!.name)
-        assertEquals(java.io.File("D:/Windows", "System32/drivers/gm.dls"), windowsSoundFont("Windows 11", "D:/Windows"))
+        assertNull(windowsSoundFont(Platform.Linux, "/windows"))
+        assertNull(windowsSoundFont(Platform.Android, null))
+        assertEquals("gm.dls", windowsSoundFont(Platform.Windows, "D:/Windows")!!.name)
+        assertEquals(java.io.File("D:/Windows", "System32/drivers/gm.dls"), windowsSoundFont(Platform.Windows, "D:/Windows"))
     }
 
     @Test fun downloadCompletesAndRejectsHtmlOrCancellationWithoutPartialFiles() {
