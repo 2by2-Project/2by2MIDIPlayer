@@ -31,3 +31,23 @@ Platform APIs stay in platform source sets: existing expect/actual helpers and
 callbacks (file pickers, settings persistence, audio) remain the entry points for
 those operations. An OS branch in commonMain does not make Android or Java APIs
 available to common code.
+
+## Desktop file launches
+
+Windows and Linux share a single running player per OS user. Before creating the UI
+or BASS engine, the launcher acquires `~/.2by2MusicPlayer/instance.lock`. A second
+launch sends its absolute file paths to the owner's loopback socket and exits after
+acknowledgement. The existing window is restored and the files replace its temporary
+playback queue; the saved library and playlists are unchanged. Launching without
+arguments brings the existing window forward without changing playback.
+
+Requests received before the window is ready are buffered. Playback waits for
+SoundFont preparation when needed. The OS releases the instance lock after an
+unexpected exit; the next owner overwrites the stale endpoint information. If the
+owner cannot accept a request, the launcher shows an error instead of opening a
+second player.
+
+Build the Linux application image on Linux with `./gradlew :desktopApp:createDistributable`.
+Run `desktopApp/build/compose/binaries/main/app/2by2MusicPlayer/bin/2by2MusicPlayer`,
+optionally followed by quoted MIDI paths. Keep the complete application directory,
+including `lib`, together when copying it to another location.

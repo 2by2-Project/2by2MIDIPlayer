@@ -91,7 +91,8 @@ class DesktopController(
     private val store: DesktopStore = DesktopStore(),
     val midiFiles: DesktopMidiFiles = DesktopMidiFiles(),
     private val engine: BassAudio = BassAudio(),
-    private val fontCache: File = File(System.getProperty("java.io.tmpdir"), "2by2MusicPlayer-soundfonts")
+    private val fontCache: File = File(System.getProperty("java.io.tmpdir"), "2by2MusicPlayer-soundfonts"),
+    startupFiles: List<File> = emptyList(),
 ) : AutoCloseable {
     private val executor = Executors.newSingleThreadExecutor { r -> Thread(r, "desktop-audio").apply { isDaemon = true } }
     private val dispatcher = executor.asCoroutineDispatcher()
@@ -106,6 +107,7 @@ class DesktopController(
     val state = mutable.asStateFlow()
     private var loaded: String? = null
     private var queue = emptyList<String>()
+    private var pendingStartupPath: String? = null
     private val trackIds = java.util.concurrent.ConcurrentHashMap<String, Long>()
     private val nextTrackId = java.util.concurrent.atomic.AtomicLong()
     fun trackId(path: String): Long = trackIds.computeIfAbsent(path) { nextTrackId.incrementAndGet() }
@@ -119,6 +121,7 @@ class DesktopController(
             engine.loop(mutable.value.loop)
             applySynthSettings()
             mutable.value.soundFont?.let { setFont(File(it)) }
+            prepareLaunchFiles(startupFiles)
         }
         scope.launch {
             while (isActive) {
@@ -183,6 +186,7 @@ class DesktopController(
             // Both absolute paths are validated above; move never replaces an existing directory.
             Files.move(source, target)
             queue = queue.map(::remap)
+            pendingStartupPath = pendingStartupPath?.let(::remap)
             mutable.update { state -> state.copy(
                 files = state.files.map(::remap),
                 playlists = state.playlists.map { it.copy(paths = it.paths.map(::remap)) },
@@ -217,6 +221,23 @@ class DesktopController(
         refreshMetadata(found)
         save()
     }
+    fun openLaunchFiles(files: List<File>) = operation { prepareLaunchFiles(files) }
+
+    private fun prepareLaunchFiles(files: List<File>) {
+        val paths = files.map { file ->
+            require(file.isFile) { "ファイルが見つかりません: ${file.path}" }
+            require(file.extension.lowercase() in listOf("mid", "midi")) { "MIDIファイルを指定してください: ${file.name}" }
+            file.canonicalPath
+        }.distinct()
+        val first = paths.firstOrNull() ?: return
+        queue = paths
+        refreshMetadata(paths)
+        // Requests arriving while a SoundFont is being prepared play once it is ready.
+        val ready = preparedFont != null && !fontImportActive.get()
+        loadTrack(first, autoplay = ready)
+        if (!ready) pendingStartupPath = first
+    }
+
     fun openFiles(files: List<File>) = operation {
         val paths = files.map { it.canonicalPath }.distinct()
         val first = paths.firstOrNull() ?: return@operation
@@ -236,6 +257,7 @@ class DesktopController(
         refreshMetadata(demos)
     }
     private fun loadTrack(path: String, autoplay: Boolean) {
+        pendingStartupPath = null
         mutable.update { it.copy(busy = true, error = null) }
         val file = midiFiles.resolve(path)
         require(file.length() <= 64L * 1024 * 1024) { "64MB以下のMIDIファイルを選択してください" }
@@ -252,6 +274,7 @@ class DesktopController(
         mutable.update { it.copy(busy = false) }
     }
     fun togglePlay() = operation {
+        pendingStartupPath = null
         val value = mutable.value
         if (value.audio.playing) engine.pause() else {
             val path = value.current ?: return@operation
@@ -314,6 +337,14 @@ class DesktopController(
                 if (download && !installed) sourceFile?.let { it.delete(); it.parentFile.delete() }
                 fontImportActive.set(false)
                 mutable.update { it.copy(soundFontLoading = false) }
+                if (success) pendingStartupPath?.let { path ->
+                    operation {
+                        // A later user selection takes precedence over the startup request.
+                        if (pendingStartupPath == path && mutable.value.current == path) {
+                            loadTrack(path, autoplay = true)
+                        }
+                    }
+                }
                 onComplete(success)
             }
         }
