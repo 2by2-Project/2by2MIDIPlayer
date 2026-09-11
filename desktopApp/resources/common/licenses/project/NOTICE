@@ -1,0 +1,13 @@
+2by2 MIDI Player
+
+<!--
+     Copyright (C) 2026 The 2by2 Project
+     SPDX-License-Identifier: Apache-2.0
+-->
+
+This product includes software developed by 2by2 Project.
+
+This product may use BASS and BASSMIDI by Un4seen Developments Ltd. at runtime.
+BASS and BASSMIDI are third-party proprietary components and are not licensed
+under the Apache License 2.0 that applies to 2by2 MIDI Player source code.
+See THIRD_PARTY_NOTICES.md for details.

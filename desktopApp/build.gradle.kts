@@ -38,6 +38,8 @@ compose.desktop {
                     (parts + List(3 - parts.size) { "0" }).joinToString(".")
                 }
             description = "2by2 MIDI Player"
+            fileAssociation(mimeType = "audio/midi", extension = "mid", description = "MIDI File")
+            fileAssociation(mimeType = "audio/midi", extension = "midi", description = "MIDI File")
             windows { iconFile.set(project.file("icons/app-icon.ico")) }
             linux { iconFile.set(project.file("src/main/resources/app-icon.png")) }
             modules("java.desktop", "java.prefs", "jdk.unsupported", "jdk.charsets")
