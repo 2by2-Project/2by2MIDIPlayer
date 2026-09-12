@@ -1,4 +1,4 @@
-name: Build Windows and Android
+name: Build Windows / Linux / Android
 
 on:
   push:
@@ -16,7 +16,7 @@ concurrency:
   cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
 
 jobs:
-  build:
+  windows:
     runs-on: windows-2022
     timeout-minutes: 40
     outputs:
@@ -97,6 +97,107 @@ jobs:
         with:
           name: 2by2MIDIPlayer-${{ steps.version.outputs.version }}
           path: dist/2by2MIDIPlayer-${{ steps.version.outputs.version }}.zip
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+
+  linux:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          architecture: x64
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Check Linux packaging tools
+        run: |
+          tar --version
+          gzip --version
+
+      - name: Read appVersion
+        id: version
+        shell: python
+        run: |
+          import os, pathlib, re
+          values = re.findall(r'^\s*appVersion\s*=\s*(.*?)\s*$', pathlib.Path('gradle.properties').read_text(), re.M)
+          if len(values) != 1 or not re.fullmatch(r'\d+\.\d+(\.\d+)?', values[0]):
+              raise SystemExit('Invalid appVersion')
+          version = values[0]
+          if os.environ['GITHUB_REF_TYPE'] == 'tag' and os.environ['GITHUB_REF_NAME'] != f'v{version}':
+              raise SystemExit(f'Tag must be v{version}')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              print(f'version={version}', file=output)
+
+      - name: Download BASS and BASSMIDI (Linux x64)
+        shell: python
+        run: |
+          import hashlib, pathlib, tempfile, urllib.request, zipfile
+          native = pathlib.Path('proprietary/linux-x64')
+          notices = pathlib.Path('desktopApp/resources/common/licenses/un4seen')
+          native.mkdir(parents=True, exist_ok=True)
+          notices.mkdir(parents=True, exist_ok=True)
+          for name in ('bass', 'bassmidi'):
+              with tempfile.TemporaryDirectory() as tmp:
+                  archive = pathlib.Path(tmp) / 'download.zip'
+                  urllib.request.urlretrieve(f'https://www.un4seen.com/files/{name}24-linux.zip', archive)
+                  print(name, hashlib.sha256(archive.read_bytes()).hexdigest())
+                  with zipfile.ZipFile(archive) as z:
+                      members = [p for p in z.namelist() if p == f'libs/x86_64/lib{name}.so']
+                      if len(members) != 1:
+                          raise RuntimeError(f'Expected one libs/x86_64/lib{name}.so')
+                      data = z.read(members[0])
+                      if data[:6] != b'\x7fELF\x02\x01' or int.from_bytes(data[18:20], 'little') != 62:
+                          raise RuntimeError(f'lib{name}.so is not an x64 ELF binary')
+                      (native / f'lib{name}.so').write_bytes(data)
+                      (notices / f'{name}.txt').write_bytes(z.read(f'{name}.txt'))
+
+      - name: Build Linux application with bundled Java runtime
+        run: bash ./gradlew --no-daemon --stacktrace :desktopApp:createDistributable
+
+      - name: Create and verify Linux release tar.gz
+        env:
+          APP_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          appRoot="$PWD/desktopApp/build/compose/binaries/main/app"
+          appDir="$appRoot/2by2MusicPlayer"
+          test -x "$appDir/bin/2by2MusicPlayer"
+          test -f "$appDir/lib/runtime/lib/modules"
+          test -f "$appDir/lib/runtime/lib/server/libjvm.so"
+          for name in libbass.so libbassmidi.so; do
+            test -f "$appDir/lib/app/resources/proprietary/linux-x64/$name"
+          done
+          for name in bass bassmidi; do
+            test -s "$appDir/lib/app/resources/licenses/un4seen/$name.txt"
+          done
+          cp LICENSE NOTICE THIRD_PARTY_NOTICES.md "$appDir/"
+          mkdir -p dist
+          archive="$PWD/dist/2by2MIDIPlayer-$APP_VERSION-linux-x64.tar.gz"
+          # Keep the complete image together, including Unix modes and any symlinks.
+          tar -czf "$archive" -C "$appRoot" 2by2MusicPlayer
+          extracted=$(mktemp -d "$RUNNER_TEMP/linux-tar.XXXXXX")
+          tar -xzf "$archive" -C "$extracted"
+          test -x "$extracted/2by2MusicPlayer/bin/2by2MusicPlayer"
+          test -f "$extracted/2by2MusicPlayer/lib/runtime/lib/modules"
+          test -f "$extracted/2by2MusicPlayer/lib/runtime/lib/server/libjvm.so"
+          for name in libbass.so libbassmidi.so; do
+            cmp "$appDir/lib/app/resources/proprietary/linux-x64/$name" \
+              "$extracted/2by2MusicPlayer/lib/app/resources/proprietary/linux-x64/$name"
+          done
+          for name in LICENSE NOTICE THIRD_PARTY_NOTICES.md; do
+            cmp "$name" "$extracted/2by2MusicPlayer/$name"
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Linux-${{ steps.version.outputs.version }}
+          path: dist/2by2MIDIPlayer-${{ steps.version.outputs.version }}-linux-x64.tar.gz
           if-no-files-found: error
           compression-level: 0
           retention-days: 14
@@ -212,7 +313,7 @@ jobs:
 
   release:
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-    needs: [build, android]
+    needs: [windows, linux, android]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -220,25 +321,34 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: 2by2MIDIPlayer-${{ needs.build.outputs.version }}
+          name: 2by2MIDIPlayer-${{ needs.windows.outputs.version }}
           path: dist
 
       - uses: actions/download-artifact@v4
         with:
-          name: Android-${{ needs.build.outputs.version }}
+          name: Linux-${{ needs.windows.outputs.version }}
+          path: dist/linux
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: Android-${{ needs.windows.outputs.version }}
           path: dist/android
 
-      - name: Attach ZIP to GitHub Release
+      - name: Attach desktop archives and signed APK to GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           TAG: ${{ github.ref_name }}
-          APP_VERSION: ${{ needs.build.outputs.version }}
+          APP_VERSION: ${{ needs.windows.outputs.version }}
         run: |
+          set -euo pipefail
+          test -f "dist/2by2MIDIPlayer-$APP_VERSION.zip"
+          test -f "dist/linux/2by2MIDIPlayer-$APP_VERSION-linux-x64.tar.gz"
           if ! gh release view "$TAG" >/dev/null 2>&1; then
             gh release create "$TAG" --verify-tag --title "2by2MIDIPlayer-$APP_VERSION" --generate-notes
           fi
           gh release upload "$TAG" "dist/2by2MIDIPlayer-$APP_VERSION.zip" --clobber
+          gh release upload "$TAG" "dist/linux/2by2MIDIPlayer-$APP_VERSION-linux-x64.tar.gz" --clobber
           if [[ -f "dist/android/2by2MIDIPlayer-$APP_VERSION.apk" ]]; then
             gh release upload "$TAG" "dist/android/2by2MIDIPlayer-$APP_VERSION.apk" --clobber
           fi
