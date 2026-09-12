@@ -27,6 +27,7 @@ import java.io.File
 @Composable
 fun DesktopApp(controller: DesktopController) {
     val state by controller.state.collectAsState()
+    val scope = rememberCoroutineScope()
     var recommendedFonts by remember { mutableStateOf(false) }
     var checkedInitialFont by remember { mutableStateOf(false) }
     val windowsFont = remember { windowsSoundFont() }
@@ -115,7 +116,7 @@ fun DesktopApp(controller: DesktopController) {
                 soundFontLoading = state.soundFontLoading,
                 maxVoices = state.maxVoices, effectsEnabled = state.effectsEnabled, reverbStrength = state.reverbStrength,
                 loopEnabled = state.loop, shuffleEnabled = state.shuffle, onBack = { settings = false },
-                onPickSoundFont = { chooseFiles(soundFont = true) { it.firstOrNull()?.let(controller::setFont) } },
+                onPickSoundFont = { chooseFiles(scope, soundFont = true, result = { it.firstOrNull()?.let(controller::setFont) }, onError = controller::reportError) },
                 onRecommendedSoundFonts = { recommendedFonts = true },
                 onMaxVoicesChange = controller::setMaxVoices, onEffectsChange = controller::setEffectsEnabled,
                 onReverbChange = controller::setReverbStrength,
@@ -137,8 +138,8 @@ fun DesktopApp(controller: DesktopController) {
                     },
                     actions = {
                         if (!playlistsSelected) {
-                            IconButton(onClick = { chooseFiles(result = controller::openFiles) }) { Icon(Icons.Default.AudioFile, "MIDIファイルを開いて再生") }
-                            IconButton(onClick = { chooseFiles(directory = true, result = controller::importFiles) }) { Icon(Icons.Default.CreateNewFolder, "フォルダを追加") }
+                            IconButton(onClick = { chooseFiles(scope, result = controller::openFiles, onError = controller::reportError) }) { Icon(Icons.Default.AudioFile, "MIDIファイルを開いて再生") }
+                            IconButton(onClick = { chooseFiles(scope, directory = true, result = controller::importFiles, onError = controller::reportError) }) { Icon(Icons.Default.CreateNewFolder, "フォルダを追加") }
                         }
                         if (playlist != null) IconButton(onClick = { editing = !editing }) { Icon(if (editing) Icons.Default.Done else Icons.Default.Edit, "編集") }
                         if (!playlistsSelected) IconButton(onClick = { search = !search; query = "" }) {

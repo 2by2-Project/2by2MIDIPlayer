@@ -17,9 +17,12 @@ dependencies {
     implementation(compose.desktop.currentOs)
     implementation(libs.compose.material3)
     implementation(libs.compose.material.icons)
+    implementation(libs.filekit.dialogs)
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-swing:1.10.2")
     implementation("net.java.dev.jna:jna:5.17.0")
     testImplementation(kotlin("test"))
+    // Exercise FileKit's actual XDG response parser (a runtime-only dependency in FileKit).
+    testImplementation("com.github.hypfvieh:dbus-java-core:5.2.0")
 }
 
 compose.desktop {
@@ -27,6 +30,8 @@ compose.desktop {
         mainClass = "jp.project2by2.musicplayer.desktop.MainKt"
         providers.gradleProperty("packagingJavaHome").orNull?.let { javaHome = it }
         nativeDistributions {
+            // Build a fresh verification image while another image is running.
+            providers.gradleProperty("desktopOutputDir").orNull?.let { outputBaseDir.set(file(it)) }
             targetFormats(TargetFormat.Msi, TargetFormat.Deb)
             packageName = "2by2MusicPlayer"
             // Native installers use three components; Android keeps the shared display version.
@@ -42,7 +47,7 @@ compose.desktop {
             fileAssociation(mimeType = "audio/midi", extension = "midi", description = "MIDI File")
             windows { iconFile.set(project.file("icons/app-icon.ico")) }
             linux { iconFile.set(project.file("src/main/resources/app-icon.png")) }
-            modules("java.desktop", "java.prefs", "jdk.unsupported", "jdk.charsets")
+            modules("java.desktop", "java.prefs", "jdk.unsupported", "jdk.charsets", "jdk.security.auth")
             appResourcesRootDir.set(layout.projectDirectory.dir("resources"))
         }
     }

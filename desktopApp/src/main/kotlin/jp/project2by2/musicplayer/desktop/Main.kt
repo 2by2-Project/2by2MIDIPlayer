@@ -10,6 +10,7 @@ import androidx.compose.ui.graphics.painter.BitmapPainter
 import javax.imageio.ImageIO
 import java.io.File
 import javax.swing.JOptionPane
+import io.github.vinceglb.filekit.FileKit
 
 private object DesktopIcon
 
@@ -21,7 +22,10 @@ fun main(args: Array<String>) {
         JOptionPane.showMessageDialog(null, failure.message, "2by2 MIDI Player", JOptionPane.ERROR_MESSAGE)
         return
     } ?: return
-    instance.use { runPlayer(files, it) }
+    instance.use {
+        FileKit.init(appId = "jp.project2by2.musicplayer")
+        runPlayer(files, it)
+    }
 }
 
 private fun runPlayer(files: List<File>, instance: DesktopInstance) = application(exitProcessOnExit = false) {

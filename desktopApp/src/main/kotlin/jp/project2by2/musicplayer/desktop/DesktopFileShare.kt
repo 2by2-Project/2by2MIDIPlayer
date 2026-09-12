@@ -1,6 +1,8 @@
 package jp.project2by2.musicplayer.desktop
 
 import androidx.compose.runtime.*
+import io.github.vinceglb.filekit.FileKit
+import io.github.vinceglb.filekit.dialogs.openFileSaver
 import jp.project2by2.musicplayer.ui.player.FileShareDialog
 import java.awt.Toolkit
 import java.awt.datatransfer.DataFlavor
@@ -9,9 +11,6 @@ import java.awt.datatransfer.UnsupportedFlavorException
 import java.io.File
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
-import javax.swing.JFileChooser
-import javax.swing.JOptionPane
-import javax.swing.SwingUtilities
 import kotlinx.coroutines.*
 
 /** File-list clipboard flavor works with file managers and apps accepting pasted attachments. */
@@ -41,17 +40,23 @@ fun DesktopShareDialog(file: File, onDismiss: () -> Unit) {
             Toolkit.getDefaultToolkit().systemClipboard.setContents(MidiFileTransfer(file), null)
         }.onSuccess { onDismiss() }.onFailure { error = it.message ?: it.toString() }
     }, onExportFile = {
-        SwingUtilities.invokeLater {
-            val chooser = JFileChooser().apply { selectedFile = File(file.name); dialogTitle = "MIDIファイルを書き出し" }
-            if (chooser.showSaveDialog(null) == JFileChooser.APPROVE_OPTION) {
-                val target = chooser.selectedFile
+        scope.launch {
+            try {
+                val target = fileKitDialogResult {
+                    FileKit.openFileSaver(
+                        suggestedName = file.nameWithoutExtension,
+                        defaultExtension = file.extension.lowercase().ifBlank { "mid" },
+                        allowedExtensions = setOf("mid", "midi"),
+                    )?.file
+                } ?: return@launch
+                // The native save dialog handles overwrite confirmation.
                 val overwrite = target.exists()
-                if (!overwrite || JOptionPane.showConfirmDialog(null, "${target.name} を上書きしますか？", "上書き確認", JOptionPane.YES_NO_OPTION) == JOptionPane.YES_OPTION) {
-                    scope.launch {
-                        runCatching { withContext(Dispatchers.IO) { exportMidiFile(file, target, overwrite) } }
-                            .onSuccess { onDismiss() }.onFailure { error = it.message ?: it.toString() }
-                    }
-                }
+                withContext(Dispatchers.IO) { exportMidiFile(file, target, overwrite) }
+                onDismiss()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                error = failure.message ?: failure.toString()
             }
         }
     }, onDismiss = onDismiss)
