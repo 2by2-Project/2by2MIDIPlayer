@@ -114,6 +114,9 @@ fun DesktopApp(controller: DesktopController) {
             SettingsScreen(
                 soundFontName = state.soundFont?.let { File(it).name }, hasSoundFont = state.soundFont != null,
                 soundFontLoading = state.soundFontLoading,
+                onConfigureFileAssociations = {
+                    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { DesktopFileAssociations().configure() }
+                },
                 maxVoices = state.maxVoices, effectsEnabled = state.effectsEnabled, reverbStrength = state.reverbStrength,
                 loopEnabled = state.loop, shuffleEnabled = state.shuffle, onBack = { settings = false },
                 onPickSoundFont = { chooseFiles(scope, soundFont = true, result = { it.firstOrNull()?.let(controller::setFont) }, onError = controller::reportError) },

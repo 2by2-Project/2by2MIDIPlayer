@@ -269,8 +269,10 @@ jobs:
           iconHash=$(sha256sum desktopApp/src/main/resources/app-icon.png | cut -c1-16)
           test "$iconPath" = "/opt/project2by2-midiplayer/lib/app/resources/branding/2by2-midi-player-$iconHash.png"
           cmp desktopApp/src/main/resources/app-icon.png "$extracted$iconPath"
-          if grep -Eq '^(MimeType|Actions)=' "$desktopFile"; then
-            echo 'Unexpected file association in desktop entry' >&2
+          grep -Fxq 'MimeType=audio/midi;audio/x-midi;audio/mid;audio/x-mid;' "$desktopFile"
+          grep -Fxq 'Exec=/opt/project2by2-midiplayer/bin/project2by2-midiplayer %F' "$desktopFile"
+          if grep -Eq '^Actions=' "$desktopFile"; then
+            echo 'Unexpected desktop action in desktop entry' >&2
             exit 1
           fi
           test ! -e "$extracted/opt/project2by2-midiplayer/lib/app/resources/integration/set-default-midi.sh"

@@ -91,4 +91,12 @@
     <string name="action_done">Done</string>
     <string name="settings_soundfont_loading_title">Loading SoundFont</string>
     <string name="settings_soundfont_import_failed">Could not load SoundFont</string>
+    <string name="settings_category_file_association">File associations</string>
+    <string name="settings_association_title">Make this the default MIDI file player</string>
+    <string name="settings_association_button">Set up</string>
+    <string name="settings_association_windows">In Windows Default apps, select 2by2 MIDI Player for .mid and .midi. On Windows 10, search for these extensions in Choose default apps by file type.</string>
+    <string name="settings_association_linux">MIDI files are now set to open with 2by2 MIDI Player.</string>
+    <string name="settings_association_android">Open a MIDI file from your file manager, select 2by2 MIDI Player, and choose Always if offered. If another app opens automatically, clear its defaults in Android Settings &gt; Apps, then open the MIDI file again. Available choices depend on your device and file manager.</string>
+    <string name="settings_association_unavailable">Launch the installed application or packaged application image to set file associations. Keep the application in the same location after registration.</string>
+    <string name="settings_association_failed">Could not complete file association setup. Check your OS default app settings. On Linux, xdg-utils and a desktop session are required.</string>
 </resources>

@@ -3,6 +3,15 @@ import androidx.compose.runtime.Composable
 import java.util.Locale
 @Composable actual fun playerString(key: String): String = (if (Locale.getDefault().language == "ja") japanese else english)[key] ?: key
 private val english = mapOf(
+    "settings_category_file_association" to "File associations",
+    "settings_association_title" to "Make this the default MIDI file player",
+    "settings_association_button" to "Set up",
+    "settings_association_windows" to "In Windows Default apps, select 2by2 MIDI Player for .mid and .midi. On Windows 10, search for these extensions in Choose default apps by file type.",
+    "settings_association_linux" to "MIDI files are now set to open with 2by2 MIDI Player.",
+    "settings_association_android" to "Open a MIDI file from your file manager, select 2by2 MIDI Player, and choose Always if offered. If another app opens automatically, clear its defaults in Android Settings > Apps, then open the MIDI file again. Available choices depend on your device and file manager.",
+    "settings_association_unavailable" to "Launch the installed application or packaged application image to set file associations. Keep the application in the same location after registration.",
+    "settings_association_failed" to "Could not complete file association setup. Check your OS default app settings. On Linux, xdg-utils and a desktop session are required.",
+
     "soundfont_dialog_title" to "Choose SoundFont",
     "soundfont_dialog_message" to "You need Soundfont for playing MIDI file. You can choose recommended soundfont from below.\n\n* The large soundfont takes several time for downloading.",
     "soundfont_fluidr3_gm_gs" to "FluidR3 GM-GS",
@@ -67,6 +76,15 @@ private val english = mapOf(
     "view_list" to "List"
 )
 private val japanese = mapOf(
+    "settings_category_file_association" to "ファイルの関連付け",
+    "settings_association_title" to "MIDIファイルの既定のプレイヤーにする",
+    "settings_association_button" to "設定",
+    "settings_association_windows" to "Windowsの「既定のアプリ」で、.midと.midiに「2by2 MIDI Player」を選択してください。Windows 10では「ファイルの種類ごとに既定のアプリを選ぶ」から設定できます。",
+    "settings_association_linux" to "MIDIファイルを2by2 MIDI Playerで既定で開くように設定しました。",
+    "settings_association_android" to "ファイル管理アプリからMIDIファイルを開き、「2by2 MIDI Player」を選択して「常時」が表示されたら選んでください。他のアプリで自動的に開く場合は、Androidの「設定」→「アプリ」でそのアプリの既定の設定を解除してから、もう一度MIDIファイルを開いてください。表示や選択肢は端末・ファイル管理アプリによって異なります。",
+    "settings_association_unavailable" to "関連付けを設定するには、インストール済みアプリまたは配布用アプリイメージから起動してください。登録後はアプリの保存場所を変更しないでください。",
+    "settings_association_failed" to "ファイルの関連付け設定を完了できませんでした。OSの既定のアプリ設定を確認してください。Linuxではxdg-utilsとデスクトップセッションが必要です。",
+
     "soundfont_dialog_title" to "サウンドフォントを選択",
     "soundfont_dialog_message" to "MIDI音楽を再生するには、サウンドフォントが必要です。以下のおすすめサウンドフォントよりお選びいただけます。\n\n※高品質なサウンドフォントは、ダウンロードに時間がかかります。",
     "soundfont_download_button" to "ダウンロードして設定",

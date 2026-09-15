@@ -87,4 +87,12 @@
     <string name="action_done">完了</string>
     <string name="settings_soundfont_loading_title">サウンドフォントの読み込み中です</string>
     <string name="settings_soundfont_import_failed">サウンドフォントを読み込めませんでした</string>
+    <string name="settings_category_file_association">ファイルの関連付け</string>
+    <string name="settings_association_title">MIDIファイルの既定のプレイヤーにする</string>
+    <string name="settings_association_button">設定</string>
+    <string name="settings_association_windows">Windowsの「既定のアプリ」で、.midと.midiに「2by2 MIDI Player」を選択してください。Windows 10では「ファイルの種類ごとに既定のアプリを選ぶ」から設定できます。</string>
+    <string name="settings_association_linux">MIDIファイルを2by2 MIDI Playerで既定で開くように設定しました。</string>
+    <string name="settings_association_android">ファイル管理アプリからMIDIファイルを開き、「2by2 MIDI Player」を選択して「常時」が表示されたら選んでください。他のアプリで自動的に開く場合は、Androidの「設定」→「アプリ」でそのアプリの既定の設定を解除してから、もう一度MIDIファイルを開いてください。表示や選択肢は端末・ファイル管理アプリによって異なります。</string>
+    <string name="settings_association_unavailable">関連付けを設定するには、インストール済みアプリまたは配布用アプリイメージから起動してください。登録後はアプリの保存場所を変更しないでください。</string>
+    <string name="settings_association_failed">ファイルの関連付け設定を完了できませんでした。OSの既定のアプリ設定を確認してください。Linuxではxdg-utilsとデスクトップセッションが必要です。</string>
 </resources>

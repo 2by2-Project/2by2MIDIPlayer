@@ -190,6 +190,7 @@ internal fun AndroidSettingsScreen(playbackService: PlaybackService?, onBack: ()
     jp.project2by2.musicplayer.ui.settings.SettingsScreen(
         soundFontName = soundFontName, hasSoundFont = hasSoundFont, maxVoices = maxVoices,
         soundFontLoading = soundFontLoading,
+        onConfigureFileAssociations = { "settings_association_android" },
         effectsEnabled = effectsEnabled, reverbStrength = reverbStrength,
         loopEnabled = loopEnabled, shuffleEnabled = shuffleEnabled,
         onBack = onBack, onPickSoundFont = { soundFontPicker.launch("*/*") },

@@ -24,6 +24,8 @@ import jp.project2by2.musicplayer.*
 import jp.project2by2.musicplayer.model.*
 import jp.project2by2.musicplayer.state.*
 import jp.project2by2.musicplayer.ui.player.playerString
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.launch
 import androidx.compose.foundation.selection.selectable
 
 @Composable
@@ -34,8 +36,20 @@ fun SettingsScreen(
     onRecommendedSoundFonts: (() -> Unit)? = null, onMaxVoicesChange: (Int) -> Unit,
     onEffectsChange: (Boolean) -> Unit, onReverbChange: (Float) -> Unit,
     onLoopChange: (Boolean) -> Unit, onShuffleChange: (Boolean) -> Unit,
-    soundFontLoading: Boolean = false
+    soundFontLoading: Boolean = false,
+    onConfigureFileAssociations: suspend () -> String = { "settings_association_unavailable" }
 ) {
+    val scope = rememberCoroutineScope()
+    var associationBusy by remember { mutableStateOf(false) }
+    var associationMessage by remember { mutableStateOf<String?>(null) }
+    associationMessage?.let { message ->
+        AlertDialog(
+            onDismissRequest = { associationMessage = null },
+            title = { Text(playerString("settings_category_file_association")) },
+            text = { Text(playerString(message)) },
+            confirmButton = { TextButton(onClick = { associationMessage = null }) { Text("OK") } }
+        )
+    }
     Scaffold(
         topBar = {
             TopAppBar(
@@ -144,6 +158,31 @@ fun SettingsScreen(
                         checked = shuffleEnabled,
                         onCheckedChange = onShuffleChange
                     )
+                }
+                item {
+                    Text(playerString("settings_category_file_association"), style = MaterialTheme.typography.headlineSmall,
+                        modifier = Modifier.padding(16.dp))
+                }
+                item {
+                    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 16.dp),
+                        verticalAlignment = Alignment.CenterVertically) {
+                        Text(playerString("settings_association_title"), style = MaterialTheme.typography.bodyLarge,
+                            modifier = Modifier.weight(1f).padding(end = 8.dp))
+                        TextButton(enabled = !associationBusy, onClick = {
+                            associationBusy = true
+                            scope.launch {
+                                try {
+                                    associationMessage = onConfigureFileAssociations()
+                                } catch (e: CancellationException) {
+                                    throw e
+                                } catch (e: Exception) {
+                                    associationMessage = "settings_association_failed"
+                                } finally {
+                                    associationBusy = false
+                                }
+                            }
+                        }) { Text(playerString("settings_association_button")) }
+                    }
                 }
             }
         }
