@@ -38,7 +38,7 @@ compose.desktop {
             // Build a fresh verification image while another image is running.
             providers.gradleProperty("desktopOutputDir").orNull?.let { outputBaseDir.set(file(it)) }
             targetFormats(TargetFormat.Msi, TargetFormat.Deb, TargetFormat.Rpm)
-            packageName = if (System.getProperty("os.name").startsWith("Windows")) "2by2MusicPlayer" else "project2by2-midiplayer"
+            packageName = if (System.getProperty("os.name").startsWith("Windows")) "2by2MIDIPlayer" else "project2by2-midiplayer"
             // Native installers use three components; Android keeps the shared display version.
             packageVersion = providers.gradleProperty("appVersion").get()
                 .split('.').let { parts ->

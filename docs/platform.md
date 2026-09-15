@@ -35,7 +35,7 @@ available to common code.
 ## Desktop file launches
 
 Windows and Linux share a single running player per OS user. Before creating the UI
-or BASS engine, the launcher acquires `~/.2by2MusicPlayer/instance.lock`. A second
+or BASS engine, the launcher acquires `~/.2by2MIDIPlayer/instance.lock`. A second
 launch sends its absolute file paths to the owner's loopback socket and exits after
 acknowledgement. The existing window is restored and the files replace its temporary
 playback queue; the saved library and playlists are unchanged. Launching without
@@ -48,6 +48,6 @@ owner cannot accept a request, the launcher shows an error instead of opening a
 second player.
 
 Build the Linux application image on Linux with `./gradlew :desktopApp:createDistributable`.
-Run `desktopApp/build/compose/binaries/main/app/2by2MusicPlayer/bin/2by2MusicPlayer`,
+Run `desktopApp/build/compose/binaries/main/app/2by2MIDIPlayer/bin/2by2MIDIPlayer`,
 optionally followed by quoted MIDI paths. Keep the complete application directory,
 including `lib`, together when copying it to another location.

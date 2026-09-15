@@ -21,7 +21,7 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "2by2MusicPlayer"
+rootProject.name = "2by2MIDIPlayer"
 include(":app")
 include(":shared")
 include(":desktopApp")

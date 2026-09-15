@@ -56,7 +56,7 @@ Windows の実行例（JDK 21 と既存の依存キャッシュ）:
 
 ```powershell
 $env:JAVA_HOME = 'C:/Program Files/Android/Android Studio/jbr'
-$env:GRADLE_USER_HOME = 'D:/2by2MusicPlayer/.gradle-user'
+$env:GRADLE_USER_HOME = 'D:/2by2MIDIPlayer/.gradle-user'
 ./gradlew.bat :app:assembleDebug :app:testDebugUnitTest :shared:testDebugUnitTest :shared:desktopTest :desktopApp:test --offline --console=plain
 ```
 

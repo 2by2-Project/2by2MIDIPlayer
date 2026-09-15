@@ -43,7 +43,7 @@ data class DesktopState(
 )
 
 /** Plain properties keep desktop settings separate from Android's database and DataStore. */
-class DesktopStore(private val file: File = File(System.getProperty("user.home"), ".2by2MusicPlayer/desktop.properties")) {
+class DesktopStore(private val file: File = File(System.getProperty("user.home"), ".2by2MIDIPlayer/desktop.properties")) {
     fun load(): DesktopState {
         if (!file.isFile) return DesktopState()
         val p = Properties().apply { file.inputStream().use(::load) }
@@ -78,7 +78,7 @@ class DesktopStore(private val file: File = File(System.getProperty("user.home")
         put("maxVoices", state.maxVoices); put("effectsEnabled", state.effectsEnabled); put("reverbStrength", state.reverbStrength)
         file.parentFile.mkdirs()
         val temp = File(file.parentFile, file.name + ".tmp")
-        temp.outputStream().use { p.store(it, "2by2 Music Player desktop") }
+        temp.outputStream().use { p.store(it, "2by2 MIDI Player desktop") }
         try {
             Files.move(temp.toPath(), file.toPath(), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
         } catch (_: java.nio.file.AtomicMoveNotSupportedException) {
@@ -91,7 +91,7 @@ class DesktopController(
     private val store: DesktopStore = DesktopStore(),
     val midiFiles: DesktopMidiFiles = DesktopMidiFiles(),
     private val engine: BassAudio = BassAudio(),
-    private val fontCache: File = File(System.getProperty("java.io.tmpdir"), "2by2MusicPlayer-soundfonts"),
+    private val fontCache: File = File(System.getProperty("java.io.tmpdir"), "2by2MIDIPlayer-soundfonts"),
     startupFiles: List<File> = emptyList(),
 ) : AutoCloseable {
     private val executor = Executors.newSingleThreadExecutor { r -> Thread(r, "desktop-audio").apply { isDaemon = true } }
@@ -293,7 +293,7 @@ class DesktopController(
     fun downloadFont(option: jp.project2by2.musicplayer.ui.settings.SoundFontOption, onComplete: (Boolean) -> Unit) =
         importFont(download = true, onComplete = onComplete) {
             val context = currentCoroutineContext()
-            val directory = File(System.getProperty("user.home"), ".2by2MusicPlayer/soundfonts/${UUID.randomUUID()}")
+            val directory = File(System.getProperty("user.home"), ".2by2MIDIPlayer/soundfonts/${UUID.randomUUID()}")
             try {
                 val downloaded = jp.project2by2.musicplayer.soundfont.SoundFontDownloader.download(option.url, directory,
                     checkpoint = { context.ensureActive() },

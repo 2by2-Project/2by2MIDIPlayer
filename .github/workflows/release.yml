@@ -82,8 +82,8 @@ jobs:
           APP_VERSION: ${{ steps.version.outputs.version }}
         run: |
           $ErrorActionPreference = 'Stop'
-          $appDir = 'desktopApp/build/compose/binaries/main/app/2by2MusicPlayer'
-          if (!(Test-Path "$appDir/2by2MusicPlayer.exe")) { throw 'Application launcher was not generated' }
+          $appDir = 'desktopApp/build/compose/binaries/main/app/2by2MIDIPlayer'
+          if (!(Test-Path "$appDir/2by2MIDIPlayer.exe")) { throw 'Application launcher was not generated' }
           if (!(Test-Path "$appDir/runtime")) { throw 'Bundled Java runtime is missing' }
           foreach ($name in @('bass.dll', 'bassmidi.dll')) {
             if (!(Get-ChildItem $appDir -Recurse -File -Filter $name)) { throw "Packaged $name is missing" }
@@ -127,7 +127,7 @@ jobs:
           $description = "2by2 MIDI Player - Your Music Workstation Companion`n`nListen to MIDI music as background audio while you work or play. From classic MIDI tracks to game music, 2by2 MIDI Player delivers versatile playback for music creators and enthusiasts."
           # Never change this UUID between releases (including same-version rebuilds).
           & "$env:JAVA_HOME/bin/jpackage.exe" --type msi --app-image $appDir --dest dist `
-            --name 2by2MusicPlayer --app-version $version --vendor 'Project 2by2' `
+            --name 2by2MIDIPlayer --app-version $version --vendor 'Project 2by2' `
             --description $description --win-upgrade-uuid '6ef55885-394e-4bb7-b098-44be9ad975d3' `
             --win-menu --win-shortcut --win-dir-chooser --resource-dir $resources
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -144,7 +144,7 @@ jobs:
             $operation = if ($attempt -eq 3) { '/fa' } else { '/i' }
             if ($attempt -eq 3) {
               # Exercise the same MSI's standard repair operation.
-              Remove-Item "$env:ProgramFiles/2by2MusicPlayer/NOTICE"
+              Remove-Item "$env:ProgramFiles/2by2MIDIPlayer/NOTICE"
             }
             $log = Join-Path $env:RUNNER_TEMP "msi-install-$attempt.log"
             $process = Start-Process msiexec.exe -ArgumentList "$operation `"$msi`" /qn /norestart /L*v `"$log`"" -Wait -PassThru
@@ -152,10 +152,10 @@ jobs:
               Get-Content $log -Tail 100
               throw "MSI install attempt $attempt failed: $($process.ExitCode)"
             }
-            if (!(Test-Path "$env:ProgramFiles/2by2MusicPlayer/2by2MusicPlayer.exe")) {
+            if (!(Test-Path "$env:ProgramFiles/2by2MIDIPlayer/2by2MIDIPlayer.exe")) {
               throw 'Installed launcher is missing'
             }
-            if (!(Test-Path "$env:ProgramFiles/2by2MusicPlayer/NOTICE")) { throw 'MSI did not restore NOTICE' }
+            if (!(Test-Path "$env:ProgramFiles/2by2MIDIPlayer/NOTICE")) { throw 'MSI did not restore NOTICE' }
           }
 
       - name: Upload build artifact

@@ -72,7 +72,7 @@ internal class DesktopInstance private constructor(
         /** Returns null only after an existing instance has accepted the request. */
         fun acquireOrForward(
             files: List<File>,
-            directory: File = File(System.getProperty("user.home"), ".2by2MusicPlayer"),
+            directory: File = File(System.getProperty("user.home"), ".2by2MIDIPlayer"),
             timeoutMillis: Long = 10_000,
         ): DesktopInstance? {
             require(files.size <= MAX_FILES) { "一度に開くファイルは${MAX_FILES}個以下にしてください" }
