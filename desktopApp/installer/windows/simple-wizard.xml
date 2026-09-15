@@ -1,0 +1,8 @@
+<!-- Standard directory-selection wizard, without file-association features. -->
+<Property Id="WIXUI_INSTALLDIR" Value="INSTALLDIR"/>
+<UIRef Id="WixUI_InstallDir"/>
+<UI>
+  <!-- License notices are included in the application; no acceptance page is required. -->
+  <Publish Dialog="WelcomeDlg" Control="Next" Event="NewDialog" Value="InstallDirDlg" Order="2">NOT Installed</Publish>
+  <Publish Dialog="InstallDirDlg" Control="Back" Event="NewDialog" Value="WelcomeDlg" Order="2">1</Publish>
+</UI>

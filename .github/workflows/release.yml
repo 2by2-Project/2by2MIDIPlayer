@@ -77,7 +77,7 @@ jobs:
           ./gradlew.bat --no-daemon --stacktrace :desktopApp:createDistributable
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Create release ZIP
+      - name: Build and verify MSI installer
         env:
           APP_VERSION: ${{ steps.version.outputs.version }}
         run: |
@@ -90,13 +90,79 @@ jobs:
           }
           Copy-Item LICENSE, NOTICE, THIRD_PARTY_NOTICES.md $appDir
           New-Item -ItemType Directory -Force dist | Out-Null
-          Compress-Archive -Path $appDir -DestinationPath "dist/2by2MIDIPlayer-$env:APP_VERSION.zip" -Force
+          $version = ([version]$env:APP_VERSION).ToString()
+          if ($version.Split('.').Count -eq 2) { $version += '.0' }
+          $parts = $version.Split('.') | ForEach-Object { [int]$_ }
+          if ($parts[0] -gt 255 -or $parts[1] -gt 255 -or $parts[2] -gt 65535) {
+            throw 'MSI version must be within 255.255.65535'
+          }
+          # WiX 3 is supplied by windows-2022. jpackage 17 requires candle/light on PATH.
+          $env:PATH = "$env:WIX/bin;$env:PATH"
+          Get-Command candle.exe, light.exe -ErrorAction Stop | Out-Null
+          # Customize the template from the exact JDK used to build this installer.
+          $resources = Join-Path $env:RUNNER_TEMP 'msi-resources'
+          & "$env:JAVA_HOME/bin/jmod.exe" extract --dir $resources "$env:JAVA_HOME/jmods/jdk.jpackage.jmod"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $template = Join-Path $resources 'classes/jdk/jpackage/internal/resources/main.wxs'
+          $wxs = [IO.File]::ReadAllText($template)
+          $old = 'IncludeMaximum="$(var.JpUpgradeVersionOnlyDetectUpgrade)"'
+          if (!$wxs.Contains($old)) { throw 'jpackage upgrade template changed; review required' }
+          $wxs = $wxs.Replace($old, 'IncludeMaximum="yes"')
+          $old = 'IncludeMinimum="$(var.JpUpgradeVersionOnlyDetectDowngrade)"'
+          if (!$wxs.Contains($old)) { throw 'jpackage downgrade template changed; review required' }
+          $wxs = $wxs.Replace($old, 'IncludeMinimum="no"')
+          # A fresh ProductCode lets a same-version rebuild perform a major upgrade.
+          # jpackage otherwise derives it from the version, which can cause MSI 1638.
+          $old = 'Id="$(var.JpProductCode)"'
+          if (!$wxs.Contains($old)) { throw 'jpackage product template changed; review required' }
+          $wxs = $wxs.Replace($old, 'Id="*"')
+          # As in 7914e89, explicitly link a full WiX wizard rather than JpUI.
+          # Use the directory-only wizard; file associations are not registered.
+          $old = '<UIRef Id="JpUI"/>'
+          if (!$wxs.Contains($old)) { throw 'jpackage UI template changed; review required' }
+          $wizard = [IO.File]::ReadAllText("$PWD/desktopApp/installer/windows/simple-wizard.xml")
+          $wxs = $wxs.Replace($old, $wizard)
+          $wxs = $wxs.Replace('<ComponentGroupRef Id="FileAssociations"/>', '')
+          [IO.File]::WriteAllText((Join-Path $resources 'main.wxs'), $wxs)
+          $description = "2by2 MIDI Player - Your Music Workstation Companion`n`nListen to MIDI music as background audio while you work or play. From classic MIDI tracks to game music, 2by2 MIDI Player delivers versatile playback for music creators and enthusiasts."
+          # Never change this UUID between releases (including same-version rebuilds).
+          & "$env:JAVA_HOME/bin/jpackage.exe" --type msi --app-image $appDir --dest dist `
+            --name 2by2MusicPlayer --app-version $version --vendor 'Project 2by2' `
+            --description $description --win-upgrade-uuid '6ef55885-394e-4bb7-b098-44be9ad975d3' `
+            --win-menu --win-shortcut --win-dir-chooser --resource-dir $resources
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $packages = @(Get-ChildItem dist -Filter '*.msi')
+          if ($packages.Count -ne 1) { throw 'Expected exactly one MSI' }
+          # msiexec requires a native Windows path, not a mixed slash path.
+          $distDir = (Get-Item -LiteralPath dist).FullName
+          $msi = Join-Path $distDir "2by2MIDIPlayer-$env:APP_VERSION-windows-x64.msi"
+          Move-Item -LiteralPath $packages[0].FullName -Destination $msi
+          $msi = (Get-Item -LiteralPath $msi).FullName
+          ./desktopApp/installer/windows/verify-msi.ps1 -Path $msi
+          foreach ($attempt in 1..3) {
+            # Install twice, then verify the maintenance wizard's repair operation.
+            $operation = if ($attempt -eq 3) { '/fa' } else { '/i' }
+            if ($attempt -eq 3) {
+              # Exercise the same MSI's standard repair operation.
+              Remove-Item "$env:ProgramFiles/2by2MusicPlayer/NOTICE"
+            }
+            $log = Join-Path $env:RUNNER_TEMP "msi-install-$attempt.log"
+            $process = Start-Process msiexec.exe -ArgumentList "$operation `"$msi`" /qn /norestart /L*v `"$log`"" -Wait -PassThru
+            if ($process.ExitCode -notin @(0, 3010)) {
+              Get-Content $log -Tail 100
+              throw "MSI install attempt $attempt failed: $($process.ExitCode)"
+            }
+            if (!(Test-Path "$env:ProgramFiles/2by2MusicPlayer/2by2MusicPlayer.exe")) {
+              throw 'Installed launcher is missing'
+            }
+            if (!(Test-Path "$env:ProgramFiles/2by2MusicPlayer/NOTICE")) { throw 'MSI did not restore NOTICE' }
+          }
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
           name: 2by2MIDIPlayer-${{ steps.version.outputs.version }}
-          path: dist/2by2MIDIPlayer-${{ steps.version.outputs.version }}.zip
+          path: dist/2by2MIDIPlayer-${{ steps.version.outputs.version }}-windows-x64.msi
           if-no-files-found: error
           compression-level: 0
           retention-days: 14
@@ -115,10 +181,10 @@ jobs:
           architecture: x64
       - uses: gradle/actions/setup-gradle@v4
 
-      - name: Check Linux packaging tools
+      - name: Install Linux packaging tools
         run: |
-          tar --version
-          gzip --version
+          sudo apt-get update
+          sudo apt-get install -y rpm fakeroot libasound2-dev desktop-file-utils
 
       - name: Read appVersion
         id: version
@@ -157,47 +223,67 @@ jobs:
                       (native / f'lib{name}.so').write_bytes(data)
                       (notices / f'{name}.txt').write_bytes(z.read(f'{name}.txt'))
 
-      - name: Build Linux application with bundled Java runtime
-        run: bash ./gradlew --no-daemon --stacktrace :desktopApp:createDistributable
+      - name: Build DEB and RPM with bundled Java runtime
+        run: |
+          bash ./gradlew --no-daemon --stacktrace :desktopApp:packageInstallers
 
-      - name: Create and verify Linux release tar.gz
+      - name: Verify and prepare Linux artifacts
         env:
           APP_VERSION: ${{ steps.version.outputs.version }}
         run: |
           set -euo pipefail
-          appRoot="$PWD/desktopApp/build/compose/binaries/main/app"
-          appDir="$appRoot/2by2MusicPlayer"
-          test -x "$appDir/bin/2by2MusicPlayer"
-          test -f "$appDir/lib/runtime/lib/modules"
-          test -f "$appDir/lib/runtime/lib/server/libjvm.so"
+          appDir=desktopApp/build/compose/binaries/main/app/project2by2-midiplayer
+          test -x "$appDir/bin/project2by2-midiplayer"
+          test -d "$appDir/lib/runtime"
           for name in libbass.so libbassmidi.so; do
-            test -f "$appDir/lib/app/resources/proprietary/linux-x64/$name"
+            test -n "$(find "$appDir" -type f -name "$name" -print -quit)"
           done
-          for name in bass bassmidi; do
-            test -s "$appDir/lib/app/resources/licenses/un4seen/$name.txt"
-          done
-          cp LICENSE NOTICE THIRD_PARTY_NOTICES.md "$appDir/"
+          test -f "$appDir/lib/app/resources/licenses/project/THIRD_PARTY_NOTICES.md"
+          shopt -s nullglob
+          debs=(desktopApp/build/distributions/*.deb)
+          rpms=(desktopApp/build/distributions/*.rpm)
+          test "${#debs[@]}" -eq 1
+          test "${#rpms[@]}" -eq 1
+          test "$(dpkg-deb -f "${debs[0]}" Package)" = project2by2-midiplayer
+          test "$(dpkg-deb -f "${debs[0]}" Maintainer)" = '2by2 Project <support@project2by2.jp>'
+          test "$(rpm -qp --queryformat '%{NAME}' "${rpms[0]}")" = project2by2-midiplayer
+          python3 - "${debs[0]}" "${rpms[0]}" <<'PYTHON'
+          import pathlib, subprocess, sys
+          expected = pathlib.Path('desktopApp/installer/linux/description-ja.txt').read_text(encoding='utf-8').rstrip('\n')
+          deb = subprocess.check_output(['dpkg-deb', '-f', sys.argv[1], 'Description']).decode('utf-8').rstrip('\n')
+          lines = deb.splitlines()
+          decoded = '\n'.join(line if i == 0 else ('' if line == ' .' else line[1:]) for i, line in enumerate(lines))
+          assert decoded == expected, repr(decoded)
+          rpm = subprocess.check_output(['rpm', '-qp', '--queryformat', '%{DESCRIPTION}', sys.argv[2]]).decode('utf-8')
+          assert rpm.rstrip('\n') == expected, repr(rpm)
+          summary = subprocess.check_output(['rpm', '-qp', '--queryformat', '%{SUMMARY}', sys.argv[2]]).decode('utf-8')
+          assert summary == expected.splitlines()[0], repr(summary)
+          PYTHON
+          extracted="$RUNNER_TEMP/project2by2-midiplayer-deb"
+          dpkg-deb -x "${debs[0]}" "$extracted"
+          desktopFile=$(find "$extracted" -name 'project2by2-midiplayer-project2by2-midiplayer.desktop' -print -quit)
+          test -n "$desktopFile"
+          desktop-file-validate "$desktopFile"
+          grep -Fxq 'Name=2by2 MIDI Player' "$desktopFile"
+          iconPath=$(sed -n 's/^Icon=//p' "$desktopFile")
+          iconHash=$(sha256sum desktopApp/src/main/resources/app-icon.png | cut -c1-16)
+          test "$iconPath" = "/opt/project2by2-midiplayer/lib/app/resources/branding/2by2-midi-player-$iconHash.png"
+          cmp desktopApp/src/main/resources/app-icon.png "$extracted$iconPath"
+          if grep -Eq '^(MimeType|Actions)=' "$desktopFile"; then
+            echo 'Unexpected file association in desktop entry' >&2
+            exit 1
+          fi
+          test ! -e "$extracted/opt/project2by2-midiplayer/lib/app/resources/integration/set-default-midi.sh"
           mkdir -p dist
-          archive="$PWD/dist/2by2MIDIPlayer-$APP_VERSION-linux-x64.tar.gz"
-          # Keep the complete image together, including Unix modes and any symlinks.
-          tar -czf "$archive" -C "$appRoot" 2by2MusicPlayer
-          extracted=$(mktemp -d "$RUNNER_TEMP/linux-tar.XXXXXX")
-          tar -xzf "$archive" -C "$extracted"
-          test -x "$extracted/2by2MusicPlayer/bin/2by2MusicPlayer"
-          test -f "$extracted/2by2MusicPlayer/lib/runtime/lib/modules"
-          test -f "$extracted/2by2MusicPlayer/lib/runtime/lib/server/libjvm.so"
-          for name in libbass.so libbassmidi.so; do
-            cmp "$appDir/lib/app/resources/proprietary/linux-x64/$name" \
-              "$extracted/2by2MusicPlayer/lib/app/resources/proprietary/linux-x64/$name"
-          done
-          for name in LICENSE NOTICE THIRD_PARTY_NOTICES.md; do
-            cmp "$name" "$extracted/2by2MusicPlayer/$name"
-          done
+          cp "${debs[0]}" "dist/2by2MIDIPlayer-$APP_VERSION-linux-x64.deb"
+          cp "${rpms[0]}" "dist/2by2MIDIPlayer-$APP_VERSION-linux-x64.rpm"
 
       - uses: actions/upload-artifact@v4
         with:
           name: Linux-${{ steps.version.outputs.version }}
-          path: dist/2by2MIDIPlayer-${{ steps.version.outputs.version }}-linux-x64.tar.gz
+          path: |
+            dist/*.deb
+            dist/*.rpm
           if-no-files-found: error
           compression-level: 0
           retention-days: 14
@@ -334,7 +420,7 @@ jobs:
           name: Android-${{ needs.windows.outputs.version }}
           path: dist/android
 
-      - name: Attach desktop archives and signed APK to GitHub Release
+      - name: Attach desktop installers and signed APK to GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
@@ -342,13 +428,30 @@ jobs:
           APP_VERSION: ${{ needs.windows.outputs.version }}
         run: |
           set -euo pipefail
-          test -f "dist/2by2MIDIPlayer-$APP_VERSION.zip"
-          test -f "dist/linux/2by2MIDIPlayer-$APP_VERSION-linux-x64.tar.gz"
+          test -f "dist/2by2MIDIPlayer-$APP_VERSION-windows-x64.msi"
+          test -f "dist/linux/2by2MIDIPlayer-$APP_VERSION-linux-x64.deb"
+          test -f "dist/linux/2by2MIDIPlayer-$APP_VERSION-linux-x64.rpm"
+          cat > "$RUNNER_TEMP/install-notes.md" <<'NOTES'
+          ## Desktop installation
+
+          Windows: Open the MSI to install or update. Reopening the same MSI supports reinstall/repair.
+
+          Debian/Ubuntu (install, update, or reinstall):
+          `sudo apt install --reinstall ./2by2MIDIPlayer-VERSION-linux-x64.deb`
+
+          Fedora/RPM: Use your software manager or `sudo dnf install ./2by2MIDIPlayer-VERSION-linux-x64.rpm`.
+          To reinstall the same version, use `sudo dnf reinstall ./2by2MIDIPlayer-VERSION-linux-x64.rpm`.
+          With dependencies already installed, `sudo rpm -Uvh --replacepkgs ./2by2MIDIPlayer-VERSION-linux-x64.rpm`
+          handles initial installation, upgrades, and identical-package reinstalls.
+          Linux graphical reinstall behavior depends on the distribution's software manager.
+          NOTES
           if ! gh release view "$TAG" >/dev/null 2>&1; then
-            gh release create "$TAG" --verify-tag --title "2by2MIDIPlayer-$APP_VERSION" --generate-notes
+            gh release create "$TAG" --verify-tag --title "2by2MIDIPlayer-$APP_VERSION" \
+              --notes-file "$RUNNER_TEMP/install-notes.md" --generate-notes
           fi
-          gh release upload "$TAG" "dist/2by2MIDIPlayer-$APP_VERSION.zip" --clobber
-          gh release upload "$TAG" "dist/linux/2by2MIDIPlayer-$APP_VERSION-linux-x64.tar.gz" --clobber
+          gh release upload "$TAG" "dist/2by2MIDIPlayer-$APP_VERSION-windows-x64.msi" --clobber
+          gh release upload "$TAG" "dist/linux/2by2MIDIPlayer-$APP_VERSION-linux-x64.deb" \
+            "dist/linux/2by2MIDIPlayer-$APP_VERSION-linux-x64.rpm" --clobber
           if [[ -f "dist/android/2by2MIDIPlayer-$APP_VERSION.apk" ]]; then
             gh release upload "$TAG" "dist/android/2by2MIDIPlayer-$APP_VERSION.apk" --clobber
           fi
