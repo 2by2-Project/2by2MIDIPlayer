@@ -25,6 +25,8 @@ object SettingsDataStore {
 
     private val demoFilesLoadedKey = booleanPreferencesKey("demo_files_loaded")
     private val folderViewModeKey = intPreferencesKey("folder_view_mode")
+    /** Absolute path of the folder last open in Browse; absent for the start folder. */
+    private val browseFolderKey = stringPreferencesKey("browse_folder")
 
     private val maxVoicesKey = intPreferencesKey("max_voices")
 
@@ -102,6 +104,17 @@ object SettingsDataStore {
 
     suspend fun setDemoFilesLoaded(context: Context, loaded: Boolean) {
         context.settingsDataStore.edit { it[demoFilesLoadedKey] = loaded }
+    }
+
+    fun browseFolderFlow(context: Context): Flow<String?> =
+        context.settingsDataStore.data
+            .map { it[browseFolderKey] }
+            .distinctUntilChanged()
+
+    suspend fun setBrowseFolder(context: Context, path: String?) {
+        context.settingsDataStore.edit { prefs ->
+            if (path == null) prefs.remove(browseFolderKey) else prefs[browseFolderKey] = path
+        }
     }
 
     suspend fun setFolderViewMode(context: Context, mode: Int) {

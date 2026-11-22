@@ -279,6 +279,8 @@ fun MusicPlayerMainScreen(
     var isBrowseInitialLoading by remember { mutableStateOf(false) }
     var isBrowseRefreshing by remember { mutableStateOf(false) }
     var hasCompletedInitialBrowseLoad by remember { mutableStateOf(false) }
+    // False until the folder saved from the previous session has been reopened.
+    var browseFolderRestored by remember { mutableStateOf(false) }
     var browseReadyUptimeMs by remember { mutableLongStateOf(0L) }
     var isFolderPreparing by remember { mutableStateOf(false) }
     var isSearchLoading by remember { mutableStateOf(false) }
@@ -743,6 +745,22 @@ fun MusicPlayerMainScreen(
         val savedMode = SettingsDataStore.folderViewModeFlow(context).first().coerceIn(0, 1)
         folderViewModeOrdinal = savedMode
         folderViewMode = if (savedMode == 1) FolderViewMode.List else FolderViewMode.Grid
+    }
+
+    // Reopen the folder last shown in Browse. A folder removed since then opens its nearest
+    // remaining parent on the same volume; a folder on an unmounted volume opens the start folder.
+    LaunchedEffect(Unit) {
+        val saved = SettingsDataStore.browseFolderFlow(context).first()
+        val restored = withContext(Dispatchers.IO) { resolveSavedBrowseFolder(saved, storageRoots) }
+        if (selectedFolderKey == null && rootTab == RootTab.Browse) openBrowseFolder(restored)
+        browseFolderRestored = true
+    }
+
+    // Remember the Browse location for the next launch. Switching to Playlists clears the open
+    // folder, and the demo folder is not on disk, so neither replaces the saved folder.
+    LaunchedEffect(browseFolderRestored, rootTab, selectedFolderKey) {
+        if (!browseFolderRestored || rootTab != RootTab.Browse || selectedFolderKey == DEMO_FOLDER_KEY) return@LaunchedEffect
+        SettingsDataStore.setBrowseFolder(context, selectedFolderKey)
     }
 
     LaunchedEffect(selectedPlaylistId) {
@@ -1228,7 +1246,7 @@ fun MusicPlayerMainScreen(
             Column(
                 modifier = Modifier.fillMaxSize()
             ) {
-                if (rootTab == RootTab.Browse) LibraryAddressBar(
+                if (rootTab == RootTab.Browse && browseFolderRestored) LibraryAddressBar(
                     folders = absolutePathLevels(
                         selectedFolderKey?.takeIf { it != DEMO_FOLDER_KEY } ?: primaryStorageRoot
                     ).map { AddressSegment(it, absolutePathName(it)) },
@@ -1242,7 +1260,7 @@ fun MusicPlayerMainScreen(
                     ElevatedButton(onClick = { storagePermissionLauncher.launch(permissionsToRequest) }) {
                         Text(stringResource(id = R.string.info_grant_storage_permission))
                     }
-                } else if (isBrowseInitialLoading && !hasCompletedInitialBrowseLoad) {
+                } else if (!browseFolderRestored || (isBrowseInitialLoading && !hasCompletedInitialBrowseLoad)) {
                     Box(
                         modifier = Modifier.fillMaxSize(),
                         contentAlignment = Alignment.Center
@@ -2370,6 +2388,22 @@ private fun storageVolumeRoots(context: Context, primaryRoot: String): List<Stri
         emptyList()
     }
     return (listOf(primaryRoot) + volumes).distinct()
+}
+
+/**
+ * The folder to reopen for a [saved] Browse location: the folder itself while it exists, otherwise
+ * its nearest existing parent within the same storage volume. Null selects the start folder.
+ */
+private fun resolveSavedBrowseFolder(saved: String?, storageRoots: List<String>): String? {
+    if (saved == null || !saved.startsWith('/')) return null
+    if (File(saved).isDirectory) return saved
+    val root = storageRoots.firstOrNull { isWithinPath(saved, it) } ?: return null
+    var dir = absolutePathParent(saved)
+    while (dir != null && isWithinPath(dir, root)) {
+        if (File(dir).isDirectory) return dir
+        dir = absolutePathParent(dir)
+    }
+    return null
 }
 
 /**
