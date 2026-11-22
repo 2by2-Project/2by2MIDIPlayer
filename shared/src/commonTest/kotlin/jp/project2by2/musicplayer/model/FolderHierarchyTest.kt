@@ -50,4 +50,18 @@ class FolderHierarchyTest {
         assertEquals(listOf("/storage/emulated/0/Music/Game"), explorerChildFolders("/storage/emulated/0/Music", emptyList(), music).map { it.key })
         assertEquals(emptyList(), explorerChildFolders("/storage/emulated/0/Music/Game/Album", emptyList(), music))
     }
+
+    @Test
+    fun levelsWithinStartAtTheInnermostVolume() {
+        val volumes = listOf("/storage/emulated/0", "/storage/1234-ABCD")
+        assertEquals("/storage/emulated/0", containingRoot("/storage/emulated/0/Music", volumes))
+        assertNull(containingRoot("/storage/emulated", volumes))
+        assertEquals("/a/b", containingRoot("/a/b/c", listOf("/a", "/a/b")))
+        assertEquals(
+            listOf("/storage/emulated/0", "/storage/emulated/0/Music"),
+            pathLevelsWithin("/storage/emulated/0/Music", volumes)
+        )
+        assertEquals(listOf("/storage/1234-ABCD"), pathLevelsWithin("/storage/1234-ABCD", volumes))
+        assertEquals(listOf("/", "/storage"), pathLevelsWithin("/storage", volumes))
+    }
 }

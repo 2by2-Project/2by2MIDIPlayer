@@ -68,6 +68,7 @@
     <string name="soundfont_size_large">Large</string>
     <string name="button_sample_demo_music">Browse Sample MIDIs</string>
     <string name="folder_demo_name">Sample MIDI musics</string>
+    <string name="folder_internal_storage">Internal storage</string>
     <string name="action_play_in_next_track">Play in next track</string>
     <string name="action_share">Share</string>
     <string name="action_details">Details</string>

@@ -17,6 +17,16 @@ fun absolutePathParent(path: String): String? = absolutePathLevels(path).dropLas
 /** The folder's own name; "/" for the root. */
 fun absolutePathName(path: String): String = path.trimEnd('/').substringAfterLast('/').ifEmpty { "/" }
 
+/** The innermost of [roots] (such as storage volumes) holding [path], or null when none does. */
+fun containingRoot(path: String, roots: Collection<String>): String? =
+    roots.filter { isWithinPath(path, it) }.maxByOrNull { it.length }
+
+/** Levels of [path] from its [containingRoot] down; every level from "/" when no root holds it. */
+fun pathLevelsWithin(path: String, roots: Collection<String>): List<String> {
+    val root = containingRoot(path, roots) ?: return absolutePathLevels(path)
+    return absolutePathLevels(path).filter { isWithinPath(it, root) }
+}
+
 /** Whether [path] is [dir] itself or lies anywhere below it. */
 fun isWithinPath(path: String, dir: String): Boolean = path == dir || path.startsWith(childPathPrefix(dir))
 

@@ -290,7 +290,8 @@ fun MusicPlayerMainScreen(
 
     // Browse is a file explorer over absolute paths; null selects the start folder (primary storage).
     val primaryStorageRoot = remember { android.os.Environment.getExternalStorageDirectory().absolutePath.trimEnd('/') }
-    val storageRoots = remember(context) { storageVolumeRoots(context, primaryStorageRoot) }
+    val storageVolumes = remember(context) { storageVolumeRoots(context, primaryStorageRoot) }
+    val storageRoots = remember(storageVolumes) { storageVolumes.map { it.path } }
 
     /** The open folder, read when called so callbacks never act on a stale location. */
     fun currentBrowseDir(): String = selectedFolderKey ?: primaryStorageRoot
@@ -301,7 +302,7 @@ fun MusicPlayerMainScreen(
         selectedFolderName = when (normalized) {
             null -> null
             DEMO_FOLDER_KEY -> context.getString(R.string.folder_demo_name)
-            else -> absolutePathName(normalized)
+            else -> storageVolumes.firstOrNull { it.path == normalized }?.label ?: absolutePathName(normalized)
         }
         selectedFolderCoverUri = normalized?.let { folderCoverCache[it] }
         isFolderPreparing = false
@@ -1247,9 +1248,20 @@ fun MusicPlayerMainScreen(
                 modifier = Modifier.fillMaxSize()
             ) {
                 if (rootTab == RootTab.Browse && browseFolderRestored) LibraryAddressBar(
-                    folders = absolutePathLevels(
-                        selectedFolderKey?.takeIf { it != DEMO_FOLDER_KEY } ?: primaryStorageRoot
-                    ).map { AddressSegment(it, absolutePathName(it)) },
+                    // Levels start at the storage volume ("内部ストレージ" instead of /storage/emulated/0).
+                    // At a volume's root it offers the other volumes, the only way to switch to an SD card.
+                    folders = run {
+                        val dir = selectedFolderKey?.takeIf { it != DEMO_FOLDER_KEY } ?: primaryStorageRoot
+                        val volumeChoices = storageVolumes.map { AddressSegment(it.path, it.label) }
+                        pathLevelsWithin(dir, storageRoots).map { level ->
+                            val volume = storageVolumes.firstOrNull { it.path == level }
+                            AddressSegment(
+                                key = level,
+                                label = volume?.label ?: absolutePathName(level),
+                                choices = if (volume != null && level == dir && selectedFolderKey != DEMO_FOLDER_KEY) volumeChoices else emptyList()
+                            )
+                        }
+                    },
                     demoOpen = selectedFolderKey == DEMO_FOLDER_KEY,
                     onOpenFolder = { openBrowseFolder(it) }
                 )
@@ -1369,10 +1381,11 @@ fun MusicPlayerMainScreen(
                             AnimatedContent(
                                 targetState = screenState,
                                 transitionSpec = {
+                                    // Counted from the volume, so switching volumes fades instead of sliding.
                                     fun depth(key: String?): Int = when (key) {
-                                        null -> absolutePathLevels(primaryStorageRoot).size
-                                        DEMO_FOLDER_KEY -> absolutePathLevels(primaryStorageRoot).size + 1
-                                        else -> absolutePathLevels(key).size
+                                        null -> 1
+                                        DEMO_FOLDER_KEY -> 2
+                                        else -> pathLevelsWithin(key, storageRoots).size
                                     }
                                     val deeper = depth(targetState.second) - depth(initialState.second)
                                     val sameScreen = targetState.first == initialState.first
@@ -2376,18 +2389,25 @@ private fun buildFolderItems(
     .map { FolderItem(key = it, name = absolutePathName(it), coverUri = folderCoverUris[it]) }
     .toList()
 
-/** Mount points of the primary storage and mounted removable volumes. */
-private fun storageVolumeRoots(context: Context, primaryRoot: String): List<String> {
+/** A storage volume's mount point and the name Browse shows for it. */
+private data class StorageVolumeRoot(val path: String, val label: String)
+
+/** The primary storage ("内部ストレージ") and mounted removable volumes, named by the system. */
+private fun storageVolumeRoots(context: Context, primaryRoot: String): List<StorageVolumeRoot> {
+    val primary = StorageVolumeRoot(primaryRoot, context.getString(R.string.folder_internal_storage))
     val volumes = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
         runCatching {
             context.getSystemService(android.os.storage.StorageManager::class.java)?.storageVolumes.orEmpty()
                 .filter { it.state == android.os.Environment.MEDIA_MOUNTED || it.state == android.os.Environment.MEDIA_MOUNTED_READ_ONLY }
-                .mapNotNull { it.directory?.absolutePath?.trimEnd('/') }
+                .mapNotNull { volume ->
+                    val path = volume.directory?.absolutePath?.trimEnd('/') ?: return@mapNotNull null
+                    StorageVolumeRoot(path, volume.getDescription(context)?.takeIf { it.isNotBlank() } ?: absolutePathName(path))
+                }
         }.getOrDefault(emptyList())
     } else {
         emptyList()
     }
-    return (listOf(primaryRoot) + volumes).distinct()
+    return (listOf(primary) + volumes).distinctBy { it.path }
 }
 
 /**
@@ -2396,8 +2416,9 @@ private fun storageVolumeRoots(context: Context, primaryRoot: String): List<Stri
  */
 private fun resolveSavedBrowseFolder(saved: String?, storageRoots: List<String>): String? {
     if (saved == null || !saved.startsWith('/')) return null
+    // Levels above the volumes ("/", "/storage") are no longer shown in Browse.
+    val root = containingRoot(saved, storageRoots) ?: return null
     if (File(saved).isDirectory) return saved
-    val root = storageRoots.firstOrNull { isWithinPath(saved, it) } ?: return null
     var dir = absolutePathParent(saved)
     while (dir != null && isWithinPath(dir, root)) {
         if (File(dir).isDirectory) return dir
