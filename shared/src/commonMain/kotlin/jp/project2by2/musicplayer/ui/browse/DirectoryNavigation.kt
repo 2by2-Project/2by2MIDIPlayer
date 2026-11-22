@@ -1,10 +1,8 @@
 package jp.project2by2.musicplayer.ui.browse
 
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.animate
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.material.icons.Icons
@@ -14,6 +12,10 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.layout.SubcomposeLayout
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
@@ -39,7 +41,11 @@ private fun countLabel(key: String, count: Int): String? = when (count) {
 
 /**
  * Folder browsing chrome shared by the top level and every directory: a count summary and the
- * Grid/List switch, hidden while scrolling down. Navigation up is left to the app bar and system back.
+ * Grid/List toggle. The header floats over the list and follows its scrolling, sliding away while
+ * scrolling down and back in on any upward scroll, like an enter-always app bar. It never resizes
+ * the list, so scrolling stays steady. [content] must apply the given padding to its scrollable
+ * content so the first rows start below the header.
+ * Navigation up is left to the app bar and system back.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -47,63 +53,95 @@ fun FolderBrowseHeader(
     summary: String,
     viewMode: FolderViewMode,
     onViewModeChange: (FolderViewMode) -> Unit,
-    content: @Composable () -> Unit
+    content: @Composable (PaddingValues) -> Unit
 ) {
-    var headerVisible by rememberSaveable { mutableStateOf(true) }
+    // Pixels the header is pushed up, from 0 (shown) to its height (hidden).
+    var headerOffsetPx by rememberSaveable { mutableFloatStateOf(0f) }
+    var headerHeightPx by remember { mutableIntStateOf(0) }
     val headerScrollBehavior = remember {
         object : NestedScrollConnection {
-            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
-                when {
-                    available.y > 1f -> headerVisible = true
-                    available.y < -1f -> headerVisible = false
+            // Driven by what the list actually scrolled, so a list that cannot scroll keeps its header
+            // and the header is always fully shown again by the time the list is back at the top.
+            override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource): Offset {
+                if (consumed.y != 0f) {
+                    headerOffsetPx = (headerOffsetPx - consumed.y).coerceIn(0f, headerHeightPx.toFloat())
                 }
                 return Offset.Zero
             }
+
+            override suspend fun onPostFling(consumed: Velocity, available: Velocity): Velocity {
+                // Settle a half-hidden header once a touch scroll ends.
+                val height = headerHeightPx.toFloat()
+                if (headerOffsetPx > 0f && headerOffsetPx < height) {
+                    val target = if (headerOffsetPx < height / 2f) 0f else height
+                    animate(headerOffsetPx, target) { value, _ -> headerOffsetPx = value }
+                }
+                return Velocity.Zero
+            }
         }
     }
-    Column(Modifier.fillMaxSize().nestedScroll(headerScrollBehavior)) {
-        AnimatedVisibility(
-            visible = headerVisible,
-            enter = fadeIn() + slideInVertically { -it / 2 },
-            exit = fadeOut() + slideOutVertically { -it / 2 }
-        ) {
+    // The header is measured first so the list gets its final top padding on the very first frame.
+    SubcomposeLayout(Modifier.fillMaxSize().clipToBounds().nestedScroll(headerScrollBehavior)) { constraints ->
+        val header = subcompose(FolderBrowseSlot.Header) {
             Row(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(MaterialTheme.colorScheme.background)
+                    .padding(start = 16.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
                     text = summary,
+                    modifier = Modifier.weight(1f),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
-                Spacer(modifier = Modifier.weight(1f))
-                SingleChoiceSegmentedButtonRow {
-                    SegmentedButton(
-                        selected = viewMode == FolderViewMode.Grid,
-                        onClick = { onViewModeChange(FolderViewMode.Grid) },
-                        shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2),
-                        icon = {},
-                        label = {
-                            Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                                Icon(imageVector = Icons.Default.GridView, contentDescription = playerString("view_grid"))
-                            }
-                        }
-                    )
-                    SegmentedButton(
-                        selected = viewMode == FolderViewMode.List,
-                        onClick = { onViewModeChange(FolderViewMode.List) },
-                        shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2),
-                        icon = {},
-                        label = {
-                            Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                                Icon(imageVector = Icons.Default.ViewList, contentDescription = playerString("view_list"))
-                            }
-                        }
-                    )
+                FolderViewModeButton(viewMode, onViewModeChange)
+            }
+        }.map { it.measure(constraints.copy(minHeight = 0)) }
+        val height = header.maxOfOrNull { it.height } ?: 0
+        if (height != headerHeightPx) {
+            headerHeightPx = height
+            headerOffsetPx = headerOffsetPx.coerceAtMost(height.toFloat())
+        }
+        val topPadding = height.toDp()
+        val body = subcompose(FolderBrowseSlot.Content) { content(PaddingValues(top = topPadding)) }
+            .map { it.measure(constraints) }
+        layout(constraints.maxWidth, constraints.maxHeight) {
+            body.forEach { it.place(0, 0) }
+            header.forEach {
+                it.placeWithLayer(0, 0) {
+                    translationY = -headerOffsetPx
+                    alpha = if (headerHeightPx == 0) 1f else 1f - headerOffsetPx / headerHeightPx
                 }
             }
         }
-        Box(Modifier.weight(1f).fillMaxWidth()) { content() }
+    }
+}
+
+private enum class FolderBrowseSlot { Header, Content }
+
+/** A single icon button that switches between Grid and List; it shows the view a tap switches to. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun FolderViewModeButton(viewMode: FolderViewMode, onViewModeChange: (FolderViewMode) -> Unit) {
+    val next = if (viewMode == FolderViewMode.Grid) FolderViewMode.List else FolderViewMode.Grid
+    val label = playerString(if (next == FolderViewMode.Grid) "view_switch_to_grid" else "view_switch_to_list")
+    TooltipBox(
+        positionProvider = TooltipDefaults.rememberTooltipPositionProvider(TooltipAnchorPosition.Below),
+        tooltip = { PlainTooltip { Text(label) } },
+        state = rememberTooltipState()
+    ) {
+        IconButton(onClick = { onViewModeChange(next) }) {
+            Crossfade(targetState = next, label = "FolderViewModeIcon") { mode ->
+                Icon(
+                    imageVector = if (mode == FolderViewMode.Grid) Icons.Default.GridView else Icons.Default.ViewList,
+                    contentDescription = label
+                )
+            }
+        }
     }
 }
 

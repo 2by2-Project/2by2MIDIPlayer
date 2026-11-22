@@ -66,7 +66,7 @@ object SettingsDataStore {
 
     fun folderViewModeFlow(context: Context): Flow<Int> =
         context.settingsDataStore.data
-            .map { it[folderViewModeKey] ?: 0 }
+            .map { it[folderViewModeKey] ?: 1 }
             .distinctUntilChanged()
 
     fun maxVoicesFlow(context: Context): Flow<Int> =

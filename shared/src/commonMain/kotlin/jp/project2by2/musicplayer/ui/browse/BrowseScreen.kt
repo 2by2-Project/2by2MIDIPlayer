@@ -44,7 +44,7 @@ fun BrowseScreen(
         summary = folderBrowseSummary(items.size, 0),
         viewMode = viewMode,
         onViewModeChange = onViewModeChange
-    ) {
+    ) { headerPadding ->
         if (viewMode == FolderViewMode.Grid) {
             LazyVerticalGrid(
                 columns = GridCells.Fixed(2),
@@ -52,7 +52,10 @@ fun BrowseScreen(
                 state = gridState,
                 verticalArrangement = Arrangement.spacedBy(12.dp),
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
-                contentPadding = PaddingValues(16.dp)
+                contentPadding = PaddingValues(
+                    start = 16.dp, end = 16.dp, bottom = 16.dp,
+                    top = 16.dp + headerPadding.calculateTopPadding()
+                )
             ) {
                 itemsIndexed(items, key = { _: Int, item: LibraryFolder -> item.key }) { index: Int, folder: LibraryFolder ->
                     StaggeredFadeInItem(
@@ -84,7 +87,8 @@ fun BrowseScreen(
                 animationToken = animationToken,
                 onFolderClick = onFolderClick,
                 onDemoMusicClick = onDemoMusicClick,
-                onFolderActions = onFolderActions
+                onFolderActions = onFolderActions,
+                contentPadding = headerPadding
             )
         }
     }
@@ -98,12 +102,13 @@ private fun FolderList(
     animationToken: Long = 0L,
     onFolderClick: (LibraryFolder) -> Unit,
     onDemoMusicClick: (() -> Unit)?,
-    onFolderActions: ((LibraryFolder) -> Unit)?
+    onFolderActions: ((LibraryFolder) -> Unit)?,
+    contentPadding: PaddingValues = PaddingValues()
 ) {
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         state = listState,
-        contentPadding = PaddingValues(bottom = 72.dp)
+        contentPadding = PaddingValues(top = contentPadding.calculateTopPadding(), bottom = 72.dp)
     ) {
         lazyItemsIndexed(items, key = { _: Int, item: LibraryFolder -> item.key }) { index: Int, folder: LibraryFolder ->
             StaggeredFadeInItem(

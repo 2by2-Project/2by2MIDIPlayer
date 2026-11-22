@@ -14,6 +14,8 @@
     <string name="browse">Browse</string>
     <string name="view_grid">Grid</string>
     <string name="view_list">List</string>
+    <string name="view_switch_to_grid">Switch to grid view</string>
+    <string name="view_switch_to_list">Switch to list view</string>
     <string name="browse_summary_folders">{n} folders</string>
     <string name="browse_summary_tracks">{n} songs</string>
     <string name="browse_summary_folders_one">1 folder</string>

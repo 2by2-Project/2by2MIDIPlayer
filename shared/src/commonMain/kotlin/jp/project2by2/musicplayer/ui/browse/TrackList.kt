@@ -51,8 +51,11 @@ fun TrackList(
     onMissingItemDetected: (LibraryTrack) -> Unit = {},
     actions: @Composable (LibraryTrack, () -> Unit) -> Unit = { _, close -> TextButton(onClick = close) { Text("Close") } },
     hasDirectoryEntries: Boolean = false,
-    directoryContent: LazyListScope.() -> Unit = {}
+    directoryContent: LazyListScope.() -> Unit = {},
+    /** Extra space at the top, e.g. under a floating [FolderBrowseHeader]. */
+    contentPadding: PaddingValues = PaddingValues()
 ) {
+    val topPadding = contentPadding.calculateTopPadding()
     val scope = rememberCoroutineScope()
     val density = LocalDensity.current
     val defaultRowHeightPx = with(density) { 72.dp.toPx() }
@@ -62,24 +65,26 @@ fun TrackList(
     val removingItemIds = remember { mutableStateListOf<Long>() }
 
     if (items.isEmpty() && !hasDirectoryEntries) {
-        if (isLoading) {
-            LoadingMidiState()
-        } else if (listContext == MidiListContext.Search) {
-            EmptyMidiState(
-                icon = Icons.Default.Search,
-                message = playerString("info_no_matching_files")
-            )
-        } else {
-            EmptyMidiState(
-                icon = Icons.Default.Folder,
-                message = playerString("info_no_mid_files_found")
-            )
+        Box(Modifier.fillMaxSize().padding(top = topPadding)) {
+            if (isLoading) {
+                LoadingMidiState()
+            } else if (listContext == MidiListContext.Search) {
+                EmptyMidiState(
+                    icon = Icons.Default.Search,
+                    message = playerString("info_no_matching_files")
+                )
+            } else {
+                EmptyMidiState(
+                    icon = Icons.Default.Folder,
+                    message = playerString("info_no_mid_files_found")
+                )
+            }
         }
         return
     }
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(bottom = 72.dp)
+        contentPadding = PaddingValues(top = topPadding, bottom = 72.dp)
     ) {
         directoryContent()
         if (items.isEmpty() && hasDirectoryEntries && isLoading) {

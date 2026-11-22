@@ -53,6 +53,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -243,8 +244,8 @@ fun MusicPlayerMainScreen(
     var showNowPlaying by remember { mutableStateOf(false) }
     var showSettings by rememberSaveable { mutableStateOf(false) }
     var showNowPlayingActions by remember { mutableStateOf(false) }
-    var folderViewModeOrdinal by rememberSaveable { mutableStateOf(0) }
-    var folderViewMode by remember { mutableStateOf(FolderViewMode.Grid) }
+    var folderViewModeOrdinal by rememberSaveable { mutableStateOf(1) }
+    var folderViewMode by remember { mutableStateOf(FolderViewMode.List) }
     var pianoRollData by remember { mutableStateOf<PianoRollData?>(null) }
     var miniLiftProgress by remember { mutableFloatStateOf(0f) }
     var miniLiftDragPx by remember { mutableFloatStateOf(0f) }
@@ -1392,9 +1393,10 @@ fun MusicPlayerMainScreen(
                                                     folderViewModeOrdinal = if (mode == FolderViewMode.List) 1 else 0
                                                     scope.launch { SettingsDataStore.setFolderViewMode(context, folderViewModeOrdinal) }
                                                 }
-                                            ) {
+                                            ) { headerPadding ->
                                                 if (loadedChildFolders != null) MidiFileList(
                                                     items = items,
+                                                    contentPadding = headerPadding,
                                                     hasDirectoryEntries = childFolders.isNotEmpty() || folderKey == null,
                                                     directoryContent = {
                                                         directoryEntries(
@@ -1910,11 +1912,13 @@ private fun MidiFileList(
     onQueueNext: (MidiFileItem) -> Unit,
     onMissingItemDetected: (MidiFileItem) -> Unit = {},
     hasDirectoryEntries: Boolean = false,
-    directoryContent: androidx.compose.foundation.lazy.LazyListScope.() -> Unit = {}
+    directoryContent: androidx.compose.foundation.lazy.LazyListScope.() -> Unit = {},
+    contentPadding: PaddingValues = PaddingValues()
 ) {
     val context = LocalContext.current
     TrackList(
         hasDirectoryEntries = hasDirectoryEntries, directoryContent = directoryContent,
+        contentPadding = contentPadding,
         items = items.map { it.toLibraryTrack() }, listContext = listContext,
         isLoading = isLoading, isEditMode = isEditMode, onMoveItem = onMoveItem,
         onRemoveItem = onRemoveItem, selectedUri = selectedUri?.toString(),

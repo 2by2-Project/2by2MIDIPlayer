@@ -53,7 +53,7 @@ fun DesktopApp(controller: DesktopController) {
         state.current?.let { controller.midiFiles.resolve(it).parentFile })
     var playlistsSelected by remember { mutableStateOf(false) }
     var playlistId by remember { mutableStateOf<String?>(null) }
-    var viewMode by remember { mutableStateOf(FolderViewMode.Grid) }
+    var viewMode by remember { mutableStateOf(FolderViewMode.List) }
     var settings by remember { mutableStateOf(false) }
     var nowPlaying by remember { mutableStateOf(false) }
     var search by remember { mutableStateOf(false) }
@@ -209,7 +209,7 @@ fun DesktopApp(controller: DesktopController) {
                             onPlayPlaylist = { item -> settings = false; state.playlists.first { it.id == item.id }.paths.let { p -> p.firstOrNull()?.let { controller.select(it, p) } } })
                         else -> {
                         val showDemo = browsingFolder && dir == index.home.path
-                        val list: @Composable () -> Unit = { TrackList(tracks,
+                        val list: @Composable (PaddingValues) -> Unit = { headerPadding -> TrackList(tracks, contentPadding = headerPadding,
                             listContext = if (playlistsSelected) MidiListContext.Playlist else if (search) MidiListContext.Search else MidiListContext.Browse,
                             isLoading = state.busy,
                             isEditMode = editing && !search, selectedUri = state.current,
@@ -233,7 +233,7 @@ fun DesktopApp(controller: DesktopController) {
                                     onFolderActions = { folder -> if (File(folder.key).parentFile != null) folderActions = folder })
                             }) }
                         if (browsingFolder) FolderBrowseHeader(folderBrowseSummary(childFolders.size, tracks.size), viewMode,
-                            onViewModeChange = { viewMode = it }) { if (openListing != null) list() } else list()
+                            onViewModeChange = { viewMode = it }) { if (openListing != null) list(it) } else list(PaddingValues())
                         }
                     }
                     } }
