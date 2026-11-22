@@ -15,6 +15,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.*
+import androidx.compose.ui.keepScreenOn
 import androidx.compose.ui.graphics.*
 import androidx.compose.ui.input.nestedscroll.*
 import androidx.compose.ui.layout.*
@@ -197,6 +198,8 @@ fun NowPlayingSheet(
                         modifier = Modifier
                             .fillMaxWidth()
                             .weight(1f)
+                            // Keep the display awake only while the visible roll is scrolling.
+                            .then(if (ui.isPlaying) Modifier.keepScreenOn() else Modifier)
                     )
                 }
             }
