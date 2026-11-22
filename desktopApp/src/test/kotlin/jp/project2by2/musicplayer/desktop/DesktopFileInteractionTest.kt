@@ -40,7 +40,8 @@ class DesktopFileInteractionTest {
         val cache = File(temp, "cache")
         val store = DesktopStore(File(temp, "settings.properties"))
         try {
-            DesktopController(store, library, BassAudio(0), cache).use { player ->
+            val index = DesktopFolderIndex(home = temp.canonicalFile, cacheFile = File(temp, "index.properties"))
+            DesktopController(store, library, BassAudio(0), cache, folderIndex = index).use { player ->
                 suspend fun awaitState(predicate: (DesktopState) -> Boolean) =
                     withTimeout(30_000) { player.state.first(predicate) }
                 assertNull(awaitState { it.audioReady || it.error != null }.error)
@@ -48,11 +49,11 @@ class DesktopFileInteractionTest {
                 assertNull(awaitState { it.soundFont != null && !it.soundFontLoading || it.error != null }.error)
                 assertFalse(player.handleDroppedFiles(listOf(ignored)))
                 assertTrue(player.handleDroppedFiles(listOf(loose, folder, ignored)))
-                val dropped = awaitState { it.audio.playing && it.files.size == 2 || it.error != null }
+                // Dropped files play and a dropped folder opens in Browse; nothing is imported.
+                val dropped = awaitState { it.audio.playing && it.browseDir == folder.canonicalPath || it.error != null }
                 assertNull(dropped.error)
                 assertEquals(loose.canonicalPath, dropped.current)
-                assertFalse(loose.canonicalPath in dropped.files)
-                player.importFiles(listOf(sibling)).join()
+                assertTrue(dropped.files.isEmpty())
                 player.createPlaylist("Saved").join()
                 player.addToPlaylist(track.canonicalPath, null).join()
                 player.addToPlaylist(child.canonicalPath, null).join()
@@ -79,16 +80,13 @@ class DesktopFileInteractionTest {
                 assertTrue(state.audio.playing)
                 assertTrue(state.audio.positionMs >= 1000)
                 assertEquals(File(renamed, font.name).canonicalPath, store.load().soundFont)
-                assertEquals(setOf(newTrack.canonicalPath, newChild.canonicalPath, neighbor.canonicalPath), state.files.toSet())
+                assertEquals(renamed.canonicalPath, state.browseDir)
+                assertEquals(renamed.canonicalPath, store.load().browseDir)
                 assertEquals(listOf(newTrack.canonicalPath, newChild.canonicalPath), store.load().playlists.single().paths)
                 player.next(1).join()
                 assertEquals(newChild.canonicalPath, player.state.value.current)
                 player.next(1).join()
                 assertEquals(neighbor.canonicalPath, player.state.value.current)
-                player.removeLibraryFolder(renamed.path).join()
-                assertTrue(newTrack.isFile)
-                assertEquals(setOf(newChild.canonicalPath, neighbor.canonicalPath), store.load().files.toSet())
-                assertEquals(listOf(newTrack.canonicalPath, newChild.canonicalPath), store.load().playlists.single().paths)
             }
         } finally {
             // Remove only the individually known test fixtures, including the renamed location.
@@ -101,7 +99,7 @@ class DesktopFileInteractionTest {
             }
             neighbor.delete(); sibling.delete(); loose.delete(); ignored.delete(); font.delete()
             cache.listFiles()?.forEach { it.delete() }; cache.delete()
-            File(temp, "settings.properties").delete(); temp.delete()
+            File(temp, "settings.properties").delete(); File(temp, "index.properties").delete(); temp.delete()
         }
     }
 }

@@ -73,7 +73,13 @@ private val english = mapOf(
     "summary_midi_file_missing" to "File is missing",
     "topbar_search_summary" to "Search by filename / track name / artist",
     "view_grid" to "Grid",
-    "view_list" to "List"
+    "view_list" to "List",
+    "browse_summary_folders" to "{n} folders",
+    "browse_summary_tracks" to "{n} songs",
+    "browse_summary_folders_one" to "1 folder",
+    "browse_summary_tracks_one" to "1 song",
+    "browse_home" to "Home",
+    "browse_drives" to "This PC",
 )
 private val japanese = mapOf(
     "settings_category_file_association" to "ファイルの関連付け",
@@ -143,5 +149,11 @@ private val japanese = mapOf(
     "summary_midi_file_missing" to "ファイルがありません",
     "topbar_search_summary" to "ファイル名・曲名・アーティストで検索",
     "view_grid" to "グリッド",
-    "view_list" to "リスト"
+    "view_list" to "リスト",
+    "browse_summary_folders" to "{n} フォルダ",
+    "browse_summary_tracks" to "{n} 曲",
+    "browse_summary_folders_one" to "1 フォルダ",
+    "browse_summary_tracks_one" to "1 曲",
+    "browse_home" to "ホーム",
+    "browse_drives" to "PC",
 )

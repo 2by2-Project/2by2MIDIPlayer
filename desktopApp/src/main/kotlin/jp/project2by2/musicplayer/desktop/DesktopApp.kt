@@ -52,7 +52,6 @@ fun DesktopApp(controller: DesktopController) {
     val currentArtwork = rememberDesktopArtwork(artworkLoader,
         state.current?.let { controller.midiFiles.resolve(it).parentFile })
     var playlistsSelected by remember { mutableStateOf(false) }
-    var folderKey by remember { mutableStateOf<String?>(null) }
     var playlistId by remember { mutableStateOf<String?>(null) }
     var viewMode by remember { mutableStateOf(FolderViewMode.Grid) }
     var settings by remember { mutableStateOf(false) }
@@ -74,17 +73,39 @@ fun DesktopApp(controller: DesktopController) {
     val demoFolderName = playerString("folder_demo_name")
     fun folderName(path: String) = if (DesktopMidiFiles.isDemo(path)) demoFolderName else File(path).parentFile?.name.orEmpty()
     fun title(path: String) = midiDisplayTitle(DesktopMidiFiles.fileName(path), state.metadata[path]?.title)
-    val folders = remember(state.files) {
-        state.files.map { File(it).parentFile }.distinctBy { it.path }
-            .map { LibraryFolder(it.path, it.name) }.sortedBy { it.name.lowercase() }
+    // Browse is an explorer over folders holding MIDI files, starting at home and remembering the last folder.
+    val index = controller.folderIndex
+    val indexState by index.state.collectAsState()
+    val dir = state.browseDir ?: index.home.path
+    val homeName = playerString("browse_home")
+    val drivesName = playerString("browse_drives")
+    fun folderLabel(path: String) = when {
+        path == index.home.path -> homeName
+        path == DesktopFolderIndex.DRIVES -> drivesName
+        File(path).parentFile == null -> path.trimEnd('\\').ifEmpty { path }
+        else -> File(path).name
     }
-    val paths = remember(state.files, state.demoFiles, state.metadata, playlist, playlistsSelected, folderKey, demos, search, query) {
-        (if (playlistsSelected) playlist?.paths.orEmpty() else if (demos) state.demoFiles else state.files).filter { path ->
-            (playlistsSelected || demos || folderKey == null || File(path).parent == folderKey) &&
-                (!search || matchesMidiSearch(DesktopMidiFiles.fileName(path), state.metadata[path]?.title,
-                    state.metadata[path]?.copyright, folderName(path), query))
+    val childFolders = remember(dir, indexState) {
+        index.children(dir, indexState).map { LibraryFolder(it.path, if (it.parentFile == null) folderLabel(it.path) else it.name) }
+    }
+    val directoryTracks by produceState(emptyList<String>(), dir) {
+        value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { index.tracks(dir) }
+    }
+    val searching = search && query.isNotBlank()
+    val browsingFolder = !playlistsSelected && !demos && !searching
+    val paths = remember(directoryTracks, indexState, state.demoFiles, state.metadata, playlist, playlistsSelected, dir, demos, searching, query) {
+        when {
+            playlistsSelected -> playlist?.paths.orEmpty()
+            demos -> state.demoFiles
+            // Search covers the open folder and everything below it, like Android.
+            searching -> index.filesUnder(dir, indexState)
+            else -> directoryTracks
+        }.filter { path ->
+            !searching || matchesMidiSearch(DesktopMidiFiles.fileName(path), state.metadata[path]?.title,
+                state.metadata[path]?.copyright, folderName(path), query)
         }
     }
+    LaunchedEffect(paths) { controller.loadMetadata(paths.take(500)) }
     val tracks = remember(paths, state.metadata) {
         paths.map { path -> LibraryTrack(path, title(path),
             midiDisplaySecondaryText(DesktopMidiFiles.fileName(path), folderName(path), state.metadata[path]?.title, state.metadata[path]?.copyright),
@@ -95,7 +116,7 @@ fun DesktopApp(controller: DesktopController) {
             search -> { search = false; query = "" }
             playlistId != null -> { playlistId = null; editing = false }
             demos -> demos = false
-            else -> folderKey = null
+            else -> index.parent(dir)?.let(controller::browse)
         }
     }
     fun back(wide: Boolean) {
@@ -130,19 +151,18 @@ fun DesktopApp(controller: DesktopController) {
             Scaffold(topBar = {
                 PlayerTopAppBar(
                     title = {
-                        val screenTitle = playlist?.name ?: if (demos) demoFolderName else folderKey?.let { File(it).name }
+                        val screenTitle = playlist?.name ?: if (demos) demoFolderName else folderLabel(dir)
                         if (screenTitle == null) PlayerLogo() else Text(screenTitle, maxLines = 1,
                             modifier = Modifier.fillMaxWidth(), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
                     },
                     navigationIcon = {
-                        if (folderKey != null || playlistId != null || demos) IconButton(onClick = ::backLibrary) {
+                        if (playlistId != null || demos || (!playlistsSelected && index.parent(dir) != null)) IconButton(onClick = ::backLibrary) {
                             Icon(Icons.Default.ArrowBack, playerString("back"))
                         }
                     },
                     actions = {
                         if (!playlistsSelected) {
                             IconButton(onClick = { chooseFiles(scope, result = controller::openFiles, onError = controller::reportError) }) { Icon(Icons.Default.AudioFile, "MIDIファイルを開いて再生") }
-                            IconButton(onClick = { chooseFiles(scope, directory = true, result = controller::importFiles, onError = controller::reportError) }) { Icon(Icons.Default.CreateNewFolder, "フォルダを追加") }
                         }
                         if (playlist != null) IconButton(onClick = { editing = !editing }) { Icon(if (editing) Icons.Default.Done else Icons.Default.Edit, "編集") }
                         if (!playlistsSelected) IconButton(onClick = { search = !search; query = "" }) {
@@ -161,8 +181,8 @@ fun DesktopApp(controller: DesktopController) {
                             formatPlayerDuration(state.audio.positionMs), controller::togglePlay, { settings = false; nowPlaying = true })
                     }
                     PlayerNavigationBar(playlistsSelected,
-                        onBrowse = { playlistsSelected = false; folderKey = null; playlistId = null; search = false; query = ""; editing = false; demos = false },
-                        onPlaylists = { playlistsSelected = true; folderKey = null; playlistId = null; search = false; query = ""; editing = false; demos = false })
+                        onBrowse = { playlistsSelected = false; playlistId = null; search = false; query = ""; editing = false; demos = false },
+                        onPlaylists = { playlistsSelected = true; playlistId = null; search = false; query = ""; editing = false; demos = false })
                 }
             }) { padding ->
                 Column(Modifier.padding(padding).fillMaxSize()) {
@@ -174,14 +194,12 @@ fun DesktopApp(controller: DesktopController) {
                             onCreatePlaylist = { createPlaylist = true }, onOpenPlaylist = { playlistId = it.id },
                             onShowPlaylistActions = { item -> playlistActions = state.playlists.first { it.id == item.id } },
                             onPlayPlaylist = { item -> settings = false; state.playlists.first { it.id == item.id }.paths.let { p -> p.firstOrNull()?.let { controller.select(it, p) } } })
-                        !playlistsSelected && folderKey == null && !demos && (!search || query.isBlank()) -> BrowseScreen(
-                            folders, cover = { folder -> rememberDesktopArtwork(artworkLoader, File(folder.key)) },
-                            onFolderClick = { folderKey = it.key }, onDemoMusicClick = { demos = true; controller.loadDemos() },
-                            viewMode = viewMode, onViewModeChange = { viewMode = it },
-                            onFolderActions = { folderActions = it })
-                        else -> TrackList(tracks,
+                        else -> {
+                        val showDemo = browsingFolder && dir == index.home.path
+                        val list: @Composable () -> Unit = { TrackList(tracks,
                             listContext = if (playlistsSelected) MidiListContext.Playlist else if (search) MidiListContext.Search else MidiListContext.Browse,
-                            isLoading = state.busy, isEditMode = editing && !search, selectedUri = state.current,
+                            isLoading = state.busy || (browsingFolder && indexState.scanning && childFolders.isEmpty()),
+                            isEditMode = editing && !search, selectedUri = state.current,
                             onMoveItem = { id, delta -> playlist?.let { controller.movePlaylistTrack(it.id, tracks.first { t -> t.playlistItemId == id }.uri, delta) } },
                             onRemoveItem = { id -> playlist?.let { controller.removeFromPlaylist(tracks.first { t -> t.playlistItemId == id }.uri, it.id) } },
                             onItemClick = { settings = false; controller.select(it.uri, paths) }, onAddToPlaylist = { addTrack = it.uri },
@@ -191,7 +209,19 @@ fun DesktopApp(controller: DesktopController) {
                                     onPlay = { close(); controller.queueNext(track.uri) },
                                     onShare = { close(); shareTrack = track.uri },
                                     onAddToPlaylist = { close(); addTrack = track.uri })
-                            })
+                            },
+                            hasDirectoryEntries = browsingFolder && (childFolders.isNotEmpty() || showDemo),
+                            directoryContent = {
+                                if (browsingFolder) directoryEntries(childFolders, viewMode,
+                                    onFolder = { controller.browse(it.key) },
+                                    demo = if (showDemo) ({ demos = true; controller.loadDemos() }) else null,
+                                    cover = { folder -> rememberDesktopArtwork(artworkLoader, File(folder.key)) },
+                                    // Drive roots cannot be renamed; other folders offer open and rename.
+                                    onFolderActions = { folder -> if (File(folder.key).parentFile != null) folderActions = folder })
+                            }) }
+                        if (browsingFolder) FolderBrowseHeader(folderBrowseSummary(childFolders.size, tracks.size), viewMode,
+                            onViewModeChange = { viewMode = it }) { list() } else list()
+                        }
                     }
                     }
                 }
@@ -228,8 +258,7 @@ fun DesktopApp(controller: DesktopController) {
     folderActions?.let { folder ->
         FolderActionsDialog(folder.name, folder.key, { folderActions = null },
             onOpen = { folderActions = null; controller.openFolder(folder.key) },
-            onRename = { folderActions = null; renameFolder = folder },
-            onRemove = { folderActions = null; controller.removeLibraryFolder(folder.key) })
+            onRename = { folderActions = null; renameFolder = folder })
     }
     renameFolder?.let { folder ->
         RenameFolderDialog(folder.name, { renameFolder = null }) { name ->

@@ -40,10 +40,13 @@ data class DesktopState(
     val maxVoices: Int = 40,
     val effectsEnabled: Boolean = false,
     val reverbStrength: Float = 1f,
+    /** Folder open in Browse; restored on the next launch. */
+    val browseDir: String? = null,
 )
 
 /** Plain properties keep desktop settings separate from Android's database and DataStore. */
 class DesktopStore(private val file: File = File(System.getProperty("user.home"), ".2by2MIDIPlayer/desktop.properties")) {
+    val directory: File get() = file.absoluteFile.parentFile
     fun load(): DesktopState {
         if (!file.isFile) return DesktopState()
         val p = Properties().apply { file.inputStream().use(::load) }
@@ -58,7 +61,8 @@ class DesktopStore(private val file: File = File(System.getProperty("user.home")
             loop = p.getProperty("loop").toBoolean(), shuffle = p.getProperty("shuffle").toBoolean(),
             maxVoices = p.getProperty("maxVoices")?.toIntOrNull()?.coerceIn(1, 1000) ?: 40,
             effectsEnabled = p.getProperty("effectsEnabled").toBoolean(),
-            reverbStrength = p.getProperty("reverbStrength")?.toFloatOrNull()?.takeIf { it.isFinite() }?.coerceIn(0f, 3f) ?: 1f)
+            reverbStrength = p.getProperty("reverbStrength")?.toFloatOrNull()?.takeIf { it.isFinite() }?.coerceIn(0f, 3f) ?: 1f,
+            browseDir = p.getProperty("browse.dir"))
     }
 
     fun save(state: DesktopState) {
@@ -76,6 +80,7 @@ class DesktopStore(private val file: File = File(System.getProperty("user.home")
         state.soundFont?.let { put("soundFont", it) }
         put("volume", state.volume); put("loop", state.loop); put("shuffle", state.shuffle)
         put("maxVoices", state.maxVoices); put("effectsEnabled", state.effectsEnabled); put("reverbStrength", state.reverbStrength)
+        state.browseDir?.let { put("browse.dir", it) }
         file.parentFile.mkdirs()
         val temp = File(file.parentFile, file.name + ".tmp")
         temp.outputStream().use { p.store(it, "2by2 MIDI Player desktop") }
@@ -93,6 +98,7 @@ class DesktopController(
     private val engine: BassAudio = BassAudio(),
     private val fontCache: File = File(System.getProperty("java.io.tmpdir"), "2by2MIDIPlayer-soundfonts"),
     startupFiles: List<File> = emptyList(),
+    val folderIndex: DesktopFolderIndex = DesktopFolderIndex(cacheFile = File(store.directory, "folder-index.properties")),
 ) : AutoCloseable {
     private val executor = Executors.newSingleThreadExecutor { r -> Thread(r, "desktop-audio").apply { isDaemon = true } }
     private val dispatcher = executor.asCoroutineDispatcher()
@@ -114,7 +120,15 @@ class DesktopController(
 
     init {
         operation {
-            mutable.value = store.load()
+            val stored = store.load()
+            folderIndex.loadCache()
+            // Folders added to the former desktop library stay reachable while browsing.
+            folderIndex.addKnown(stored.files)
+            mutable.value = stored.copy(browseDir = folderIndex.resolve(stored.browseDir))
+            scope.launch(Dispatchers.IO) {
+                folderIndex.scanHome()
+                folderIndex.prepare(mutable.value.browseDir ?: folderIndex.home.path)
+            }
             refreshMetadata(mutable.value.files + mutable.value.playlists.flatMap { it.paths })
             val status = engine.initialize()
             mutable.update { it.copy(audioReady = true, engine = status) }
@@ -146,22 +160,28 @@ class DesktopController(
     private fun save() = store.save(mutable.value)
     fun dismissError() { mutable.update { it.copy(error = null) } }
     fun reportError(failure: Exception) { mutable.update { it.copy(error = failure.message ?: failure.javaClass.simpleName) } }
+    /** Dropped MIDI files play; a dropped folder (or the folder of the first file) opens in Browse. */
     fun handleDroppedFiles(files: List<File>): Boolean {
         val directories = files.filter { it.isDirectory }
-        val midi = files.filter { it.isFile && it.extension.lowercase() in listOf("mid", "midi") }
+        val midi = files.filter { it.isFile && it.isMidi() }
         if (midi.isNotEmpty()) openFiles(midi)
-        if (directories.isNotEmpty()) importFiles(directories)
+        (directories.firstOrNull() ?: midi.firstOrNull()?.absoluteFile?.parentFile)?.let { browse(it.canonicalPath) }
         return midi.isNotEmpty() || directories.isNotEmpty()
+    }
+    fun browse(dir: String) = operation {
+        mutable.update { it.copy(browseDir = dir) }
+        save()
+        scope.launch(Dispatchers.IO) { folderIndex.prepare(dir) }
+    }
+    /** Reads titles for listed tracks that have not been parsed yet. */
+    fun loadMetadata(paths: List<String>) {
+        val known = mutable.value.metadata
+        paths.filter { it !in known }.takeIf { it.isNotEmpty() }?.let(::refreshMetadata)
     }
     fun openFolder(path: String) = operation {
         val folder = File(path)
         require(folder.isDirectory) { "フォルダが見つかりません: $path" }
         java.awt.Desktop.getDesktop().open(folder)
-    }
-    fun removeLibraryFolder(path: String) = operation {
-        val folder = File(path).canonicalFile
-        mutable.update { state -> state.copy(files = state.files.filterNot { File(it).parentFile?.canonicalFile == folder }) }
-        save()
     }
     fun renameFolder(path: String, name: String) = operation {
         val source = File(path).canonicalFile.toPath()
@@ -187,10 +207,12 @@ class DesktopController(
             Files.move(source, target)
             queue = queue.map(::remap)
             pendingStartupPath = pendingStartupPath?.let(::remap)
+            folderIndex.remap(source.toString(), target.toString())
             mutable.update { state -> state.copy(
                 files = state.files.map(::remap),
                 playlists = state.playlists.map { it.copy(paths = it.paths.map(::remap)) },
                 current = state.current?.let(::remap),
+                browseDir = state.browseDir?.let(::remap),
                 soundFont = state.soundFont?.let(::remap),
                 metadata = state.metadata.mapKeys { remap(it.key) },
             ) }
@@ -209,24 +231,12 @@ class DesktopController(
             }
         }
     }
-    fun importFiles(files: List<File>) = operation {
-        mutable.update { it.copy(busy = true) }
-        val found = files.flatMap { file ->
-            if (file.isDirectory) Files.walk(file.toPath(), 12).use { stream ->
-                stream.filter { Files.isRegularFile(it) && it.fileName.toString().substringAfterLast('.', "").lowercase() in listOf("mid", "midi") }
-                    .limit(10000).map { it.toFile().canonicalPath }.toList()
-            } else if (file.extension.lowercase() in listOf("mid", "midi")) listOf(file.canonicalPath) else emptyList()
-        }
-        mutable.update { it.copy(files = (it.files + found).distinct().sortedBy { path -> File(path).name.lowercase() }) }
-        refreshMetadata(found)
-        save()
-    }
     fun openLaunchFiles(files: List<File>) = operation { prepareLaunchFiles(files) }
 
     private fun prepareLaunchFiles(files: List<File>) {
         val paths = files.map { file ->
             require(file.isFile) { "ファイルが見つかりません: ${file.path}" }
-            require(file.extension.lowercase() in listOf("mid", "midi")) { "MIDIファイルを指定してください: ${file.name}" }
+            require(file.isMidi()) { "MIDIファイルを指定してください: ${file.name}" }
             file.canonicalPath
         }.distinct()
         val first = paths.firstOrNull() ?: return
@@ -420,6 +430,7 @@ class DesktopController(
     override fun close() {
         if (closed) return
         closed = true
+        folderIndex.cancelled = true
         scope.cancel()
         try {
             // Queue after in-flight native calls on the same BASS device thread.

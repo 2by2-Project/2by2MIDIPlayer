@@ -1,9 +1,9 @@
 package jp.project2by2.musicplayer
 import jp.project2by2.musicplayer.model.*
 import jp.project2by2.musicplayer.state.NowPlayingState
-import jp.project2by2.musicplayer.ui.browse.BrowseScreen
 import jp.project2by2.musicplayer.ui.browse.TrackList
-import jp.project2by2.musicplayer.ui.browse.DirectoryPathHeader
+import jp.project2by2.musicplayer.ui.browse.FolderBrowseHeader
+import jp.project2by2.musicplayer.ui.browse.folderBrowseSummary
 import jp.project2by2.musicplayer.ui.browse.directoryEntries
 import jp.project2by2.musicplayer.ui.browse.DemoMusicButton
 import jp.project2by2.musicplayer.ui.browse.MidiFileActionsDialog
@@ -272,7 +272,7 @@ fun MusicPlayerMainScreen(
 
     fun openBrowseFolder(key: String?) {
         selectedFolderKey = key
-        selectedFolderName = key?.let { extractFolderName(it) }
+        selectedFolderName = key?.let { k -> folderItems.firstOrNull { it.key == k }?.name ?: extractFolderName(k) }
         selectedFolderCoverUri = key?.let { folderCoverCache[it] }
         isFolderPreparing = false
     }
@@ -1366,33 +1366,27 @@ fun MusicPlayerMainScreen(
                         else -> {
                             val screenState: Pair<BrowseScreen, String?> = when {
                                 isSearching -> BrowseScreen.Search to selectedFolderKey
-                                selectedFolderKey == null -> BrowseScreen.Files to null
                                 else -> BrowseScreen.Files to selectedFolderKey
                             }
                             AnimatedContent(
                                 targetState = screenState,
                                 transitionSpec = {
-                                    val target = targetState.first
-                                    val initial = initialState.first
+                                    fun depth(key: String?): Int = generateSequence(key) { parentLibraryFolder(it) }.count()
+                                    val deeper = depth(targetState.second) - depth(initialState.second)
+                                    val sameScreen = targetState.first == initialState.first
                                     when {
-                                        target == BrowseScreen.Files && initial == BrowseScreen.Folders ->
+                                        sameScreen && deeper != 0 -> {
+                                            // Explorer-style: opening a folder slides in from the right, going up from the left.
+                                            val direction = if (deeper > 0) 1 else -1
                                             slideInHorizontally(
-                                                initialOffsetX = { it },
+                                                initialOffsetX = { it * direction },
                                                 animationSpec = tween(220)
                                             ) + fadeIn(animationSpec = tween(120)) togetherWith
                                                 slideOutHorizontally(
-                                                    targetOffsetX = { -it },
+                                                    targetOffsetX = { -it * direction },
                                                     animationSpec = tween(220)
                                                 ) + fadeOut(animationSpec = tween(120))
-                                        target == BrowseScreen.Folders && initial == BrowseScreen.Files ->
-                                            slideInHorizontally(
-                                                initialOffsetX = { -it },
-                                                animationSpec = tween(220)
-                                            ) + fadeIn(animationSpec = tween(120)) togetherWith
-                                                slideOutHorizontally(
-                                                    targetOffsetX = { it },
-                                                    animationSpec = tween(220)
-                                                ) + fadeOut(animationSpec = tween(120))
+                                        }
                                         else ->
                                             fadeIn(animationSpec = tween(120)) togetherWith
                                                 fadeOut(animationSpec = tween(120))
@@ -1401,35 +1395,6 @@ fun MusicPlayerMainScreen(
                                 label = "BrowseContent"
                             ) { (screen, folderKey) ->
                                 when (screen) {
-                                    BrowseScreen.Folders -> BrowseRefreshContainer(
-                                        isRefreshing = isBrowseRefreshing,
-                                        onRefresh = { requestBrowseRefresh() }
-                                    ) {
-                                        FolderGrid(
-                                            items = folderItems,
-                                            folderCoverCache = folderCoverCache,
-                                            gridState = folderGridState,
-                                            animationToken = browseAnimationToken,
-                                            onFolderClick = { folder: FolderItem ->
-                                                val selectedFolder: FolderItem = folder
-                                                rootTab = RootTab.Browse
-                                                selectedFolderKey = selectedFolder.key
-                                                selectedFolderName = selectedFolder.name
-                                                selectedFolderCoverUri = folderCoverCache[selectedFolder.key] ?: selectedFolder.coverUri
-                                            },
-                                            onDemoMusicClick = { handleDemoMusicClick() },
-                                            viewMode = folderViewMode,
-                                            onViewModeChange = { mode ->
-                                                folderViewMode = mode
-                                                val persisted = if (mode == FolderViewMode.List) 1 else 0
-                                                folderViewModeOrdinal = persisted
-                                                scope.launch {
-                                                    SettingsDataStore.setFolderViewMode(context, persisted)
-                                                }
-                                            },
-                                            listState = folderListState
-                                        )
-                                    }
                                     BrowseScreen.Files -> {
                                         val items = midiFiles.filter {
                                             it.folderKey == folderKey.orEmpty() &&
@@ -1442,28 +1407,22 @@ fun MusicPlayerMainScreen(
                                         isRefreshing = isBrowseRefreshing,
                                         onRefresh = { requestBrowseRefresh() }
                                     ) {
-                                            Column(Modifier.fillMaxSize()) {
-                                                DirectoryPathHeader(
-                                                    path = when {
-                                                        folderKey == "assets_demo" -> context.getString(R.string.folder_demo_name)
-                                                        folderKey?.startsWith('/') == true -> folderKey
-                                                        else -> context.getString(R.string.browse_internal_storage) + "/" + folderKey.orEmpty()
-                                                    },
-                                                    viewMode = folderViewMode,
-                                                    onViewModeChange = { mode ->
-                                                        folderViewMode = mode
-                                                        folderViewModeOrdinal = if (mode == FolderViewMode.List) 1 else 0
-                                                        scope.launch { SettingsDataStore.setFolderViewMode(context, folderViewModeOrdinal) }
-                                                    }
-                                                )
+                                            FolderBrowseHeader(
+                                                summary = folderBrowseSummary(childFolders.size, items.size),
+                                                viewMode = folderViewMode,
+                                                onViewModeChange = { mode ->
+                                                    folderViewMode = mode
+                                                    folderViewModeOrdinal = if (mode == FolderViewMode.List) 1 else 0
+                                                    scope.launch { SettingsDataStore.setFolderViewMode(context, folderViewModeOrdinal) }
+                                                }
+                                            ) {
                                                 MidiFileList(
                                                     items = items,
-                                                    hasDirectoryEntries = true,
+                                                    hasDirectoryEntries = childFolders.isNotEmpty() || folderKey == null,
                                                     directoryContent = {
                                                         directoryEntries(
                                                             folders = childFolders,
                                                             viewMode = folderViewMode,
-                                                            onParent = if (folderKey != null) ({ browseParent() }) else null,
                                                             onFolder = { openBrowseFolder(it.key) },
                                                             demo = if (folderKey == null) ({ handleDemoMusicClick() }) else null,
                                                             cover = { folder ->
@@ -2031,31 +1990,6 @@ private fun MidiFileList(
     )
 }
 
-@OptIn(ExperimentalFoundationApi::class)
-@Composable
-private fun FolderGrid(
-    items: List<FolderItem>,
-    folderCoverCache: MutableMap<String, Uri?>,
-    gridState: LazyGridState = rememberLazyGridState(),
-    listState: LazyListState = rememberLazyListState(),
-    animationToken: Long = 0L,
-    onFolderClick: (FolderItem) -> Unit,
-    onDemoMusicClick: () -> Unit,
-    viewMode: FolderViewMode,
-    onViewModeChange: (FolderViewMode) -> Unit
-) {
-    BrowseScreen(
-        items = items.map { LibraryFolder(it.key, it.name) },
-        cover = { folder ->
-            val original = items.first { it.key == folder.key }
-            rememberFolderCoverBitmap(original.key, original.coverUri, folderCoverCache)
-        },
-        gridState = gridState, listState = listState, animationToken = animationToken,
-        onFolderClick = { folder -> onFolderClick(items.first { it.key == folder.key }) },
-        onDemoMusicClick = onDemoMusicClick, viewMode = viewMode, onViewModeChange = onViewModeChange
-    )
-}
-
 @Composable
 private fun PlaylistHome(
     repository: PlaylistRepository,
@@ -2352,7 +2286,6 @@ private fun AddToPlaylistDialog(
 }
 
 private enum class BrowseScreen {
-    Folders,
     Files,
     Search
 }
@@ -2601,8 +2534,15 @@ private fun buildFolderItems(
     folderCoverUris: Map<String, Uri?> = emptyMap()
 ): List<FolderItem> {
     return libraryFolderHierarchy(items.map { it.folderKey }).map {
-        FolderItem(key = it.key, name = it.name, coverUri = folderCoverUris[it.key])
+        FolderItem(key = it.key, name = storageVolumeName(context, it.key) ?: it.name, coverUri = folderCoverUris[it.key])
     }
+}
+
+/** Removable volumes are top-level folders keyed by their mount path; show their user-facing name. */
+private fun storageVolumeName(context: Context, key: String): String? {
+    if (!key.startsWith('/') || parentLibraryFolder(key) != null) return null
+    val storageManager = context.getSystemService(android.os.storage.StorageManager::class.java) ?: return null
+    return runCatching { storageManager.getStorageVolume(java.io.File(key))?.getDescription(context) }.getOrNull()
 }
 
 private fun isMidiFileAccessible(context: Context, uri: Uri): Boolean {

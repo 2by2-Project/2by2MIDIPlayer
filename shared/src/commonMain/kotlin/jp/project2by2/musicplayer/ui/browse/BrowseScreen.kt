@@ -40,68 +40,11 @@ fun BrowseScreen(
     onViewModeChange: (FolderViewMode) -> Unit,
     onFolderActions: ((LibraryFolder) -> Unit)? = null
 ) {
-    var headerVisible by rememberSaveable { mutableStateOf(true) }
-
-    val headerScrollBehavior = remember {
-        object : NestedScrollConnection {
-            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
-                when {
-                    available.y > 1f -> headerVisible = true   // 下方向スクロールで表示
-                    available.y < -1f -> headerVisible = false // 上方向スクロールで非表示
-                }
-                return Offset.Zero
-            }
-        }
-    }
-
-    Column(
-        modifier = Modifier.fillMaxSize()
-            .nestedScroll(headerScrollBehavior)
+    FolderBrowseHeader(
+        summary = folderBrowseSummary(items.size, 0),
+        viewMode = viewMode,
+        onViewModeChange = onViewModeChange
     ) {
-        AnimatedVisibility(
-            visible = headerVisible,
-            enter = fadeIn() + slideInVertically { -it / 2 },
-            exit = fadeOut() + slideOutVertically { -it / 2 }
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
-                horizontalArrangement = Arrangement.End,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                val folderCount = items.size
-                Text(
-                    text = "$folderCount folders",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Spacer(modifier = Modifier.weight(1f))
-                SingleChoiceSegmentedButtonRow {
-                    SegmentedButton(
-                        selected = viewMode == FolderViewMode.Grid,
-                        onClick = { onViewModeChange(FolderViewMode.Grid) },
-                        shape = androidx.compose.material3.SegmentedButtonDefaults.itemShape(index = 0, count = 2),
-                        icon = {},
-                        label = {
-                            Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                                Icon(imageVector = Icons.Default.GridView, contentDescription = playerString("view_grid"))
-                            }
-                        }
-                    )
-                    SegmentedButton(
-                        selected = viewMode == FolderViewMode.List,
-                        onClick = { onViewModeChange(FolderViewMode.List) },
-                        shape = androidx.compose.material3.SegmentedButtonDefaults.itemShape(index = 1, count = 2),
-                        icon = {},
-                        label = {
-                            Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                                Icon(imageVector = Icons.Default.ViewList, contentDescription = playerString("view_list"))
-                            }
-                        }
-                    )
-                }
-            }
-        }
-
         if (viewMode == FolderViewMode.Grid) {
             LazyVerticalGrid(
                 columns = GridCells.Fixed(2),

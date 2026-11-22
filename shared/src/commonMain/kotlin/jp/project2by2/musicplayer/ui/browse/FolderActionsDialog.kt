@@ -14,7 +14,7 @@ import jp.project2by2.musicplayer.ui.player.playerString
 
 @Composable
 fun FolderActionsDialog(title: String, summary: String, onDismiss: () -> Unit,
-    onOpen: () -> Unit, onRename: () -> Unit, onRemove: () -> Unit) {
+    onOpen: () -> Unit, onRename: () -> Unit, onRemove: (() -> Unit)? = null) {
     AlertDialog(onDismissRequest = onDismiss, title = { Text(title) }, text = {
         Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             SelectionContainer {
@@ -31,7 +31,7 @@ fun FolderActionsDialog(title: String, summary: String, onDismiss: () -> Unit,
                 Spacer(Modifier.width(8.dp))
                 Text("名前の変更")
             }
-            ElevatedButton(onClick = onRemove, modifier = Modifier.fillMaxWidth()) {
+            if (onRemove != null) ElevatedButton(onClick = onRemove, modifier = Modifier.fillMaxWidth()) {
                 Icon(Icons.Default.Delete, null)
                 Spacer(Modifier.width(8.dp))
                 Text("ライブラリから削除")

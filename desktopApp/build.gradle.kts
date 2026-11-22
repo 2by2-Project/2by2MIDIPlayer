@@ -69,6 +69,7 @@ tasks.test {
     systemProperty("bass.native.dir", rootProject.file("proprietary").absolutePath)
     systemProperty("midi.demo.dir", rootProject.file("app/src/main/assets/demo").absolutePath)
     systemProperty("native.fixture.dir", layout.buildDirectory.dir("native-fixtures").get().asFile.absolutePath)
+    systemProperty("browse.home.dir", layout.buildDirectory.dir("test-browse-home").get().asFile.absolutePath)
 }
 
 // Compose copies these resources alongside the installed application, outside its jars.

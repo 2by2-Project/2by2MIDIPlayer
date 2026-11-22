@@ -19,6 +19,11 @@ class DesktopContextClickTest {
         if (config.getOrNull(SemanticsProperties.Text)?.any { it.text == text } == true) this
         else children.firstNotNullOfOrNull { it.findText(text) }
 
+    private fun ImageComposeScene.hasText(text: String): Boolean {
+        render().close()
+        return semanticsOwners.any { it.rootSemanticsNode.findText(text) != null }
+    }
+
     private fun ImageComposeScene.click(text: String, button: PointerButton) {
         render().close()
         val node = semanticsOwners.firstNotNullOfOrNull { it.rootSemanticsNode.findText(text) }
@@ -73,8 +78,8 @@ class DesktopContextClickTest {
     @Test fun directoryEntriesAndTracksShareNavigationInBothViewModes() {
         SwingUtilities.invokeAndWait {
             for (mode in FolderViewMode.entries) {
-                var parentClicks = 0
                 var openedFolder: String? = null
+                var folderActions: String? = null
                 var plays = 0
                 val scene = ImageComposeScene(width = 500, height = 900) {
                     _2by2MusicPlayerTheme { Surface {
@@ -83,13 +88,16 @@ class DesktopContextClickTest {
                             onAddToPlaylist = {}, onQueueNext = {}, hasDirectoryEntries = true,
                             directoryContent = {
                                 directoryEntries(listOf(LibraryFolder("Music/Album", "Album")), mode,
-                                    onParent = { parentClicks++ }, onFolder = { openedFolder = it.key })
+                                    onFolder = { openedFolder = it.key }, onFolderActions = { folderActions = it.key })
                             })
                     } }
                 }
                 try {
-                    scene.click("..", PointerButton.Primary)
-                    assertEquals(1, parentClicks)
+                    // Going up is the app bar's and system back's job; the list has no ".." row.
+                    assertFalse(scene.hasText(".."))
+                    scene.click("Album", PointerButton.Secondary)
+                    assertEquals("Music/Album", folderActions)
+                    assertNull(openedFolder)
                     scene.click("Album", PointerButton.Primary)
                     assertEquals("Music/Album", openedFolder)
                     scene.click("Song", PointerButton.Primary)
@@ -99,22 +107,22 @@ class DesktopContextClickTest {
         }
     }
 
-    @Test fun parentEntryRemainsAvailableWithoutTracks() {
+    @Test fun folderOnlyDirectoryShowsItsSubfolders() {
         SwingUtilities.invokeAndWait {
-            var parentClicks = 0
+            var openedFolder: String? = null
             val scene = ImageComposeScene(width = 500, height = 600) {
                 _2by2MusicPlayerTheme { Surface {
                     TrackList(emptyList(), MidiListContext.Browse, selectedUri = null,
                         onItemClick = {}, onAddToPlaylist = {}, onQueueNext = {},
                         hasDirectoryEntries = true, directoryContent = {
-                            directoryEntries(emptyList(), FolderViewMode.List,
-                                onParent = { parentClicks++ }, onFolder = {})
+                            directoryEntries(listOf(LibraryFolder("Music", "Music")), FolderViewMode.List,
+                                onFolder = { openedFolder = it.key })
                         })
                 } }
             }
             try {
-                scene.click("..", PointerButton.Primary)
-                assertEquals(1, parentClicks)
+                scene.click("Music", PointerButton.Primary)
+                assertEquals("Music", openedFolder)
             } finally { scene.close() }
         }
     }

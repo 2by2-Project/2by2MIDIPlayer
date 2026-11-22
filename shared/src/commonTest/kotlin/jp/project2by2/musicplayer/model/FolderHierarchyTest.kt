@@ -27,4 +27,14 @@ class FolderHierarchyTest {
         assertEquals(null, parentLibraryFolder("Music"))
         assertEquals(null, parentLibraryFolder("assets_demo"))
     }
+
+    @Test
+    fun secondaryVolumeIsOneTopLevelFolder() {
+        val folders = libraryFolderHierarchy(listOf("Music", "/storage/1234-ABCD/Music/Game", "/storage/1234-ABCD"))
+        assertEquals(listOf("/storage/1234-ABCD", "Music"), childLibraryFolders(folders, null).map { it.key })
+        assertEquals("1234-ABCD", folders.first { it.key == "/storage/1234-ABCD" }.name)
+        assertEquals(listOf("/storage/1234-ABCD/Music"), childLibraryFolders(folders, "/storage/1234-ABCD").map { it.key })
+        assertEquals("/storage/1234-ABCD", parentLibraryFolder("/storage/1234-ABCD/Music"))
+        assertEquals(null, parentLibraryFolder("/storage/1234-ABCD"))
+    }
 }
