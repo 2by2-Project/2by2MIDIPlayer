@@ -44,8 +44,8 @@ class ResponsivePlayerLayoutTest {
                     scene.render().use { frame ->
                         val pixels = frame.toComposeImageBitmap().toPixelMap()
                         for (x in 435..445) {
-                            if (x == 440) assertNotEquals(surface, pixels[x, 400].toArgb())
-                            else assertEquals(surface, pixels[x, 400].toArgb())
+                            if (x == 440) assertNotEquals(surface, pixels[x, 200].toArgb())
+                            else assertEquals(surface, pixels[x, 200].toArgb())
                         }
                     }
                 } finally { scene.close() }
@@ -118,7 +118,7 @@ class ResponsivePlayerLayoutTest {
     @OptIn(ExperimentalComposeUiApi::class)
     @Test fun wideSettingsReplaceOnlyRightPaneAndCompactShowsOneScreen() {
         SwingUtilities.invokeAndWait {
-            for (width in listOf(360, 999, 1000, 1100, 1600)) {
+            for (width in listOf(360, 599, 600, 701, 841, 1000, 1100, 1600)) {
                 var settings by mutableStateOf(false)
                 var expandedPlayer by mutableStateOf(false)
                 val bounds = mutableMapOf<String, Rect>()
@@ -137,10 +137,11 @@ class ResponsivePlayerLayoutTest {
                 try {
                     scene.render(0).close()
                     val library = assertNotNull(bounds["library"])
-                    if (width >= 1000) {
+                    if (width >= 600) {
                         val player = assertNotNull(bounds["player"])
                         assertTrue(library.right <= player.left)
-                        assertTrue(player.width > library.width)
+                        assertTrue(library.width >= 300f && player.width >= 300f, "$width: $library $player")
+                        assertTrue(player.width >= library.width, "$width: $library $player")
                         assertEquals(0f, library.top)
                         assertEquals(840f, player.height)
                         val compositions = libraryCompositions
@@ -160,6 +161,76 @@ class ResponsivePlayerLayoutTest {
                     }
                 } finally { scene.close() }
             }
+        }
+    }
+    @OptIn(ExperimentalComposeUiApi::class)
+    @Test fun compactHeightKeepsPhoneLandscapeSinglePaneButDesktopWidthStaysWide() {
+        SwingUtilities.invokeAndWait {
+            for ((size, wide) in listOf((915 to 411) to false, (1000 to 411) to true, (841 to 701) to true, (701 to 841) to true)) {
+                val bounds = mutableMapOf<String, Rect>()
+                val scene = ImageComposeScene(width = size.first, height = size.second) {
+                    ResponsivePlayerLayout(false, false, {}, library = {
+                        Box(Modifier.fillMaxSize().onGloballyPositioned { bounds["library"] = it.boundsInRoot() })
+                    }, settings = {}, player = {
+                        Box(Modifier.fillMaxSize().onGloballyPositioned { bounds["player"] = it.boundsInRoot() })
+                    })
+                }
+                try {
+                    scene.render(0).close()
+                    assertEquals(wide, bounds["player"] != null, "$size")
+                } finally { scene.close() }
+            }
+        }
+    }
+    @OptIn(ExperimentalComposeUiApi::class)
+    @Test fun verticalFoldSplitsPanesAtTheHingeAndOverridesDraggedWidth() {
+        SwingUtilities.invokeAndWait {
+            var left = Rect.Zero
+            var right = Rect.Zero
+            var fold by mutableStateOf<Rect?>(null)
+            // Book posture on a narrow-for-desktop window: the hinge alone makes it two-pane.
+            val scene = ImageComposeScene(width = 860, height = 400) {
+                ResponsivePlayerLayout(false, false, {}, library = {
+                    Box(Modifier.fillMaxSize().onGloballyPositioned { left = it.boundsInRoot() })
+                }, settings = {}, player = {
+                    Box(Modifier.fillMaxSize().onGloballyPositioned { right = it.boundsInRoot() })
+                }, verticalFoldInWindow = fold)
+            }
+            try {
+                scene.render(0).close()
+                assertEquals(Rect.Zero, right, "860x400 without a hinge is compact")
+                fold = Rect(420f, 0f, 440f, 400f)
+                scene.render(500_000_000).close()
+                assertEquals(420f, left.right)
+                assertEquals(440f, right.left)
+                assertEquals(860f, right.right)
+                // A hinge too close to an edge for a pane is ignored.
+                fold = Rect(100f, 0f, 100f, 400f)
+                scene.render(1_000_000_000).close()
+                assertEquals(860f, left.width)
+            } finally { scene.close() }
+        }
+    }
+    @OptIn(ExperimentalComposeUiApi::class)
+    @Test fun touchDragOnCentredHandleResizesBeyondTheThinMouseStrip() {
+        SwingUtilities.invokeAndWait {
+            var left = Rect.Zero
+            val scene = ImageComposeScene(width = 1100, height = 840) {
+                ResponsivePlayerLayout(false, false, {}, library = {
+                    Box(Modifier.fillMaxSize().onGloballyPositioned { left = it.boundsInRoot() })
+                }, settings = {}, player = { Box(Modifier.fillMaxSize()) })
+            }
+            try {
+                scene.render(0).close()
+                val initial = left.width
+                // 20px right of the divider: outside the 8px strip, inside the 48dp handle target.
+                val start = Offset(left.right + 20f, 420f)
+                scene.sendPointerEvent(PointerEventType.Press, start, type = PointerType.Touch)
+                for (step in 1..10) scene.sendPointerEvent(PointerEventType.Move, start + Offset(-12f * step, 0f), type = PointerType.Touch)
+                scene.sendPointerEvent(PointerEventType.Release, start + Offset(-120f, 0f), type = PointerType.Touch)
+                scene.render(500_000_000).close()
+                assertTrue(left.width < initial - 80f, "${left.width} vs $initial")
+            } finally { scene.close() }
         }
     }
 }

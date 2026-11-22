@@ -28,10 +28,10 @@ class TabletLayoutTest {
                 player = { Box(Modifier.fillMaxSize().testTag("player")) },
                 modifier = Modifier.requiredWidth(width.dp))
         }
-        for (size in listOf(1280, 1000, 999, 800, 360, 1280)) {
+        for (size in listOf(1280, 1000, 841, 600, 599, 360, 1280)) {
             compose.runOnIdle { width = size; settings = false; player = false }
             compose.onNodeWithTag("library").assertExists()
-            if (size >= 1000) {
+            if (size >= 600) {
                 val left = compose.onNodeWithTag("library").fetchSemanticsNode().boundsInRoot
                 val right = compose.onNodeWithTag("player").fetchSemanticsNode().boundsInRoot
                 assertEquals(left.right, right.left, 1f)

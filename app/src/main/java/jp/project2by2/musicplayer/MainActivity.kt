@@ -979,6 +979,7 @@ fun MusicPlayerMainScreen(
         },
         player = { playerContent() },
         modifier = modifier,
+        verticalFoldInWindow = rememberVerticalFoldInWindow(),
         library = { wide ->
     BackHandler(enabled = !wide && showNowPlaying) { showNowPlaying = false }
     Box(modifier = Modifier.fillMaxSize()) {
