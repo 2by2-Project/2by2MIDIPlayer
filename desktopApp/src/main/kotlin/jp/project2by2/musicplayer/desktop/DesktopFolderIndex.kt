@@ -14,10 +14,9 @@ import java.nio.file.attribute.BasicFileAttributes
 import java.util.Properties
 
 /**
- * Desktop counterpart of Android's MediaStore: which directories hold MIDI files, so browsing shows
- * only folders leading to music. The home directory is scanned in full; other locations (other
- * drives, above home) are probed per child folder when opened, stopping at the first MIDI file.
- * Paths are canonical absolute paths; [DRIVES] is the virtual folder listing Windows drives.
+ * Desktop folder browsing. Folders are listed from disk like a file explorer (hidden ones left out);
+ * the home directory is additionally scanned for MIDI files so a folder can be searched with its
+ * subfolders. Paths are canonical absolute paths; [DRIVES] is the virtual folder listing Windows drives.
  */
 class DesktopFolderIndex(
     // browse.home.dir lets tests browse an isolated folder instead of the developer's home.
@@ -28,9 +27,9 @@ class DesktopFolderIndex(
 ) {
     data class Snapshot(
         val files: Set<String> = emptySet(),
-        /** Probed folders outside home and whether a MIDI file was found beneath them. */
-        val probed: Map<String, Boolean> = emptyMap(),
         val scanning: Boolean = false,
+        /** Bumped when the app changes folders on disk, so open listings are read again. */
+        val revision: Int = 0,
     )
 
     private val mutable = MutableStateFlow(Snapshot())
@@ -42,21 +41,14 @@ class DesktopFolderIndex(
         else -> File(dir).parentFile?.path ?: if (windows) DRIVES else null
     }
 
-    /** Folders shown inside [dir]: drives for [DRIVES], otherwise subfolders leading to MIDI files. */
-    fun children(dir: String, snapshot: Snapshot = state.value): List<File> {
+    /** [dir] and its ancestors, outermost first: the levels of the address bar. */
+    fun ancestry(dir: String): List<String> = generateSequence(dir, ::parent).toList().asReversed()
+
+    /** Folders shown inside [dir]: drives for [DRIVES], otherwise every visible subfolder on disk. */
+    fun children(dir: String): List<File> {
         if (dir == DRIVES) return roots()
-        val prefix = childPrefix(dir)
-        return snapshot.files.asSequence()
-            .filter { it.startsWith(prefix, ignoreCase = windows) }
-            .mapNotNull { path ->
-                // Only files inside a subfolder name a child; files directly in [dir] are its tracks.
-                val rest = path.substring(prefix.length)
-                rest.indexOf(File.separatorChar).takeIf { it > 0 }?.let { rest.substring(0, it) }
-            }
-            .distinctBy { if (windows) it.lowercase() else it }
-            .map { File(prefix + it) }
+        return File(dir).listFiles { file -> file.isDirectory && !file.isHidden }.orEmpty()
             .sortedBy { it.name.lowercase() }
-            .toList()
     }
 
     /** Indexed MIDI files at any depth below [dir], for searching a folder and its subfolders. */
@@ -82,10 +74,7 @@ class DesktopFolderIndex(
         val p = runCatching { Properties().apply { file.inputStream().use(::load) } }.getOrNull() ?: return
         fun count(key: String) = (p.getProperty("$key.count")?.toIntOrNull() ?: 0).coerceIn(0, MAX_FILES)
         val files = (0 until count("files")).mapNotNull { p.getProperty("files.$it") }.toSet()
-        val probed = (0 until count("probed")).mapNotNull { i ->
-            p.getProperty("probed.$i.path")?.let { it to p.getProperty("probed.$i.found").toBoolean() }
-        }.toMap().filterValues { it } // Folders without MIDI are probed again, in case files were added.
-        mutable.update { it.copy(files = it.files + files, probed = probed + it.probed) }
+        mutable.update { it.copy(files = it.files + files) }
     }
 
     fun saveCache() {
@@ -94,10 +83,6 @@ class DesktopFolderIndex(
         val p = Properties()
         p.setProperty("files.count", snapshot.files.size.toString())
         snapshot.files.forEachIndexed { i, path -> p.setProperty("files.$i", path) }
-        p.setProperty("probed.count", snapshot.probed.size.toString())
-        snapshot.probed.entries.forEachIndexed { i, (path, found) ->
-            p.setProperty("probed.$i.path", path); p.setProperty("probed.$i.found", found.toString())
-        }
         runCatching {
             file.parentFile.mkdirs()
             val temp = File(file.parentFile, file.name + ".tmp")
@@ -127,38 +112,7 @@ class DesktopFolderIndex(
             val prefix = childPrefix(home.path)
             mutable.update { snapshot -> snapshot.copy(
                 files = snapshot.files.filterNot { it.startsWith(prefix, ignoreCase = windows) }.toSet() + found,
-                probed = snapshot.probed.filterKeys { !it.startsWith(prefix, ignoreCase = windows) },
             ) }
-            saveCache()
-        } finally {
-            mutable.update { it.copy(scanning = false) }
-        }
-    }
-
-    /**
-     * Decides which children of [dir] lead to MIDI files when [dir] is outside the home scan.
-     * Each child is searched until its first MIDI file; results are cached.
-     */
-    fun prepare(dir: String) {
-        if (dir == DRIVES || isWithin(dir, home.path)) return
-        val children = File(dir).listFiles { file -> file.isDirectory && !isExcluded(file.toPath()) }.orEmpty()
-            .map { it.canonicalFile }
-            .filter { it.path !in state.value.probed && !isWithin(it.path, home.path) }
-        if (children.isEmpty()) return
-        mutable.update { it.copy(scanning = true) }
-        try {
-            children.forEach { child ->
-                if (cancelled) return
-                var first: String? = null
-                // The home subtree is already indexed by [scanHome]; skip it when probing its ancestors.
-                walk(child.toPath(), maxDepth = 12, maxDirectories = 20_000, skip = home.toPath()) { file ->
-                    first = file.toString(); false
-                }
-                mutable.update { snapshot -> snapshot.copy(
-                    files = first?.let { snapshot.files + it } ?: snapshot.files,
-                    probed = snapshot.probed + (child.path to (first != null)),
-                ) }
-            }
             saveCache()
         } finally {
             mutable.update { it.copy(scanning = false) }
@@ -168,20 +122,17 @@ class DesktopFolderIndex(
     /** Keeps indexed paths valid after a folder is renamed on disk. */
     fun remap(source: String, target: String) {
         fun move(path: String) = if (path == source || path.startsWith(childPrefix(source))) target + path.substring(source.length) else path
-        mutable.update { snapshot -> snapshot.copy(
-            files = snapshot.files.map(::move).toSet(),
-            probed = snapshot.probed.mapKeys { move(it.key) },
-        ) }
+        mutable.update { snapshot -> snapshot.copy(files = snapshot.files.map(::move).toSet(), revision = snapshot.revision + 1) }
         saveCache()
     }
 
-    private fun walk(start: Path, maxDepth: Int, maxDirectories: Int, skip: Path? = null, onMidi: (Path) -> Boolean) {
+    private fun walk(start: Path, maxDepth: Int, maxDirectories: Int, onMidi: (Path) -> Boolean) {
         if (!Files.isDirectory(start)) return
         var directories = 0
         Files.walkFileTree(start, emptySet(), maxDepth, object : SimpleFileVisitor<Path>() {
             override fun preVisitDirectory(dir: Path, attrs: BasicFileAttributes): FileVisitResult = when {
                 cancelled || ++directories > maxDirectories -> FileVisitResult.TERMINATE
-                dir != start && (dir == skip || isExcluded(dir)) -> FileVisitResult.SKIP_SUBTREE
+                dir != start && isExcluded(dir) -> FileVisitResult.SKIP_SUBTREE
                 else -> FileVisitResult.CONTINUE
             }
             override fun visitFile(file: Path, attrs: BasicFileAttributes): FileVisitResult =
@@ -199,9 +150,6 @@ class DesktopFolderIndex(
         val atRoot = dir.parent?.parent == null
         return atRoot && name.lowercase() in (if (windows) EXCLUDED_WINDOWS_ROOT else EXCLUDED_UNIX_ROOT)
     }
-
-    private fun isWithin(path: String, dir: String) = path.equals(dir, ignoreCase = windows) ||
-        path.startsWith(childPrefix(dir), ignoreCase = windows)
 
     private fun childPrefix(dir: String) = if (dir.endsWith(File.separatorChar)) dir else dir + File.separatorChar
 

@@ -6,6 +6,8 @@ import jp.project2by2.musicplayer.ui.browse.FolderBrowseHeader
 import jp.project2by2.musicplayer.ui.browse.folderBrowseSummary
 import jp.project2by2.musicplayer.ui.browse.directoryEntries
 import jp.project2by2.musicplayer.ui.browse.DemoMusicButton
+import jp.project2by2.musicplayer.ui.browse.AddressSegment
+import jp.project2by2.musicplayer.ui.browse.LibraryAddressBar
 import jp.project2by2.musicplayer.ui.browse.MidiFileActionsDialog
 import jp.project2by2.musicplayer.ui.playlist.*
 import jp.project2by2.musicplayer.ui.player.NowPlayingSheet
@@ -93,6 +95,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.produceState
@@ -250,7 +253,8 @@ fun MusicPlayerMainScreen(
     // Playlist edit
     var isPlaylistEditModeActive by remember { mutableStateOf(false) }
     var playlistNameDraft by remember { mutableStateOf("") }
-    var playlistEditOrderDraft by remember { mutableStateOf<List<MidiFileItem>>(emptyList()) }
+    // The edited order of an open playlist; null until its edit buffer is ready (empty = every song removed).
+    var playlistEditOrderDraft by remember { mutableStateOf<List<MidiFileItem>?>(null) }
 
     val midiFiles = remember { mutableStateListOf<MidiFileItem>() }
     val midiMetadataCache = remember { mutableStateMapOf<String, MidiMetadata>() }
@@ -270,15 +274,34 @@ fun MusicPlayerMainScreen(
     val playlistRepository = remember(context) { PlaylistStore.repository(context) }
     val searchResults = remember { mutableStateListOf<MidiFileItem>() }
 
+    // Browse is a file explorer over absolute paths; null selects the start folder (primary storage).
+    val primaryStorageRoot = remember { android.os.Environment.getExternalStorageDirectory().absolutePath.trimEnd('/') }
+    val storageRoots = remember(context) { storageVolumeRoots(context, primaryStorageRoot) }
+
+    /** The open folder, read when called so callbacks never act on a stale location. */
+    fun currentBrowseDir(): String = selectedFolderKey ?: primaryStorageRoot
+
     fun openBrowseFolder(key: String?) {
-        selectedFolderKey = key
-        selectedFolderName = key?.let { k -> folderItems.firstOrNull { it.key == k }?.name ?: extractFolderName(k) }
-        selectedFolderCoverUri = key?.let { folderCoverCache[it] }
+        val normalized = key?.takeIf { it != primaryStorageRoot }
+        selectedFolderKey = normalized
+        selectedFolderName = when (normalized) {
+            null -> null
+            DEMO_FOLDER_KEY -> context.getString(R.string.folder_demo_name)
+            else -> absolutePathName(normalized)
+        }
+        selectedFolderCoverUri = normalized?.let { folderCoverCache[it] }
         isFolderPreparing = false
     }
 
+    /**
+     * Back goes up within the start folder and within removable volumes; from the storage levels
+     * above them ("/", "/storage", ...) it returns to the start folder.
+     */
     fun browseParent() {
-        openBrowseFolder(selectedFolderKey?.let { parentLibraryFolder(it) })
+        val dir = selectedFolderKey ?: return
+        val parent = absolutePathParent(dir)
+        val insideVolume = parent != null && storageRoots.any { root -> dir != root && isWithinPath(dir, root) }
+        openBrowseFolder(if (dir != DEMO_FOLDER_KEY && insideVolume) parent else null)
     }
 
     fun applyFolderItems(items: List<MidiFileItem>) {
@@ -293,21 +316,12 @@ fun MusicPlayerMainScreen(
 
     fun refreshSelectedFolderState() {
         val currentFolderKey = selectedFolderKey ?: return
-        val folder = folderItems.firstOrNull { folderItem: FolderItem -> folderItem.key == currentFolderKey }
-        if (folder == null && currentFolderKey != "assets_demo") {
-            selectedFolderKey = null
-            selectedFolderName = null
-            selectedFolderCoverUri = null
+        // A folder removed from disk falls back to the start folder; storage levels always exist.
+        if (currentFolderKey != DEMO_FOLDER_KEY && !File(currentFolderKey).exists()) {
+            openBrowseFolder(null)
             return
         }
-        if (currentFolderKey == "assets_demo" && folder == null) {
-            selectedFolderName = context.getString(R.string.folder_demo_name)
-            selectedFolderCoverUri = null
-            return
-        }
-        val resolvedFolder: FolderItem = requireNotNull(folder)
-        selectedFolderName = resolvedFolder.name
-        selectedFolderCoverUri = folderCoverCache[resolvedFolder.key] ?: resolvedFolder.coverUri
+        selectedFolderCoverUri = folderCoverCache[currentFolderKey]
     }
 
     fun applyBrowseSnapshot(snapshot: BrowseLibrarySnapshot, animateItems: Boolean) {
@@ -442,12 +456,9 @@ fun MusicPlayerMainScreen(
         Log.d(STARTUP_TRACE_TAG, "prepareFolderContents end folderKey=$folderKey items=${itemsInFolder.size}")
     }
 
-    suspend fun performSearch(query: String, folderKey: String?) {
-        val baseItems = if (folderKey != null) {
-            midiFiles.filter { it.folderKey == folderKey || it.folderKey.startsWith("$folderKey/") }
-        } else {
-            midiFiles.toList()
-        }
+    suspend fun performSearch(query: String, folderKey: String) {
+        // The open folder and everything below it, like desktop.
+        val baseItems = midiFiles.filter { isWithinPath(it.folderKey, folderKey) }
         val uriStrings = baseItems.map { it.uri.toString() }
         val persistedMetadata = metadataCacheRepository.getByUris(uriStrings)
         applyPersistedMetadata(persistedMetadata)
@@ -658,7 +669,7 @@ fun MusicPlayerMainScreen(
         try {
             performSearch(
                 query = searchQuery,
-                folderKey = selectedFolderKey
+                folderKey = currentBrowseDir()
             )
         } finally {
             if (isActive) {
@@ -668,13 +679,13 @@ fun MusicPlayerMainScreen(
     }
 
     LaunchedEffect(selectedFolderKey, browseAnimationToken) {
-        val folderKey = selectedFolderKey.orEmpty()
+        val folderKey = currentBrowseDir()
         if (browseAnimationToken == 0L) return@LaunchedEffect
         isFolderPreparing = true
         try {
             prepareFolderContents(folderKey)
         } finally {
-            if (selectedFolderKey.orEmpty() == folderKey) {
+            if (currentBrowseDir() == folderKey) {
                 isFolderPreparing = false
             }
         }
@@ -725,11 +736,19 @@ fun MusicPlayerMainScreen(
     LaunchedEffect(selectedPlaylistId) {
         isPlaylistEditModeActive = openPlaylistInEditMode && selectedPlaylistId != null
         playlistNameDraft = selectedPlaylistName.orEmpty()
-        playlistEditOrderDraft = emptyList()
+        playlistEditOrderDraft = null
         openPlaylistInEditMode = false
     }
 
     // Back handler
+    fun closePlaylist() {
+        isPlaylistEditModeActive = false
+        playlistNameDraft = ""
+        playlistEditOrderDraft = null
+        selectedPlaylistId = null
+        selectedPlaylistName = null
+    }
+
     BackHandler(enabled = selectedPlaylistId != null || selectedFolderKey != null || isSearchActive) {
         when {
             isSearchActive -> {
@@ -737,13 +756,7 @@ fun MusicPlayerMainScreen(
                 searchQuery = ""
                 clearSearchState()
             }
-            selectedPlaylistId != null -> {
-                isPlaylistEditModeActive = false
-                playlistNameDraft = ""
-                playlistEditOrderDraft = emptyList()
-                selectedPlaylistId = null
-                selectedPlaylistName = null
-            }
+            selectedPlaylistId != null -> closePlaylist()
             selectedFolderKey != null -> {
                 browseParent()
             }
@@ -827,9 +840,7 @@ fun MusicPlayerMainScreen(
     fun handleDemoMusicClick() {
         if (isDemoLoading) return
 
-        selectedFolderKey = "assets_demo"
-        selectedFolderName = context.getString(R.string.folder_demo_name)
-        selectedFolderCoverUri = null
+        openBrowseFolder(DEMO_FOLDER_KEY)
 
         if (demoFilesLoaded) {
             return
@@ -852,7 +863,7 @@ fun MusicPlayerMainScreen(
                 }
                 metadataCacheRepository.putAll(demoMetadata)
 
-                midiFiles.removeAll { it.folderKey == "assets_demo" }
+                midiFiles.removeAll { it.folderKey == DEMO_FOLDER_KEY }
                 midiFiles.addAll(demoFiles)
                 applyFolderItems(midiFiles)
                 browseAnimationToken += 1L
@@ -902,7 +913,7 @@ fun MusicPlayerMainScreen(
             uri = uri,
             fileName = uri.lastPathSegment.orEmpty(),
             folderName = selectedFolderName.orEmpty(),
-            folderKey = selectedFolderKey.orEmpty(),
+            folderKey = currentBrowseDir(),
             durationMs = 0L
         )
         handleMidiTap(item, MidiListContext.Browse) // Route into existing playback flow
@@ -996,47 +1007,12 @@ fun MusicPlayerMainScreen(
     Box(modifier = Modifier.fillMaxSize()) {
     Scaffold(
         topBar = {
-            jp.project2by2.musicplayer.ui.player.PlayerTopAppBar(
-                navigationIcon = {
-                    if (selectedFolderKey != null || selectedPlaylistId != null) {
-                        IconButton(
-                            onClick = {
-                                if (selectedPlaylistId != null) {
-                                    isPlaylistEditModeActive = false
-                                    playlistNameDraft = ""
-                                    playlistEditOrderDraft = emptyList()
-                                    selectedPlaylistId = null
-                                    selectedPlaylistName = null
-                                } else {
-                                    browseParent()
-                                }
-                            }
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.ArrowBack,
-                                contentDescription = stringResource(id = R.string.back)
-                            )
-                        }
-                    }
-                },
-                title = {
-                    if (selectedFolderKey != null || selectedPlaylistId != null) {
-                        val topTitle = if (selectedPlaylistId != null) {
-                            selectedPlaylistName
-                        } else {
-                            selectedFolderName
-                        } ?: stringResource(id = R.string.unknown)
-                        Text(
-                            text = topTitle,
-                            modifier = Modifier.fillMaxWidth()
-                                .clipToBounds()
-                                .basicMarquee(Int.MAX_VALUE),
-                            textAlign = TextAlign.Center
-                        )
-                    } else {
-                        jp.project2by2.musicplayer.ui.player.PlayerLogo()
-                    }
-                },
+            // Browse keeps the logo (its address bar shows the location); an open playlist shows its name.
+            jp.project2by2.musicplayer.ui.player.LibraryTopAppBar(
+                openPlaylistName = (selectedPlaylistName ?: stringResource(id = R.string.unknown)).takeIf { selectedPlaylistId != null },
+                onClosePlaylist = { closePlaylist() },
+                editingName = playlistNameDraft.takeIf { isPlaylistEditModeActive && selectedPlaylistId != null },
+                onEditingNameChange = { playlistNameDraft = it },
                 actions = {
                     // Search button only should show on browse screen
                     if (rootTab == RootTab.Browse) {
@@ -1074,7 +1050,7 @@ fun MusicPlayerMainScreen(
                             IconButton(
                                 onClick = {
                                     playlistNameDraft = selectedPlaylistName.orEmpty()
-                                    playlistEditOrderDraft = emptyList()
+                                    playlistEditOrderDraft = null
                                     isPlaylistEditModeActive = true
                                 }
                             ) {
@@ -1105,7 +1081,7 @@ fun MusicPlayerMainScreen(
                                 val playlistId = selectedPlaylistId ?: return@IconButton
                                 val draftName = playlistNameDraft.trim()
                                 val currentName = selectedPlaylistName.orEmpty()
-                                val orderedIds = playlistEditOrderDraft.mapNotNull { it.playlistItemId }
+                                val orderedIds = playlistEditOrderDraft?.mapNotNull { it.playlistItemId }
                                 val shouldRename = draftName.isNotEmpty() && draftName != currentName
                                 if (shouldRename) {
                                     // Reflect the new name immediately after finishing edit mode.
@@ -1115,7 +1091,8 @@ fun MusicPlayerMainScreen(
                                     if (shouldRename) {
                                         playlistRepository.renamePlaylist(playlistId, draftName)
                                     }
-                                    if (orderedIds.isNotEmpty()) {
+                                    // An empty order removes every song; null means nothing was edited.
+                                    if (orderedIds != null) {
                                         playlistRepository.reorderPlaylistItems(playlistId, orderedIds)
                                     }
                                     playlistRefreshToken = System.currentTimeMillis()
@@ -1204,7 +1181,7 @@ fun MusicPlayerMainScreen(
                             selectedFolderCoverUri = null
                             isPlaylistEditModeActive = false
                             playlistNameDraft = ""
-                            playlistEditOrderDraft = emptyList()
+                            playlistEditOrderDraft = null
                             selectedPlaylistId = null
                             selectedPlaylistName = null
                         },
@@ -1212,7 +1189,7 @@ fun MusicPlayerMainScreen(
                             rootTab = RootTab.Playlists
                             isPlaylistEditModeActive = false
                             playlistNameDraft = ""
-                            playlistEditOrderDraft = emptyList()
+                            playlistEditOrderDraft = null
                             selectedPlaylistId = null
                             selectedPlaylistName = null
                             isSearchActive = false
@@ -1235,6 +1212,13 @@ fun MusicPlayerMainScreen(
             Column(
                 modifier = Modifier.fillMaxSize()
             ) {
+                if (rootTab == RootTab.Browse) LibraryAddressBar(
+                    folders = absolutePathLevels(
+                        selectedFolderKey?.takeIf { it != DEMO_FOLDER_KEY } ?: primaryStorageRoot
+                    ).map { AddressSegment(it, absolutePathName(it)) },
+                    demoOpen = selectedFolderKey == DEMO_FOLDER_KEY,
+                    onOpenFolder = { openBrowseFolder(it) }
+                )
                 jp.project2by2.musicplayer.ui.browse.BrowseSearchField(
                     visible = isSearchActive, query = searchQuery, onQueryChange = { searchQuery = it }
                 )
@@ -1248,26 +1232,6 @@ fun MusicPlayerMainScreen(
                         contentAlignment = Alignment.Center
                     ) {
                         CircularProgressIndicator()
-                    }
-                } else if (hasCompletedInitialBrowseLoad && midiFiles.isEmpty()) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(16.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.Center
-                    ) {
-                        Text(
-                            text = stringResource(id = R.string.info_no_mid_files_found),
-                            style = MaterialTheme.typography.bodySmall,
-                            textAlign = TextAlign.Center
-                        )
-                        androidx.compose.foundation.layout.Spacer(modifier = Modifier.height(24.dp))
-
-                        DemoMusicButton(
-                            onClick = { handleDemoMusicClick() },
-                            showDividers = false
-                        )
                     }
                 } else {
                     val isSearching = isSearchActive && searchQuery.isNotBlank()
@@ -1371,7 +1335,11 @@ fun MusicPlayerMainScreen(
                             AnimatedContent(
                                 targetState = screenState,
                                 transitionSpec = {
-                                    fun depth(key: String?): Int = generateSequence(key) { parentLibraryFolder(it) }.count()
+                                    fun depth(key: String?): Int = when (key) {
+                                        null -> absolutePathLevels(primaryStorageRoot).size
+                                        DEMO_FOLDER_KEY -> absolutePathLevels(primaryStorageRoot).size + 1
+                                        else -> absolutePathLevels(key).size
+                                    }
                                     val deeper = depth(targetState.second) - depth(initialState.second)
                                     val sameScreen = targetState.first == initialState.first
                                     when {
@@ -1396,13 +1364,22 @@ fun MusicPlayerMainScreen(
                             ) { (screen, folderKey) ->
                                 when (screen) {
                                     BrowseScreen.Files -> {
+                                        val dir = folderKey ?: primaryStorageRoot
                                         val items = midiFiles.filter {
-                                            it.folderKey == folderKey.orEmpty() &&
+                                            it.folderKey == dir &&
                                                 midiAvailability[it.uri.toString()] != MidiFileAvailability.Missing
                                         }
-                                        val childFolders = childLibraryFolders(
-                                            folderItems.map { LibraryFolder(it.key, it.name) }, folderKey
-                                        )
+                                        // Every folder on disk, plus the way down to storage volumes and music folders.
+                                        // Null until read: the list is shown only with its folders, since rows
+                                        // inserted above the visible ones would leave it scrolled to the end.
+                                        val musicFolders = folderItems.map { it.key }
+                                        val loadedChildFolders by produceState<List<LibraryFolder>?>(null, dir, musicFolders) {
+                                            value = withContext(Dispatchers.IO) {
+                                                if (dir == DEMO_FOLDER_KEY) emptyList()
+                                                else explorerChildFolders(dir, listFolders(dir, storageRoots), storageRoots + musicFolders)
+                                            }
+                                        }
+                                        val childFolders = loadedChildFolders.orEmpty()
                                     BrowseRefreshContainer(
                                         isRefreshing = isBrowseRefreshing,
                                         onRefresh = { requestBrowseRefresh() }
@@ -1416,7 +1393,7 @@ fun MusicPlayerMainScreen(
                                                     scope.launch { SettingsDataStore.setFolderViewMode(context, folderViewModeOrdinal) }
                                                 }
                                             ) {
-                                                MidiFileList(
+                                                if (loadedChildFolders != null) MidiFileList(
                                                     items = items,
                                                     hasDirectoryEntries = childFolders.isNotEmpty() || folderKey == null,
                                                     directoryContent = {
@@ -1431,7 +1408,7 @@ fun MusicPlayerMainScreen(
                                                         )
                                                     },
                                                     listContext = MidiListContext.Browse,
-                                                    isLoading = isFolderPreparing || (folderKey == "assets_demo" && isDemoLoading),
+                                                    isLoading = isFolderPreparing || (folderKey == DEMO_FOLDER_KEY && isDemoLoading),
                                                     selectedUri = selectedMidiFileUri,
                                                     availability = midiAvailability,
                                                     animationToken = browseAnimationToken,
@@ -1613,7 +1590,7 @@ fun MusicPlayerMainScreen(
                     if (selectedPlaylistId == playlist.id) {
                         isPlaylistEditModeActive = false
                         playlistNameDraft = ""
-                        playlistEditOrderDraft = emptyList()
+                        playlistEditOrderDraft = null
                         selectedPlaylistId = null
                         selectedPlaylistName = null
                     }
@@ -2049,7 +2026,7 @@ private fun PlaylistTracks(
     isEditMode: Boolean,
     selectedUri: Uri?,
     availability: Map<String, MidiFileAvailability>,
-    onEditItemsChanged: (List<MidiFileItem>) -> Unit,
+    onEditItemsChanged: (List<MidiFileItem>?) -> Unit,
     onPrimeItem: suspend (MidiFileItem) -> Unit,
     onMissingItemDetected: (MidiFileItem) -> Unit,
     onItemClick: (String, List<MidiFileItem>) -> Unit,
@@ -2061,7 +2038,8 @@ private fun PlaylistTracks(
     val metadataCacheRepository = remember(context) { MidiMetadataCacheStore.repository(context) }
     val metadataCache = remember(playlistId) { mutableStateMapOf<String, MidiMetadata>() }
     val metadataLoading = remember(playlistId) { mutableStateMapOf<String, Boolean>() }
-    val loadedItems = produceState(initialValue = emptyList<MidiFileItem>(), playlistId, refreshToken) {
+    // Null until the stored songs are read, so an edit never starts from a not-yet-loaded (empty) list.
+    val loadedItems = produceState<List<MidiFileItem>?>(initialValue = null, playlistId, refreshToken) {
         value = withContext(Dispatchers.IO) {
             repository.getPlaylistItems(playlistId).map {
                 val uri = Uri.parse(it.uriString)
@@ -2078,6 +2056,8 @@ private fun PlaylistTracks(
         }
     }.value
     val loadedItemsState = remember(playlistId) { mutableStateListOf<MidiFileItem>() }
+    // Bumped each time loadedItemsState holds the stored songs; the edit buffer is copied only after that.
+    var loadedVersion by remember(playlistId) { mutableIntStateOf(0) }
     val editItems = remember(playlistId) { mutableStateListOf<MidiFileItem>() }
     var isEditItemsPrepared by remember(playlistId) { mutableStateOf(false) }
 
@@ -2138,6 +2118,7 @@ private fun PlaylistTracks(
     }
 
     LaunchedEffect(loadedItems) {
+        val loadedItems = loadedItems ?: return@LaunchedEffect
         val persistedMetadata = withContext(Dispatchers.IO) {
             metadataCacheRepository.getByUris(loadedItems.map { it.uri.toString() })
         }
@@ -2154,6 +2135,7 @@ private fun PlaylistTracks(
                 } ?: item
             }
         )
+        loadedVersion += 1
         loadedItemsState.forEach { item ->
             requestMetadata(item)
             onPrimeItem(item)
@@ -2163,15 +2145,16 @@ private fun PlaylistTracks(
         }
     }
 
-    LaunchedEffect(playlistId, isEditMode, loadedItems) {
+    LaunchedEffect(playlistId, isEditMode, loadedVersion) {
         if (isEditMode) {
+            if (loadedVersion == 0) return@LaunchedEffect
             editItems.clear()
             editItems.addAll(loadedItemsState)
             isEditItemsPrepared = true
             onEditItemsChanged(editItems.toList())
         } else {
             isEditItemsPrepared = false
-            onEditItemsChanged(emptyList())
+            onEditItemsChanged(null)
         }
     }
 
@@ -2491,7 +2474,7 @@ private suspend fun queryDemoMidiFiles(context: Context): List<MidiFileItem> = w
                 metadataArtist = metadata.copyright?.takeIf { it.isNotBlank() },
                 loopPointMs = metadata.loopPointMs,
                 folderName = demoFolderName,
-                folderKey = "assets_demo",
+                folderKey = DEMO_FOLDER_KEY,
                 durationMs = durationMs
             ))
         }
@@ -2503,46 +2486,55 @@ private suspend fun queryDemoMidiFiles(context: Context): List<MidiFileItem> = w
     return@withContext results.sortedBy { it.fileName.lowercase() }
 }
 
+/** The sample music's pseudo folder; it opens from the start folder. */
+private const val DEMO_FOLDER_KEY = "assets_demo"
+
+/** Folder keys are absolute paths ("/storage/emulated/0/Music"), the same form desktop browses. */
 private fun extractFolderKey(relativePath: String?, dataPath: String?): String {
-    relativePath?.let {
-        val trimmed = it.trimEnd('/', '\\')
-        if (trimmed.isNotBlank()) {
-            return trimmed.replace('\\', '/')
-        }
-    }
-    dataPath?.let {
-        val normalized = it.replace('\\', '/')
-        val parent = normalized.substringBeforeLast('/', "")
-        val primaryRoot = android.os.Environment.getExternalStorageDirectory().absolutePath.trimEnd('/')
-        if (parent == primaryRoot) return ""
-        if (parent.startsWith("$primaryRoot/")) return parent.removePrefix("$primaryRoot/")
-        if (parent.isNotBlank()) {
-            return parent
-        }
-    }
-    return ""
+    val primaryRoot = android.os.Environment.getExternalStorageDirectory().absolutePath.trimEnd('/')
+    dataPath?.replace('\\', '/')?.substringBeforeLast('/', "")?.takeIf { it.startsWith('/') }?.let { return it }
+    val relative = relativePath?.replace('\\', '/')?.trim('/').orEmpty()
+    return if (relative.isEmpty()) primaryRoot else "$primaryRoot/$relative"
 }
 
-private fun extractFolderName(folderKey: String): String {
-    if (folderKey.isBlank()) return ""
-    return folderKey.substringAfterLast('/', folderKey.substringAfterLast('\\', folderKey))
-}
+private fun extractFolderName(folderKey: String): String =
+    if (folderKey.isBlank()) "" else absolutePathName(folderKey)
 
+/** Folders holding MIDI files, with their artwork. */
 private fun buildFolderItems(
     context: Context,
     items: List<MidiFileItem>,
     folderCoverUris: Map<String, Uri?> = emptyMap()
-): List<FolderItem> {
-    return libraryFolderHierarchy(items.map { it.folderKey }).map {
-        FolderItem(key = it.key, name = storageVolumeName(context, it.key) ?: it.name, coverUri = folderCoverUris[it.key])
+): List<FolderItem> = items.asSequence()
+    .map { it.folderKey }
+    .filter { it.startsWith('/') }
+    .distinct()
+    .map { FolderItem(key = it, name = absolutePathName(it), coverUri = folderCoverUris[it]) }
+    .toList()
+
+/** Mount points of the primary storage and mounted removable volumes. */
+private fun storageVolumeRoots(context: Context, primaryRoot: String): List<String> {
+    val volumes = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+        runCatching {
+            context.getSystemService(android.os.storage.StorageManager::class.java)?.storageVolumes.orEmpty()
+                .filter { it.state == android.os.Environment.MEDIA_MOUNTED || it.state == android.os.Environment.MEDIA_MOUNTED_READ_ONLY }
+                .mapNotNull { it.directory?.absolutePath?.trimEnd('/') }
+        }.getOrDefault(emptyList())
+    } else {
+        emptyList()
     }
+    return (listOf(primaryRoot) + volumes).distinct()
 }
 
-/** Removable volumes are top-level folders keyed by their mount path; show their user-facing name. */
-private fun storageVolumeName(context: Context, key: String): String? {
-    if (!key.startsWith('/') || parentLibraryFolder(key) != null) return null
-    val storageManager = context.getSystemService(android.os.storage.StorageManager::class.java) ?: return null
-    return runCatching { storageManager.getStorageVolume(java.io.File(key))?.getDescription(context) }.getOrNull()
+/**
+ * Visible subfolders of [dir] read from disk. Only storage volumes are listed; the levels above them
+ * ("/", "/storage") are reached through the volume paths instead.
+ */
+private fun listFolders(dir: String, storageRoots: List<String>): List<String> {
+    if (storageRoots.none { isWithinPath(dir, it) }) return emptyList()
+    return runCatching {
+        File(dir).listFiles { file -> file.isDirectory && !file.isHidden }.orEmpty().map { it.absolutePath }
+    }.getOrDefault(emptyList())
 }
 
 private fun isMidiFileAccessible(context: Context, uri: Uri): Boolean {
@@ -2585,50 +2577,27 @@ private fun hasPermission(context: Context, permission: String): Boolean {
 }
 
 private fun findCoverImageUri(context: Context, folderKey: String): Uri? {
-    if (folderKey.isBlank()) return null
+    if (!folderKey.startsWith('/')) return null
     val collection = MediaStore.Files.getContentUri("external")
-    val projection = if (Build.VERSION.SDK_INT >= 29) {
-        arrayOf(
-            MediaStore.Files.FileColumns._ID,
-            MediaStore.Files.FileColumns.DISPLAY_NAME,
-            MediaStore.Files.FileColumns.RELATIVE_PATH,
-            MediaStore.Files.FileColumns.DATA
-        )
-    } else {
-        arrayOf(
-            MediaStore.Files.FileColumns._ID,
-            MediaStore.Files.FileColumns.DISPLAY_NAME,
-            MediaStore.Files.FileColumns.DATA
-        )
-    }
     val names = albumArtworkFileNames
-
-    val selection = if (Build.VERSION.SDK_INT >= 29) {
-        val nameClause = names.joinToString(" OR ") { "${MediaStore.Files.FileColumns.DISPLAY_NAME}=?" }
-        "${MediaStore.Files.FileColumns.RELATIVE_PATH}=? AND ($nameClause)"
-    } else {
-        val nameClause = names.joinToString(" OR ") { "${MediaStore.Files.FileColumns.DATA} LIKE ?" }
-        "($nameClause)"
-    }
-
-    val selectionArgs = if (Build.VERSION.SDK_INT >= 29) {
-        arrayOf(folderKey.trimEnd('/') + "/") + names.toTypedArray()
-    } else {
-        val base = folderKey.trimEnd('/')
-        names.map { "%$base/$it" }.toTypedArray()
-    }
-
-    context.contentResolver.query(
-        collection,
-        projection,
-        selection,
-        selectionArgs,
-        null
-    )?.use { cursor ->
-        val idColumn = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns._ID)
-        if (cursor.moveToFirst()) {
-            val id = cursor.getLong(idColumn)
-            return ContentUris.withAppendedId(collection, id)
+    // Absolute paths match the folder exactly on every API level and volume.
+    val selection = "${MediaStore.Files.FileColumns.DATA} IN (${names.joinToString { "?" }})"
+    val selectionArgs = names.map { "${folderKey.trimEnd('/')}/$it" }.toTypedArray()
+    runCatching {
+        context.contentResolver.query(
+            collection,
+            arrayOf(MediaStore.Files.FileColumns._ID, MediaStore.Files.FileColumns.DATA),
+            selection,
+            selectionArgs,
+            null
+        )?.use { cursor ->
+            val idColumn = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns._ID)
+            val dataColumn = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns.DATA)
+            // Keep the preference order of albumArtworkFileNames.
+            val found = buildMap {
+                while (cursor.moveToNext()) put(cursor.getString(dataColumn).substringAfterLast('/'), cursor.getLong(idColumn))
+            }
+            names.firstNotNullOfOrNull { found[it] }?.let { return ContentUris.withAppendedId(collection, it) }
         }
     }
     return null

@@ -69,28 +69,34 @@ fun DesktopApp(controller: DesktopController) {
     var renameFolder by remember { mutableStateOf<LibraryFolder?>(null) }
     var addTrack by remember { mutableStateOf<String?>(null) }
     var editing by remember { mutableStateOf(false) }
+    var playlistNameDraft by remember { mutableStateOf("") }
     val playlist = state.playlists.find { it.id == playlistId }
+    // Editing starts from the toolbar or the playlist menu; either way the name field starts from the current name.
+    LaunchedEffect(editing, playlistId) { if (editing) playlistNameDraft = playlist?.name.orEmpty() }
     val demoFolderName = playerString("folder_demo_name")
     fun folderName(path: String) = if (DesktopMidiFiles.isDemo(path)) demoFolderName else File(path).parentFile?.name.orEmpty()
     fun title(path: String) = midiDisplayTitle(DesktopMidiFiles.fileName(path), state.metadata[path]?.title)
-    // Browse is an explorer over folders holding MIDI files, starting at home and remembering the last folder.
+    // Browse is a file explorer, starting at home and remembering the last folder.
     val index = controller.folderIndex
     val indexState by index.state.collectAsState()
     val dir = state.browseDir ?: index.home.path
-    val homeName = playerString("browse_home")
     val drivesName = playerString("browse_drives")
     fun folderLabel(path: String) = when {
-        path == index.home.path -> homeName
         path == DesktopFolderIndex.DRIVES -> drivesName
         File(path).parentFile == null -> path.trimEnd('\\').ifEmpty { path }
         else -> File(path).name
     }
-    val childFolders = remember(dir, indexState) {
-        index.children(dir, indexState).map { LibraryFolder(it.path, if (it.parentFile == null) folderLabel(it.path) else it.name) }
+    // Folders and tracks of [dir] are read together. The list is shown only once they belong to the
+    // open folder: rows arriving after it is laid out would be inserted above the visible ones, and the
+    // list keeps those in view, leaving a new folder scrolled to its end.
+    val listing by produceState<DirectoryListing?>(null, dir, indexState.revision) {
+        value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            DirectoryListing(dir, index.children(dir).map { LibraryFolder(it.path, folderLabel(it.path)) }, index.tracks(dir))
+        }
     }
-    val directoryTracks by produceState(emptyList<String>(), dir) {
-        value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { index.tracks(dir) }
-    }
+    val openListing = listing?.takeIf { it.dir == dir }
+    val childFolders = openListing?.folders.orEmpty()
+    val directoryTracks = openListing?.tracks.orEmpty()
     val searching = search && query.isNotBlank()
     val browsingFolder = !playlistsSelected && !demos && !searching
     val paths = remember(directoryTracks, indexState, state.demoFiles, state.metadata, playlist, playlistsSelected, dir, demos, searching, query) {
@@ -111,12 +117,14 @@ fun DesktopApp(controller: DesktopController) {
             midiDisplaySecondaryText(DesktopMidiFiles.fileName(path), folderName(path), state.metadata[path]?.title, state.metadata[path]?.copyright),
             state.metadata[path]?.durationMs ?: 0, controller.trackId(path), state.metadata[path]?.loopPointMs) }
     }
+    // Callbacks may outlive the composition that created them (the compiler memoizes function
+    // references), so they read the open folder from the controller instead of capturing [dir].
     fun backLibrary() {
         when {
             search -> { search = false; query = "" }
             playlistId != null -> { playlistId = null; editing = false }
             demos -> demos = false
-            else -> index.parent(dir)?.let(controller::browse)
+            else -> index.parent(controller.state.value.browseDir ?: index.home.path)?.let(controller::browse)
         }
     }
     fun back(wide: Boolean) {
@@ -149,22 +157,22 @@ fun DesktopApp(controller: DesktopController) {
             },
             library = { wide ->
             Scaffold(topBar = {
-                PlayerTopAppBar(
-                    title = {
-                        val screenTitle = playlist?.name ?: if (demos) demoFolderName else folderLabel(dir)
-                        if (screenTitle == null) PlayerLogo() else Text(screenTitle, maxLines = 1,
-                            modifier = Modifier.fillMaxWidth(), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
-                    },
-                    navigationIcon = {
-                        if (playlistId != null || demos || (!playlistsSelected && index.parent(dir) != null)) IconButton(onClick = ::backLibrary) {
-                            Icon(Icons.Default.ArrowBack, playerString("back"))
-                        }
-                    },
+                // The logo stays put; where you are is shown by the address bar below.
+                LibraryTopAppBar(
+                    openPlaylistName = playlist?.name,
+                    onClosePlaylist = { playlistId = null; editing = false },
+                    editingName = playlistNameDraft.takeIf { editing && playlist != null },
+                    onEditingNameChange = { playlistNameDraft = it },
                     actions = {
                         if (!playlistsSelected) {
                             IconButton(onClick = { chooseFiles(scope, result = controller::openFiles, onError = controller::reportError) }) { Icon(Icons.Default.AudioFile, "MIDIファイルを開いて再生") }
                         }
-                        if (playlist != null) IconButton(onClick = { editing = !editing }) { Icon(if (editing) Icons.Default.Done else Icons.Default.Edit, "編集") }
+                        if (playlist != null) IconButton(onClick = {
+                            // Finishing an edit renames the playlist when the name was changed.
+                            val name = playlistNameDraft.trim()
+                            if (editing && name.isNotEmpty() && name != playlist.name) controller.renamePlaylist(playlist.id, name)
+                            editing = !editing
+                        }) { Icon(if (editing) Icons.Default.Done else Icons.Default.Edit, "編集") }
                         if (!playlistsSelected) IconButton(onClick = { search = !search; query = "" }) {
                             Surface(shape = androidx.compose.foundation.shape.RoundedCornerShape(50),
                                 color = if (search) MaterialTheme.colorScheme.primaryContainer else androidx.compose.ui.graphics.Color.Transparent) {
@@ -186,8 +194,13 @@ fun DesktopApp(controller: DesktopController) {
                 }
             }) { padding ->
                 Column(Modifier.padding(padding).fillMaxSize()) {
+                    if (!playlistsSelected) LibraryAddressBar(index.ancestry(dir).map { AddressSegment(it, folderLabel(it)) },
+                        demoOpen = demos,
+                        // Callbacks may outlive their composition; they must not capture [dir].
+                        onOpenFolder = { demos = false; controller.browse(it) })
                     BrowseSearchField(visible = search, query = query, onQueryChange = { query = it })
-                    Box(Modifier.weight(1f).fillMaxWidth()) {
+                    // A new location gets fresh list state, so every folder or playlist opens at the top.
+                    Box(Modifier.weight(1f).fillMaxWidth()) { key(dir, demos, playlistsSelected, playlistId) {
                     when {
                         playlistsSelected && playlist == null -> PlaylistScreen(
                             state.playlists.map { LibraryPlaylist(it.id, it.name, it.paths.size) },
@@ -198,7 +211,7 @@ fun DesktopApp(controller: DesktopController) {
                         val showDemo = browsingFolder && dir == index.home.path
                         val list: @Composable () -> Unit = { TrackList(tracks,
                             listContext = if (playlistsSelected) MidiListContext.Playlist else if (search) MidiListContext.Search else MidiListContext.Browse,
-                            isLoading = state.busy || (browsingFolder && indexState.scanning && childFolders.isEmpty()),
+                            isLoading = state.busy,
                             isEditMode = editing && !search, selectedUri = state.current,
                             onMoveItem = { id, delta -> playlist?.let { controller.movePlaylistTrack(it.id, tracks.first { t -> t.playlistItemId == id }.uri, delta) } },
                             onRemoveItem = { id -> playlist?.let { controller.removeFromPlaylist(tracks.first { t -> t.playlistItemId == id }.uri, it.id) } },
@@ -220,10 +233,10 @@ fun DesktopApp(controller: DesktopController) {
                                     onFolderActions = { folder -> if (File(folder.key).parentFile != null) folderActions = folder })
                             }) }
                         if (browsingFolder) FolderBrowseHeader(folderBrowseSummary(childFolders.size, tracks.size), viewMode,
-                            onViewModeChange = { viewMode = it }) { list() } else list()
+                            onViewModeChange = { viewMode = it }) { if (openListing != null) list() } else list()
                         }
                     }
-                    }
+                    } }
                 }
             }
             },
@@ -280,3 +293,5 @@ fun DesktopApp(controller: DesktopController) {
             state.playlists.forEach { list -> TextButton(onClick = { controller.addToPlaylist(path, list.id); addTrack = null }) { Text(list.name) } }
         } }, confirmButton = {}, dismissButton = { TextButton(onClick = { addTrack = null }) { Text("キャンセル") } }) }
 }
+
+private data class DirectoryListing(val dir: String, val folders: List<LibraryFolder>, val tracks: List<String>)

@@ -18,7 +18,7 @@ class DesktopFolderIndexTest {
     private fun midi(path: String) = File(root, path).apply { parentFile.mkdirs(); writeText("MThd") }
     private fun index(cache: File? = null) = DesktopFolderIndex(home = home, cacheFile = cache, windows = false, roots = { listOf(root) })
 
-    @Test fun homeScanShowsOnlyFoldersLeadingToMidiAndSkipsHiddenOnes() {
+    @Test fun foldersAreListedFromDiskAndHomeIsScannedForSearch() {
         midi("home/user/Music/Game/Album/a.mid")
         midi("home/user/Music/b.MIDI")
         midi("home/user/Documents/readme.txt")
@@ -27,12 +27,23 @@ class DesktopFolderIndexTest {
         File(home, "Empty").mkdirs()
         val index = index().apply { scanHome() }
 
-        assertEquals(listOf("Music"), index.children(home.path).map { it.name })
+        // Every visible folder is shown, with or without MIDI files; hidden ones are left out.
+        assertEquals(listOf("Documents", "Empty", "Music", "project"), index.children(home.path).map { it.name })
         assertEquals(listOf("Game"), index.children(File(home, "Music").path).map { it.name })
         assertEquals(listOf(File(home, "Music/b.MIDI").path), index.tracks(File(home, "Music").path))
-        // Search covers the folder and everything below it.
+        // Search covers the folder and everything below it; the scan skips hidden and tool folders.
         assertEquals(2, index.filesUnder(File(home, "Music").path).size)
+        assertEquals(setOf(File(home, "Music/Game/Album/a.mid").path, File(home, "Music/b.MIDI").path), index.filesUnder(home.path).toSet())
         assertEquals(emptyList(), index.children(File(home, "Music/Game/Album").path))
+    }
+
+    @Test fun ancestryListsEveryLevelFromTheRoot() {
+        val index = index()
+        val levels = index.ancestry(File(home, "Music").path)
+        assertEquals(File("/").path, levels.first())
+        assertEquals(File(home, "Music").path, levels.last())
+        assertEquals(listOf("home", "user", "Music"), levels.takeLast(3).map { File(it).name })
+        assertEquals(listOf(DesktopFolderIndex.DRIVES, "C:\\"), DesktopFolderIndex(home = home, windows = true).ancestry("C:\\"))
     }
 
     @Test fun parentWalksUpToTheFilesystemRootAndRememberedFolderFallsBack() {
@@ -48,22 +59,13 @@ class DesktopFolderIndexTest {
         assertNull(DesktopFolderIndex(home = home, windows = true).parent(DesktopFolderIndex.DRIVES))
     }
 
-    @Test fun foldersOutsideHomeAreProbedAndCached() {
+    @Test fun scannedFilesAreCachedForTheNextLaunch() {
         midi("home/user/Music/a.mid")
-        midi("home/other/Songs/deep/b.mid")
-        File(root, "home/empty/nothing").mkdirs()
-        midi("srv/media/c.mid")
         val cache = File(root, "cache.properties")
-        val index = index(cache).apply { scanHome() }
+        index(cache).scanHome()
 
-        index.prepare(File(root, "home").path)
-        assertEquals(listOf("other", "user"), index.children(File(root, "home").path).map { it.name })
-        index.prepare(root.path)
-        assertEquals(listOf("home", "srv"), index.children(root.path).map { it.name })
-
-        // The next launch shows the same folders before any scan.
         val restored = index(cache).apply { loadCache() }
-        assertEquals(listOf("home", "srv"), restored.children(root.path).map { it.name })
+        assertEquals(listOf(File(home, "Music/a.mid").path), restored.filesUnder(home.path))
     }
 
     @Test fun renamedFolderKeepsItsIndexedFiles() {

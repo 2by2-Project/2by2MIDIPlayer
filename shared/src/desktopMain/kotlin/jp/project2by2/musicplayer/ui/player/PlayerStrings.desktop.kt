@@ -78,7 +78,6 @@ private val english = mapOf(
     "browse_summary_tracks" to "{n} songs",
     "browse_summary_folders_one" to "1 folder",
     "browse_summary_tracks_one" to "1 song",
-    "browse_home" to "Home",
     "browse_drives" to "This PC",
 )
 private val japanese = mapOf(
@@ -154,6 +153,5 @@ private val japanese = mapOf(
     "browse_summary_tracks" to "{n} 曲",
     "browse_summary_folders_one" to "1 フォルダ",
     "browse_summary_tracks_one" to "1 曲",
-    "browse_home" to "ホーム",
     "browse_drives" to "PC",
 )

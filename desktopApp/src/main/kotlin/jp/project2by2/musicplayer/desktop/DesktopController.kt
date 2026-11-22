@@ -125,10 +125,7 @@ class DesktopController(
             // Folders added to the former desktop library stay reachable while browsing.
             folderIndex.addKnown(stored.files)
             mutable.value = stored.copy(browseDir = folderIndex.resolve(stored.browseDir))
-            scope.launch(Dispatchers.IO) {
-                folderIndex.scanHome()
-                folderIndex.prepare(mutable.value.browseDir ?: folderIndex.home.path)
-            }
+            scope.launch(Dispatchers.IO) { folderIndex.scanHome() }
             refreshMetadata(mutable.value.files + mutable.value.playlists.flatMap { it.paths })
             val status = engine.initialize()
             mutable.update { it.copy(audioReady = true, engine = status) }
@@ -169,9 +166,9 @@ class DesktopController(
         return midi.isNotEmpty() || directories.isNotEmpty()
     }
     fun browse(dir: String) = operation {
+        if (mutable.value.browseDir == dir) return@operation
         mutable.update { it.copy(browseDir = dir) }
         save()
-        scope.launch(Dispatchers.IO) { folderIndex.prepare(dir) }
     }
     /** Reads titles for listed tracks that have not been parsed yet. */
     fun loadMetadata(paths: List<String>) {

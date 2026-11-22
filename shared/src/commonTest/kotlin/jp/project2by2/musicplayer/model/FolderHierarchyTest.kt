@@ -2,39 +2,52 @@ package jp.project2by2.musicplayer.model
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class FolderHierarchyTest {
     @Test
-    fun intermediateFoldersAndDirectTracksKeepTheirHierarchy() {
-        val folders = libraryFolderHierarchy(listOf("Music/Game/Album", "Music", "Music/Game/Album", "Download", "assets_demo", ""))
-        assertEquals(listOf("Download", "Music"), childLibraryFolders(folders, null).map { it.key })
-        assertEquals(listOf("Music/Game"), childLibraryFolders(folders, "Music").map { it.key })
-        assertEquals(listOf("Music/Game/Album"), childLibraryFolders(folders, "Music/Game").map { it.key })
-        assertEquals(emptyList(), childLibraryFolders(folders, "Music/Game/Album"))
-    }
-
-    @Test
-    fun sameNamesInDifferentParentsRemainSeparate() {
-        val folders = libraryFolderHierarchy(listOf("Music/Album", "Download/Album"))
-        assertEquals(listOf("Music/Album"), childLibraryFolders(folders, "Music").map { it.key })
-        assertEquals(listOf("Download/Album"), childLibraryFolders(folders, "Download").map { it.key })
+    fun levelsRunFromTheRootToTheFolder() {
+        assertEquals(
+            listOf("/", "/storage", "/storage/emulated", "/storage/emulated/0", "/storage/emulated/0/Download"),
+            absolutePathLevels("/storage/emulated/0/Download")
+        )
+        assertEquals(listOf("/"), absolutePathLevels("/"))
+        assertEquals(listOf("0", "Download", "/"), listOf("/storage/emulated/0", "/storage/emulated/0/Download/", "/").map(::absolutePathName))
     }
 
     @Test
     fun parentMovesExactlyOneLevelAndStopsAtRoot() {
-        assertEquals("Music/Game", parentLibraryFolder("Music/Game/Album"))
-        assertEquals("Music", parentLibraryFolder("Music/Game"))
-        assertEquals(null, parentLibraryFolder("Music"))
-        assertEquals(null, parentLibraryFolder("assets_demo"))
+        assertEquals("/storage/emulated", absolutePathParent("/storage/emulated/0"))
+        assertEquals("/", absolutePathParent("/storage"))
+        assertNull(absolutePathParent("/"))
     }
 
     @Test
-    fun secondaryVolumeIsOneTopLevelFolder() {
-        val folders = libraryFolderHierarchy(listOf("Music", "/storage/1234-ABCD/Music/Game", "/storage/1234-ABCD"))
-        assertEquals(listOf("/storage/1234-ABCD", "Music"), childLibraryFolders(folders, null).map { it.key })
-        assertEquals("1234-ABCD", folders.first { it.key == "/storage/1234-ABCD" }.name)
-        assertEquals(listOf("/storage/1234-ABCD/Music"), childLibraryFolders(folders, "/storage/1234-ABCD").map { it.key })
-        assertEquals("/storage/1234-ABCD", parentLibraryFolder("/storage/1234-ABCD/Music"))
-        assertEquals(null, parentLibraryFolder("/storage/1234-ABCD"))
+    fun withinPathMatchesWholeNamesOnly() {
+        assertTrue(isWithinPath("/music/a", "/music"))
+        assertTrue(isWithinPath("/music", "/music"))
+        assertTrue(isWithinPath("/music", "/"))
+        assertFalse(isWithinPath("/musics", "/music"))
+    }
+
+    @Test
+    fun childFoldersCombineDiskListingWithPathsTowardsReachableFolders() {
+        val volumes = listOf("/storage/emulated/0", "/storage/1234-ABCD")
+        // "/" and "/storage" cannot be listed on Android; volumes still lead the way down.
+        assertEquals(listOf("/storage"), explorerChildFolders("/", emptyList(), volumes).map { it.key })
+        assertEquals(listOf("1234-ABCD", "emulated"), explorerChildFolders("/storage", emptyList(), volumes).map { it.name })
+        assertEquals(listOf("/storage/emulated/0"), explorerChildFolders("/storage/emulated", emptyList(), volumes).map { it.key })
+        // Listed folders are shown with or without music; music folders the listing missed are added.
+        val listed = listOf("/storage/emulated/0/Download", "/storage/emulated/0/Music")
+        val music = listOf("/storage/emulated/0/Music/Game/Album", "/storage/emulated/0/Ringtones")
+        assertEquals(
+            listOf("Download", "Music", "Ringtones"),
+            explorerChildFolders("/storage/emulated/0", listed, volumes + music).map { it.name }
+        )
+        // Same names in different parents remain separate.
+        assertEquals(listOf("/storage/emulated/0/Music/Game"), explorerChildFolders("/storage/emulated/0/Music", emptyList(), music).map { it.key })
+        assertEquals(emptyList(), explorerChildFolders("/storage/emulated/0/Music/Game/Album", emptyList(), music))
     }
 }

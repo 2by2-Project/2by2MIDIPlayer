@@ -264,8 +264,8 @@ class PlaylistRepository(private val dao: PlaylistDao) {
         dao.deletePlaylist(playlistId)
     }
 
+    /** Keeps exactly [orderedItemIds] in this order; an empty list removes every song. */
     suspend fun reorderPlaylistItems(playlistId: Long, orderedItemIds: List<Long>) {
-        if (orderedItemIds.isEmpty()) return
         dao.reorderPlaylistItems(playlistId, orderedItemIds, System.currentTimeMillis())
     }
 }
