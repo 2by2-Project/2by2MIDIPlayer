@@ -1,4 +1,5 @@
-<!-- Standard directory-selection wizard, without file-association features. -->
+<!-- Standard directory-selection wizard. No feature or checkbox pages: file associations
+     are always registered as candidates by midi-associations.xml. -->
 <Property Id="WIXUI_INSTALLDIR" Value="INSTALLDIR"/>
 <UIRef Id="WixUI_InstallDir"/>
 <UI>

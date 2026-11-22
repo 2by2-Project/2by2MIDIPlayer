@@ -154,12 +154,36 @@ if (nativePlatform == "linux-x64") {
                 .readText(Charsets.UTF_8).trimEnd().split("\n\n", limit = 2)
             check(descriptionParts.size == 2) { "Expected a synopsis and a description paragraph" }
             val (summary, body) = descriptionParts
+            // jpackage registers the menu entry with xdg-desktop-menu, which fails the whole package
+            // installation when no system menu directory exists (/etc/xdg/menus), e.g. on minimal
+            // systems. Place the entry in /usr/share/applications directly instead; the installed
+            // desktop ID stays <package>-<launcher>.desktop, which the Settings button looks up.
+            val desktopId = "${settings.linuxPackageName.get()}-$appName.desktop"
+            val installedEntry = "/usr/share/applications/$desktopId"
+            val packagedEntry = "/opt/${settings.linuxPackageName.get()}/lib/$desktopId"
+            val refreshMenu = "if command -v update-desktop-database >/dev/null 2>&1; then update-desktop-database -q /usr/share/applications || true; fi"
+            val installMenu = "install -D -m 0644 $packagedEntry $installedEntry\n$refreshMenu"
+            val uninstallMenu = "rm -f $installedEntry\n$refreshMenu"
+            fun String.replaceRequired(old: String, new: String): String {
+                check(contains(old)) { "jpackage template changed ($old); review required" }
+                return replace(old, new)
+            }
             ZipFile(packagingHome.resolve("jmods/jdk.jpackage.jmod")).use { zip ->
                 fun template(name: String) = zip.getInputStream(requireNotNull(zip.getEntry("classes/jdk/jpackage/internal/resources/$name"))).bufferedReader().use { it.readText() }
                 resourceDir.resolve("control").writeText(template("template.control").replace("APPLICATION_DESCRIPTION", "$summary\n .\n $body"))
+                // DEB: the new package's postinst runs last on install, reinstall and upgrade.
+                resourceDir.resolve("postinst").writeText(template("template.postinst")
+                    .replaceRequired("DESKTOP_COMMANDS_INSTALL", installMenu))
+                resourceDir.resolve("prerm").writeText(template("template.prerm")
+                    .replaceRequired("DESKTOP_COMMANDS_UNINSTALL", uninstallMenu))
+                // RPM: on upgrade the old package's %preun runs after the new %post, so register in
+                // %posttrans and unregister only when the package is erased ($1 = 0).
                 resourceDir.resolve("$appName.spec").writeText(template("template.spec")
                     .replace("APPLICATION_SUMMARY", summary)
-                    .replace("APPLICATION_DESCRIPTION", "$summary\n\n$body"))
+                    .replace("APPLICATION_DESCRIPTION", "$summary\n\n$body")
+                    .replaceRequired("DESKTOP_COMMANDS_INSTALL", "true")
+                    .replaceRequired("\n%clean", "\n%posttrans\n$installMenu\n\n%clean")
+                    .replaceRequired("DESKTOP_COMMANDS_UNINSTALL", "if [ \"\$1\" -eq 0 ]; then\n$uninstallMenu\nfi"))
             }
             val output = layout.buildDirectory.dir("distributions").get().asFile.apply { mkdirs() }
             val requestedFormats = formats.get().split(',').map { it.trim() }.distinct()

@@ -116,20 +116,29 @@ jobs:
           $old = 'Id="$(var.JpProductCode)"'
           if (!$wxs.Contains($old)) { throw 'jpackage product template changed; review required' }
           $wxs = $wxs.Replace($old, 'Id="*"')
+          # The display name differs from the executable and folder name (2by2MIDIPlayer),
+          # which stay unchanged so that running a newer MSI replaces the installed one.
+          $old = 'Name="$(var.JpAppName)"'
+          if ([regex]::Matches($wxs, [regex]::Escape($old)).Count -ne 1) { throw 'jpackage product name template changed; review required' }
+          $wxs = $wxs.Replace($old, 'Name="2by2 MIDI Player"')
           # As in 7914e89, explicitly link a full WiX wizard rather than JpUI.
-          # Use the directory-only wizard; file associations are not registered.
+          # Use the directory-only wizard. Associations and shortcuts are always installed
+          # (no feature or checkbox pages); see midi-associations.xml.
           $old = '<UIRef Id="JpUI"/>'
           if (!$wxs.Contains($old)) { throw 'jpackage UI template changed; review required' }
           $wizard = [IO.File]::ReadAllText("$PWD/desktopApp/installer/windows/simple-wizard.xml")
-          $wxs = $wxs.Replace($old, $wizard)
-          $wxs = $wxs.Replace('<ComponentGroupRef Id="FileAssociations"/>', '')
+          $associations = [IO.File]::ReadAllText("$PWD/desktopApp/installer/windows/midi-associations.xml")
+          $wxs = $wxs.Replace($old, "$wizard`n$associations")
+          $old = '<ComponentGroupRef Id="FileAssociations"/>'
+          if (!$wxs.Contains($old)) { throw 'jpackage feature template changed; review required' }
+          $wxs = $wxs.Replace($old, '<ComponentRef Id="MidiAssociationRegistration"/><ComponentRef Id="StartMenuShortcut"/><ComponentRef Id="DesktopShortcut"/>')
           [IO.File]::WriteAllText((Join-Path $resources 'main.wxs'), $wxs)
           $description = "2by2 MIDI Player - Your Music Workstation Companion`n`nListen to MIDI music as background audio while you work or play. From classic MIDI tracks to game music, 2by2 MIDI Player delivers versatile playback for music creators and enthusiasts."
           # Never change this UUID between releases (including same-version rebuilds).
           & "$env:JAVA_HOME/bin/jpackage.exe" --type msi --app-image $appDir --dest dist `
-            --name 2by2MIDIPlayer --app-version $version --vendor 'Project 2by2' `
+            --name 2by2MIDIPlayer --app-version $version --vendor '2by2 Project' `
             --description $description --win-upgrade-uuid '6ef55885-394e-4bb7-b098-44be9ad975d3' `
-            --win-menu --win-shortcut --win-dir-chooser --resource-dir $resources
+            --win-dir-chooser --resource-dir $resources
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $packages = @(Get-ChildItem dist -Filter '*.msi')
           if ($packages.Count -ne 1) { throw 'Expected exactly one MSI' }
@@ -139,6 +148,16 @@ jobs:
           Move-Item -LiteralPath $packages[0].FullName -Destination $msi
           $msi = (Get-Item -LiteralPath $msi).FullName
           ./desktopApp/installer/windows/verify-msi.ps1 -Path $msi
+          $installDir = "$env:ProgramFiles\2by2MIDIPlayer"
+          $command = "`"$installDir\2by2MIDIPlayer.exe`" `"%1`""
+          $shortcuts = @("$env:ProgramData\Microsoft\Windows\Start Menu\Programs\2by2 MIDI Player.lnk", "$env:PUBLIC\Desktop\2by2 MIDI Player.lnk")
+          function Assert-Installed {
+            $actual = Get-ItemPropertyValue -LiteralPath 'HKLM:\Software\Classes\Project2by2.MIDI\shell\open\command' -Name '(default)'
+            if ($actual -cne $command) { throw "Unexpected open command: $actual" }
+            $capabilities = Get-ItemPropertyValue -LiteralPath 'HKLM:\Software\RegisteredApplications' -Name '2by2 MIDI Player'
+            if ($capabilities -cne 'Software\Project2by2\MIDIPlayer\Capabilities') { throw 'RegisteredApplications is missing' }
+            foreach ($link in $shortcuts) { if (!(Test-Path -LiteralPath $link)) { throw "Missing shortcut: $link" } }
+          }
           foreach ($attempt in 1..3) {
             # Install twice, then verify the maintenance wizard's repair operation.
             $operation = if ($attempt -eq 3) { '/fa' } else { '/i' }
@@ -156,7 +175,21 @@ jobs:
               throw 'Installed launcher is missing'
             }
             if (!(Test-Path "$env:ProgramFiles/2by2MIDIPlayer/NOTICE")) { throw 'MSI did not restore NOTICE' }
+            Assert-Installed
           }
+          # Uninstalling must remove the application, its association candidates and shortcuts.
+          $log = Join-Path $env:RUNNER_TEMP 'msi-uninstall.log'
+          $process = Start-Process msiexec.exe -ArgumentList "/x `"$msi`" /qn /norestart /L*v `"$log`"" -Wait -PassThru
+          if ($process.ExitCode -notin @(0, 3010)) {
+            Get-Content $log -Tail 100
+            throw "MSI uninstall failed: $($process.ExitCode)"
+          }
+          if (Test-Path "$installDir\2by2MIDIPlayer.exe") { throw 'Launcher remained after uninstall' }
+          if (Test-Path -LiteralPath 'HKLM:\Software\Classes\Project2by2.MIDI') { throw 'ProgID remained after uninstall' }
+          if (Get-ItemProperty -LiteralPath 'HKLM:\Software\RegisteredApplications' -Name '2by2 MIDI Player' -ErrorAction SilentlyContinue) {
+            throw 'RegisteredApplications entry remained after uninstall'
+          }
+          foreach ($link in $shortcuts) { if (Test-Path -LiteralPath $link) { throw "Shortcut remained after uninstall: $link" } }
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
@@ -276,6 +309,26 @@ jobs:
             exit 1
           fi
           test ! -e "$extracted/opt/project2by2-midiplayer/lib/app/resources/integration/set-default-midi.sh"
+          # Installing the same package again must work, and removal must clean up the menu entry.
+          # xdg-desktop-menu installs into the first writable applications directory.
+          entryId=project2by2-midiplayer-project2by2-midiplayer.desktop
+          installedEntries() { ls /usr/local/share/applications/$entryId /usr/share/applications/$entryId 2>/dev/null || true; }
+          for attempt in 1 2; do
+            if [ "$attempt" -eq 1 ]; then
+              # The first installation also resolves runtime dependencies.
+              sudo apt-get install -y "$PWD/${debs[0]}"
+            else
+              sudo dpkg -i "${debs[0]}"
+            fi
+            test -x /opt/project2by2-midiplayer/bin/project2by2-midiplayer
+            entries=$(installedEntries)
+            test "$(echo "$entries" | grep -c .)" -eq 1
+            grep -Fxq 'MimeType=audio/midi;audio/x-midi;audio/mid;audio/x-mid;' "$entries"
+            grep -Fxq 'Exec=/opt/project2by2-midiplayer/bin/project2by2-midiplayer %F' "$entries"
+          done
+          sudo dpkg -r project2by2-midiplayer
+          test -z "$(installedEntries)"
+          test ! -e /opt/project2by2-midiplayer/bin/project2by2-midiplayer
           mkdir -p dist
           cp "${debs[0]}" "dist/2by2MIDIPlayer-$APP_VERSION-linux-x64.deb"
           cp "${rpms[0]}" "dist/2by2MIDIPlayer-$APP_VERSION-linux-x64.rpm"

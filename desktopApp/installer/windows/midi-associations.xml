@@ -1,0 +1,50 @@
+<!--
+  Inserted into the selected JDK's main.wxs together with simple-wizard.xml.
+  Registers 2by2 MIDI Player as a candidate for .mid/.midi and creates its shortcuts.
+  Windows lets only the user choose the default app, so UserChoice and the extensions'
+  own default values are never written.
+
+  Running the MSI again must always work (update, repair and reinstall are the same step):
+  - Static values and [INSTALLDIR] only. No custom actions.
+  - These components belong to DefaultFeature; do not add features.
+  - NEVER change the component GUIDs. They identify the same parts across releases.
+  - Keep ProgID Project2by2.MIDI: existing Windows default choices refer to it by name.
+-->
+<DirectoryRef Id="TARGETDIR">
+  <Directory Id="ProgramMenuFolder"/>
+  <Directory Id="DesktopFolder"/>
+</DirectoryRef>
+<DirectoryRef Id="INSTALLDIR">
+  <Component Id="MidiAssociationRegistration" Guid="{7511CFF7-D05B-441A-99B4-AC3CD075ED50}" Win64="yes">
+    <RegistryValue Root="HKLM" Key="Software\Project2by2\MIDIPlayer\Capabilities" Name="ApplicationName" Value="2by2 MIDI Player" Type="string" KeyPath="yes"/>
+    <RegistryValue Root="HKLM" Key="Software\Project2by2\MIDIPlayer\Capabilities" Name="ApplicationDescription" Value="Play MIDI files with 2by2 MIDI Player" Type="string"/>
+    <RegistryValue Root="HKLM" Key="Software\Project2by2\MIDIPlayer\Capabilities\FileAssociations" Name=".mid" Value="Project2by2.MIDI" Type="string"/>
+    <RegistryValue Root="HKLM" Key="Software\Project2by2\MIDIPlayer\Capabilities\FileAssociations" Name=".midi" Value="Project2by2.MIDI" Type="string"/>
+    <RegistryValue Root="HKLM" Key="Software\RegisteredApplications" Name="2by2 MIDI Player" Value="Software\Project2by2\MIDIPlayer\Capabilities" Type="string"/>
+    <RegistryValue Root="HKLM" Key="Software\Classes\Project2by2.MIDI" Value="MIDI File" Type="string"/>
+    <RegistryValue Root="HKLM" Key="Software\Classes\Project2by2.MIDI\DefaultIcon" Value="&quot;[INSTALLDIR]2by2MIDIPlayer.exe&quot;,0" Type="string"/>
+    <RegistryValue Root="HKLM" Key="Software\Classes\Project2by2.MIDI\shell\open\command" Value="&quot;[INSTALLDIR]2by2MIDIPlayer.exe&quot; &quot;%1&quot;" Type="string"/>
+    <RegistryValue Root="HKLM" Key="Software\Classes\.mid\OpenWithProgids" Name="Project2by2.MIDI" Value="" Type="string"/>
+    <RegistryValue Root="HKLM" Key="Software\Classes\.midi\OpenWithProgids" Name="Project2by2.MIDI" Value="" Type="string"/>
+    <!-- Show the display name in Open with, instead of the executable's file name. -->
+    <RegistryValue Root="HKLM" Key="Software\Classes\Applications\2by2MIDIPlayer.exe" Name="FriendlyAppName" Value="2by2 MIDI Player" Type="string"/>
+    <RegistryValue Root="HKLM" Key="Software\Classes\Applications\2by2MIDIPlayer.exe\SupportedTypes" Name=".mid" Value="" Type="string"/>
+    <RegistryValue Root="HKLM" Key="Software\Classes\Applications\2by2MIDIPlayer.exe\SupportedTypes" Name=".midi" Value="" Type="string"/>
+    <RegistryValue Root="HKLM" Key="Software\Classes\Applications\2by2MIDIPlayer.exe\shell\open\command" Value="&quot;[INSTALLDIR]2by2MIDIPlayer.exe&quot; &quot;%1&quot;" Type="string"/>
+  </Component>
+</DirectoryRef>
+<!-- jpackage would name shortcuts after the executable (2by2MIDIPlayer), so they are defined here.
+     As in jpackage's own shortcut components, the key path is under HKCU because these folders are
+     in the user profile (ICE38/ICE43), even for this per-machine installation. -->
+<DirectoryRef Id="ProgramMenuFolder">
+  <Component Id="StartMenuShortcut" Guid="{17B16A98-529C-452E-A235-12FF090F3FAB}" Win64="yes">
+    <Shortcut Id="StartMenuShortcutLink" Name="2by2 MIDI Player" Target="[INSTALLDIR]2by2MIDIPlayer.exe" WorkingDirectory="INSTALLDIR"/>
+    <RegistryValue Root="HKCU" Key="Software\Project2by2\MIDIPlayer\Installer" Name="StartMenuShortcut" Value="1" Type="integer" KeyPath="yes"/>
+  </Component>
+</DirectoryRef>
+<DirectoryRef Id="DesktopFolder">
+  <Component Id="DesktopShortcut" Guid="{6D0501E3-1277-49D2-BCD7-4A46F9F6E45D}" Win64="yes">
+    <Shortcut Id="DesktopShortcutLink" Name="2by2 MIDI Player" Target="[INSTALLDIR]2by2MIDIPlayer.exe" WorkingDirectory="INSTALLDIR"/>
+    <RegistryValue Root="HKCU" Key="Software\Project2by2\MIDIPlayer\Installer" Name="DesktopShortcut" Value="1" Type="integer" KeyPath="yes"/>
+  </Component>
+</DirectoryRef>
