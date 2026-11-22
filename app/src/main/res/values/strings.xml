@@ -1,4 +1,5 @@
 <resources>
+    <string name="browse_internal_storage">Internal storage</string>
     <string name="app_name">2by2 MIDI Player</string>
     <string name="error_soundfont_not_set">SoundFont is not set! Please set soundfont from right-top settings menu.</string>
     <string name="error_playback_service_not_ready">Playback service is not ready</string>

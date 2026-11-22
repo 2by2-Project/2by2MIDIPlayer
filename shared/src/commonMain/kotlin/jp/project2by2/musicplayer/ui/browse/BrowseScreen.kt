@@ -186,7 +186,7 @@ private fun FolderList(
 }
 
 @Composable
-private fun FolderListRow(
+internal fun FolderListRow(
     folder: LibraryFolder,
     cover: @Composable (LibraryFolder) -> ImageBitmap? = { null },
     onClick: () -> Unit,
@@ -237,7 +237,7 @@ private fun FolderListRow(
 }
 
 @Composable
-private fun FolderCard(
+internal fun FolderCard(
     folder: LibraryFolder,
     cover: @Composable (LibraryFolder) -> ImageBitmap? = { null },
     onClick: () -> Unit,

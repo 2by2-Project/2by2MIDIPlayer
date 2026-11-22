@@ -49,7 +49,9 @@ fun TrackList(
     onAddToPlaylist: (LibraryTrack) -> Unit,
     onQueueNext: (LibraryTrack) -> Unit,
     onMissingItemDetected: (LibraryTrack) -> Unit = {},
-    actions: @Composable (LibraryTrack, () -> Unit) -> Unit = { _, close -> TextButton(onClick = close) { Text("Close") } }
+    actions: @Composable (LibraryTrack, () -> Unit) -> Unit = { _, close -> TextButton(onClick = close) { Text("Close") } },
+    hasDirectoryEntries: Boolean = false,
+    directoryContent: LazyListScope.() -> Unit = {}
 ) {
     val scope = rememberCoroutineScope()
     val density = LocalDensity.current
@@ -59,7 +61,7 @@ fun TrackList(
     var activeDragOffsetPx by remember { mutableFloatStateOf(0f) }
     val removingItemIds = remember { mutableStateListOf<Long>() }
 
-    if (items.isEmpty()) {
+    if (items.isEmpty() && !hasDirectoryEntries) {
         if (isLoading) {
             LoadingMidiState()
         } else if (listContext == MidiListContext.Search) {
@@ -79,6 +81,14 @@ fun TrackList(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(bottom = 72.dp)
     ) {
+        directoryContent()
+        if (items.isEmpty() && hasDirectoryEntries && isLoading) {
+            item(key = "directory:loading") {
+                Box(Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator()
+                }
+            }
+        }
         lazyItemsIndexed(
             items = items,
             key = { index: Int, item: LibraryTrack -> item.playlistItemId ?: "${item.uri}#$index" }

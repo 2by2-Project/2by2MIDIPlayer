@@ -69,4 +69,53 @@ class DesktopContextClickTest {
             } finally { scene.close() }
         }
     }
+
+    @Test fun directoryEntriesAndTracksShareNavigationInBothViewModes() {
+        SwingUtilities.invokeAndWait {
+            for (mode in FolderViewMode.entries) {
+                var parentClicks = 0
+                var openedFolder: String? = null
+                var plays = 0
+                val scene = ImageComposeScene(width = 500, height = 900) {
+                    _2by2MusicPlayerTheme { Surface {
+                        TrackList(listOf(LibraryTrack("song.mid", "Song", "Music", 10000)),
+                            MidiListContext.Browse, selectedUri = null, onItemClick = { plays++ },
+                            onAddToPlaylist = {}, onQueueNext = {}, hasDirectoryEntries = true,
+                            directoryContent = {
+                                directoryEntries(listOf(LibraryFolder("Music/Album", "Album")), mode,
+                                    onParent = { parentClicks++ }, onFolder = { openedFolder = it.key })
+                            })
+                    } }
+                }
+                try {
+                    scene.click("..", PointerButton.Primary)
+                    assertEquals(1, parentClicks)
+                    scene.click("Album", PointerButton.Primary)
+                    assertEquals("Music/Album", openedFolder)
+                    scene.click("Song", PointerButton.Primary)
+                    assertEquals(1, plays)
+                } finally { scene.close() }
+            }
+        }
+    }
+
+    @Test fun parentEntryRemainsAvailableWithoutTracks() {
+        SwingUtilities.invokeAndWait {
+            var parentClicks = 0
+            val scene = ImageComposeScene(width = 500, height = 600) {
+                _2by2MusicPlayerTheme { Surface {
+                    TrackList(emptyList(), MidiListContext.Browse, selectedUri = null,
+                        onItemClick = {}, onAddToPlaylist = {}, onQueueNext = {},
+                        hasDirectoryEntries = true, directoryContent = {
+                            directoryEntries(emptyList(), FolderViewMode.List,
+                                onParent = { parentClicks++ }, onFolder = {})
+                        })
+                } }
+            }
+            try {
+                scene.click("..", PointerButton.Primary)
+                assertEquals(1, parentClicks)
+            } finally { scene.close() }
+        }
+    }
 }

@@ -3,6 +3,8 @@ import jp.project2by2.musicplayer.model.*
 import jp.project2by2.musicplayer.state.NowPlayingState
 import jp.project2by2.musicplayer.ui.browse.BrowseScreen
 import jp.project2by2.musicplayer.ui.browse.TrackList
+import jp.project2by2.musicplayer.ui.browse.DirectoryPathHeader
+import jp.project2by2.musicplayer.ui.browse.directoryEntries
 import jp.project2by2.musicplayer.ui.browse.DemoMusicButton
 import jp.project2by2.musicplayer.ui.browse.MidiFileActionsDialog
 import jp.project2by2.musicplayer.ui.playlist.*
@@ -268,6 +270,17 @@ fun MusicPlayerMainScreen(
     val playlistRepository = remember(context) { PlaylistStore.repository(context) }
     val searchResults = remember { mutableStateListOf<MidiFileItem>() }
 
+    fun openBrowseFolder(key: String?) {
+        selectedFolderKey = key
+        selectedFolderName = key?.let { extractFolderName(it) }
+        selectedFolderCoverUri = key?.let { folderCoverCache[it] }
+        isFolderPreparing = false
+    }
+
+    fun browseParent() {
+        openBrowseFolder(selectedFolderKey?.let { parentLibraryFolder(it) })
+    }
+
     fun applyFolderItems(items: List<MidiFileItem>) {
         val rebuilt = buildFolderItems(context, items, folderCoverCache.toMap())
         folderItems.clear()
@@ -431,7 +444,7 @@ fun MusicPlayerMainScreen(
 
     suspend fun performSearch(query: String, folderKey: String?) {
         val baseItems = if (folderKey != null) {
-            midiFiles.filter { it.folderKey == folderKey }
+            midiFiles.filter { it.folderKey == folderKey || it.folderKey.startsWith("$folderKey/") }
         } else {
             midiFiles.toList()
         }
@@ -655,13 +668,13 @@ fun MusicPlayerMainScreen(
     }
 
     LaunchedEffect(selectedFolderKey, browseAnimationToken) {
-        val folderKey = selectedFolderKey ?: return@LaunchedEffect
+        val folderKey = selectedFolderKey.orEmpty()
         if (browseAnimationToken == 0L) return@LaunchedEffect
         isFolderPreparing = true
         try {
             prepareFolderContents(folderKey)
         } finally {
-            if (selectedFolderKey == folderKey) {
+            if (selectedFolderKey.orEmpty() == folderKey) {
                 isFolderPreparing = false
             }
         }
@@ -732,9 +745,7 @@ fun MusicPlayerMainScreen(
                 selectedPlaylistName = null
             }
             selectedFolderKey != null -> {
-                selectedFolderKey = null
-                selectedFolderName = null
-                isFolderPreparing = false
+                browseParent()
             }
         }
     }
@@ -997,8 +1008,7 @@ fun MusicPlayerMainScreen(
                                     selectedPlaylistId = null
                                     selectedPlaylistName = null
                                 } else {
-                                    selectedFolderKey = null
-                                    selectedFolderName = null
+                                    browseParent()
                                 }
                             }
                         ) {
@@ -1356,7 +1366,7 @@ fun MusicPlayerMainScreen(
                         else -> {
                             val screenState: Pair<BrowseScreen, String?> = when {
                                 isSearching -> BrowseScreen.Search to selectedFolderKey
-                                selectedFolderKey == null -> BrowseScreen.Folders to null
+                                selectedFolderKey == null -> BrowseScreen.Files to null
                                 else -> BrowseScreen.Files to selectedFolderKey
                             }
                             AnimatedContent(
@@ -1422,23 +1432,45 @@ fun MusicPlayerMainScreen(
                                     }
                                     BrowseScreen.Files -> {
                                         val items = midiFiles.filter {
-                                            it.folderKey == folderKey &&
+                                            it.folderKey == folderKey.orEmpty() &&
                                                 midiAvailability[it.uri.toString()] != MidiFileAvailability.Missing
                                         }
+                                        val childFolders = childLibraryFolders(
+                                            folderItems.map { LibraryFolder(it.key, it.name) }, folderKey
+                                        )
                                     BrowseRefreshContainer(
                                         isRefreshing = isBrowseRefreshing,
                                         onRefresh = { requestBrowseRefresh() }
                                     ) {
-                                            if (isFolderPreparing && items.isEmpty()) {
-                                                Box(
-                                                    modifier = Modifier.fillMaxSize(),
-                                                    contentAlignment = Alignment.Center
-                                                ) {
-                                                    CircularProgressIndicator()
-                                                }
-                                            } else {
+                                            Column(Modifier.fillMaxSize()) {
+                                                DirectoryPathHeader(
+                                                    path = when {
+                                                        folderKey == "assets_demo" -> context.getString(R.string.folder_demo_name)
+                                                        folderKey?.startsWith('/') == true -> folderKey
+                                                        else -> context.getString(R.string.browse_internal_storage) + "/" + folderKey.orEmpty()
+                                                    },
+                                                    viewMode = folderViewMode,
+                                                    onViewModeChange = { mode ->
+                                                        folderViewMode = mode
+                                                        folderViewModeOrdinal = if (mode == FolderViewMode.List) 1 else 0
+                                                        scope.launch { SettingsDataStore.setFolderViewMode(context, folderViewModeOrdinal) }
+                                                    }
+                                                )
                                                 MidiFileList(
                                                     items = items,
+                                                    hasDirectoryEntries = true,
+                                                    directoryContent = {
+                                                        directoryEntries(
+                                                            folders = childFolders,
+                                                            viewMode = folderViewMode,
+                                                            onParent = if (folderKey != null) ({ browseParent() }) else null,
+                                                            onFolder = { openBrowseFolder(it.key) },
+                                                            demo = if (folderKey == null) ({ handleDemoMusicClick() }) else null,
+                                                            cover = { folder ->
+                                                                rememberFolderCoverBitmap(folder.key, folderCoverCache[folder.key], folderCoverCache)
+                                                            }
+                                                        )
+                                                    },
                                                     listContext = MidiListContext.Browse,
                                                     isLoading = isFolderPreparing || (folderKey == "assets_demo" && isDemoLoading),
                                                     selectedUri = selectedMidiFileUri,
@@ -1940,10 +1972,13 @@ private fun MidiFileList(
     onItemClick: (MidiFileItem) -> Unit,
     onAddToPlaylist: (MidiFileItem) -> Unit,
     onQueueNext: (MidiFileItem) -> Unit,
-    onMissingItemDetected: (MidiFileItem) -> Unit = {}
+    onMissingItemDetected: (MidiFileItem) -> Unit = {},
+    hasDirectoryEntries: Boolean = false,
+    directoryContent: androidx.compose.foundation.lazy.LazyListScope.() -> Unit = {}
 ) {
     val context = LocalContext.current
     TrackList(
+        hasDirectoryEntries = hasDirectoryEntries, directoryContent = directoryContent,
         items = items.map { it.toLibraryTrack() }, listContext = listContext,
         isLoading = isLoading, isEditMode = isEditMode, onMoveItem = onMoveItem,
         onRemoveItem = onRemoveItem, selectedUri = selectedUri?.toString(),
@@ -2545,6 +2580,9 @@ private fun extractFolderKey(relativePath: String?, dataPath: String?): String {
     dataPath?.let {
         val normalized = it.replace('\\', '/')
         val parent = normalized.substringBeforeLast('/', "")
+        val primaryRoot = android.os.Environment.getExternalStorageDirectory().absolutePath.trimEnd('/')
+        if (parent == primaryRoot) return ""
+        if (parent.startsWith("$primaryRoot/")) return parent.removePrefix("$primaryRoot/")
         if (parent.isNotBlank()) {
             return parent
         }
@@ -2562,15 +2600,9 @@ private fun buildFolderItems(
     items: List<MidiFileItem>,
     folderCoverUris: Map<String, Uri?> = emptyMap()
 ): List<FolderItem> {
-    val grouped = items
-        .filterNot { it.folderKey == "assets_demo" }
-        .groupBy { it.folderKey }
-    val results = mutableListOf<FolderItem>()
-    for ((key, _) in grouped) {
-        val name = extractFolderName(key).ifBlank { context.getString(R.string.unknown) }
-        results.add(FolderItem(key = key, name = name, coverUri = folderCoverUris[key]))
+    return libraryFolderHierarchy(items.map { it.folderKey }).map {
+        FolderItem(key = it.key, name = it.name, coverUri = folderCoverUris[it.key])
     }
-    return results.sortedBy { it.name.lowercase() }
 }
 
 private fun isMidiFileAccessible(context: Context, uri: Uri): Boolean {
