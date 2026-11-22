@@ -37,7 +37,8 @@ fun SettingsScreen(
     onEffectsChange: (Boolean) -> Unit, onReverbChange: (Float) -> Unit,
     onLoopChange: (Boolean) -> Unit, onShuffleChange: (Boolean) -> Unit,
     soundFontLoading: Boolean = false,
-    onConfigureFileAssociations: suspend () -> String = { "settings_association_unavailable" }
+    /** Null hides the file-association section (Android cannot set a default player from an app). */
+    onConfigureFileAssociations: (suspend () -> String)? = null
 ) {
     val scope = rememberCoroutineScope()
     var associationBusy by remember { mutableStateOf(false) }
@@ -159,11 +160,11 @@ fun SettingsScreen(
                         onCheckedChange = onShuffleChange
                     )
                 }
-                item {
+                if (onConfigureFileAssociations != null) item {
                     Text(playerString("settings_category_file_association"), style = MaterialTheme.typography.headlineSmall,
                         modifier = Modifier.padding(16.dp))
                 }
-                item {
+                if (onConfigureFileAssociations != null) item {
                     Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 16.dp),
                         verticalAlignment = Alignment.CenterVertically) {
                         Text(playerString("settings_association_title"), style = MaterialTheme.typography.bodyLarge,
