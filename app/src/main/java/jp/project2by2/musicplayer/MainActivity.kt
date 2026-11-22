@@ -107,6 +107,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInWindow
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
@@ -247,9 +252,15 @@ fun MusicPlayerMainScreen(
     var folderViewModeOrdinal by rememberSaveable { mutableStateOf(1) }
     var folderViewMode by remember { mutableStateOf(FolderViewMode.List) }
     var pianoRollData by remember { mutableStateOf<PianoRollData?>(null) }
-    var miniLiftProgress by remember { mutableFloatStateOf(0f) }
-    var miniLiftDragPx by remember { mutableFloatStateOf(0f) }
-    var skipNowPlayingEnterAnimation by remember { mutableStateOf(false) }
+    // Compact player sheet: the mini bar and full Now Playing share one drag position.
+    val playerSheet = rememberPlayerSheetState()
+    LaunchedEffect(showNowPlaying) {
+        if (playerSheet.targetExpanded != showNowPlaying) playerSheet.animateTo(showNowPlaying)
+    }
+    val settlePlayerSheet: (Boolean, Float) -> Unit = { expanded, velocityPx ->
+        playerSheet.animateTo(expanded, velocityPx)
+        showNowPlaying = expanded
+    }
 
     // Playlist edit
     var isPlaylistEditModeActive by remember { mutableStateOf(false) }
@@ -823,10 +834,7 @@ fun MusicPlayerMainScreen(
                     runCatching { controllerFuture.get().play() }
                         .onSuccess {
                             scope.launch {
-                                skipNowPlayingEnterAnimation = false
                                 showNowPlaying = true
-                                miniLiftProgress = 0f
-                                miniLiftDragPx = 0f
                             }
                         }
                         .onFailure {
@@ -1005,7 +1013,14 @@ fun MusicPlayerMainScreen(
         verticalFoldInWindow = rememberVerticalFoldInWindow(),
         library = { wide ->
     BackHandler(enabled = !wide && showNowPlaying) { showNowPlaying = false }
-    Box(modifier = Modifier.fillMaxSize()) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .onGloballyPositioned {
+                playerSheet.hostTopInWindow = it.positionInWindow().y
+                playerSheet.hostHeight = it.size.height.toFloat()
+            }
+    ) {
     Scaffold(
         topBar = {
             // Browse keeps the logo (its address bar shows the location); an open playlist shows its name.
@@ -1122,27 +1137,27 @@ fun MusicPlayerMainScreen(
                     exit = slideOutVertically(targetOffsetY = { it }, animationSpec = tween(400)) +
                             fadeOut(animationSpec = tween(400))
                 ) {
-                    DraggableMiniPlayerContainer(
-                        onExpand = {
-                            skipNowPlayingEnterAnimation = true
-                            showNowPlaying = true
-                            miniLiftProgress = 0f
-                            miniLiftDragPx = 0f
-                        },
-                        onDragProgress = { progress, dragPx ->
-                            miniLiftProgress = progress
-                            miniLiftDragPx = dragPx
+                    PlayerSheetDragArea(
+                        state = playerSheet,
+                        onSettle = settlePlayerSheet,
+                        modifier = Modifier.onGloballyPositioned {
+                            playerSheet.miniTopInWindow = it.positionInWindow().y
                         }
                     ) {
+                        // The mini bar rides on the top edge of the rising sheet while it fades.
+                        Box(
+                            modifier = Modifier.graphicsLayer {
+                                val p = playerSheet.progress
+                                translationY = -p * playerSheet.travelPx
+                                alpha = 1f - (p / 0.3f).coerceIn(0f, 1f)
+                            }
+                        ) {
                         MiniPlayerContainer(
                             playbackService = playbackService,
                             selectedMidiFileUri = selectedMidiFileUri,
                             onPlay = {
                                 controllerFuture.get().play()
-                                skipNowPlayingEnterAnimation = false
                                 showNowPlaying = true
-                                miniLiftProgress = 0f
-                                miniLiftDragPx = 0f
                             },
                             onPause = { controllerFuture.get().pause() },
                             onSeekToMs = { ms -> controllerFuture.get().seekTo(ms) },
@@ -1164,10 +1179,10 @@ fun MusicPlayerMainScreen(
                                 }
                             },
                             onExpandRequest = {
-                                skipNowPlayingEnterAnimation = false
                                 showNowPlaying = true
                             }
                         )
+                        }
                     }
                 }
                 jp.project2by2.musicplayer.ui.player.PlayerNavigationBar(
@@ -1469,58 +1484,24 @@ fun MusicPlayerMainScreen(
             }
         }
     }
-    if (!wide && !showNowPlaying && selectedMidiFileUri != null && miniLiftProgress > 0f) {
-        val configuration = LocalConfiguration.current
-        val density = LocalDensity.current
-        val screenPx = with(density) { configuration.screenHeightDp.dp.toPx() }
-        val progress = miniLiftProgress.coerceIn(0f, 1f)
-        val dragProgressByY = (miniLiftDragPx.coerceAtLeast(0f) / MINI_PLAYER_EXPAND_THRESHOLD_PX).coerceIn(0f, 1f)
-        val followPx = screenPx * dragProgressByY
+    val playerSheetVisible by remember { derivedStateOf { playerSheet.progress > 0f } }
+    if (!wide && selectedMidiFileUri != null && (playerSheetVisible || showNowPlaying)) {
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .zIndex(2f)
-                .offset { IntOffset(0, (screenPx - followPx).roundToInt()) }
-                .alpha(progress)
+                .zIndex(3f)
+                .drawBehind { drawRect(Color.Black, alpha = 0.35f * playerSheet.progress) }
         ) {
-            NowPlayingPianoRollSheet(
-                fileUri = selectedMidiFileUri,
-                playbackService = playbackService,
-                pianoRollData = pianoRollData,
-                showActions = true,
-                onActionsClick = { showNowPlayingActions = true },
-                onSeekToMs = { ms -> controllerFuture.get().seekTo(ms) },
-                onPrevious = {
-                    scope.launch {
-                        val shuffleEnabled = SettingsDataStore.shuffleEnabledFlow(context).first()
-                        val currentPositionMs = playbackService?.getCurrentPositionMs() ?: 0L
-                        if (currentPositionMs > 3000L) {
-                            controllerFuture.get().seekTo(0)
-                        } else {
-                            playbackService?.playPreviousInQueue(shuffleEnabled)
-                        }
-                    }
-                },
-                onNext = {
-                    scope.launch {
-                        val shuffleEnabled = SettingsDataStore.shuffleEnabledFlow(context).first()
-                        playbackService?.playNextInQueue(shuffleEnabled)
-                    }
-                },
-                onClose = { showNowPlaying = false }
-            )
-        }
-    }
-    if (!wide && showNowPlaying && selectedMidiFileUri != null) {
-        DraggableNowPlayingContainer(
-            onClose = {
-                showNowPlaying = false
-                skipNowPlayingEnterAnimation = false
-            },
-            animateIn = !skipNowPlayingEnterAnimation,
-            modifier = Modifier.fillMaxSize().zIndex(3f)
-        ) {
-            playerContent()
+            PlayerSheetDragArea(
+                state = playerSheet,
+                onSettle = settlePlayerSheet,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .offset { IntOffset(0, ((1f - playerSheet.progress) * playerSheet.travelPx).roundToInt()) }
+                    .graphicsLayer { alpha = ((playerSheet.progress - 0.05f) / 0.3f).coerceIn(0f, 1f) }
+            ) {
+                playerContent()
+            }
         }
     }
     }
@@ -1698,150 +1679,11 @@ private data class NowPlayingRollUi(
     val loopEndMs: Long
 )
 
-private const val MINI_PLAYER_EXPAND_THRESHOLD_PX = 1600f
 private const val PLAYLIST_REORDER_DEBUG_LOG = true
 
 private fun logPlaylistReorder(message: String) {
     if (PLAYLIST_REORDER_DEBUG_LOG) {
         Log.d("PlaylistReorder", message)
-    }
-}
-
-@Composable
-private fun DraggableMiniPlayerContainer(
-    onExpand: () -> Unit,
-    onDragProgress: (Float, Float) -> Unit,
-    content: @Composable () -> Unit
-) {
-    var offsetY by remember { mutableFloatStateOf(0f) }
-    val scope = rememberCoroutineScope()
-    val expandThreshold = MINI_PLAYER_EXPAND_THRESHOLD_PX / 8
-    var lastSentProgress by remember { mutableFloatStateOf(-1f) }
-    var lastSentDragPx by remember { mutableFloatStateOf(-1f) }
-
-    fun dispatchProgress(progress: Float, dragPx: Float, force: Boolean = false) {
-        if (!force &&
-            kotlin.math.abs(progress - lastSentProgress) < 0.007f &&
-            kotlin.math.abs(dragPx - lastSentDragPx) < 1.5f
-        ) return
-        lastSentProgress = progress
-        lastSentDragPx = dragPx
-        onDragProgress(progress, dragPx)
-    }
-
-    Box(
-        modifier = Modifier
-            .offset { IntOffset(0, offsetY.roundToInt()) }
-            .pointerInput(Unit) {
-                detectVerticalDragGestures(
-                    onVerticalDrag = { change, dragAmount ->
-                        change.consume()
-                        offsetY = (offsetY + dragAmount).coerceAtMost(0f)
-                        dispatchProgress(((-offsetY) / expandThreshold).coerceIn(0f, 1f), -offsetY)
-                    },
-                    onDragEnd = {
-                        if (offsetY < -expandThreshold) {
-                            offsetY = 0f
-                            dispatchProgress(0f, 0f, force = true)
-                            onExpand()
-                        } else {
-                            scope.launch {
-                                repeat(7) {
-                                    offsetY += (0f - offsetY) * 0.45f
-                                    dispatchProgress(((-offsetY) / expandThreshold).coerceIn(0f, 1f), -offsetY)
-                                    delay(10)
-                                }
-                                offsetY = 0f
-                                dispatchProgress(0f, 0f, force = true)
-                            }
-                        }
-                    },
-                    onDragCancel = {
-                        scope.launch {
-                            repeat(7) {
-                                offsetY += (0f - offsetY) * 0.45f
-                                dispatchProgress(((-offsetY) / expandThreshold).coerceIn(0f, 1f), -offsetY)
-                                delay(10)
-                            }
-                            offsetY = 0f
-                            dispatchProgress(0f, 0f, force = true)
-                        }
-                    }
-                )
-            }
-    ) {
-        content()
-    }
-}
-
-@Composable
-private fun DraggableNowPlayingContainer(
-    onClose: () -> Unit,
-    animateIn: Boolean = true,
-    modifier: Modifier = Modifier,
-    content: @Composable () -> Unit
-) {
-    val configuration = LocalConfiguration.current
-    val density = LocalDensity.current
-    val maxOffsetPx = with(density) { configuration.screenHeightDp.dp.toPx() }
-    val scope = rememberCoroutineScope()
-    var offsetY by remember { mutableFloatStateOf(maxOffsetPx) }
-
-    LaunchedEffect(maxOffsetPx, animateIn) {
-        if (animateIn) {
-            offsetY = maxOffsetPx
-            repeat(12) {
-                offsetY += (0f - offsetY) * 0.38f
-                delay(12)
-            }
-            offsetY = 0f
-        } else {
-            offsetY = 0f
-        }
-    }
-
-    Box(
-        modifier = modifier
-            .background(Color.Black.copy(alpha = (1f - (offsetY / maxOffsetPx).coerceIn(0f, 1f)) * 0.35f))
-    ) {
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .offset { IntOffset(0, offsetY.roundToInt()) }
-                .pointerInput(maxOffsetPx) {
-                    detectVerticalDragGestures(
-                        onVerticalDrag = { change, dragAmount ->
-                            change.consume()
-                            offsetY = (offsetY + dragAmount).coerceIn(0f, maxOffsetPx)
-                        },
-                        onDragEnd = {
-                            if (offsetY > maxOffsetPx * 0.28f) {
-                                offsetY = maxOffsetPx
-                                onClose()
-                            } else {
-                                scope.launch {
-                                    repeat(8) {
-                                        offsetY += (0f - offsetY) * 0.42f
-                                        delay(10)
-                                    }
-                                    offsetY = 0f
-                                }
-                            }
-                        },
-                        onDragCancel = {
-                            scope.launch {
-                                repeat(8) {
-                                    offsetY += (0f - offsetY) * 0.42f
-                                    delay(10)
-                                }
-                                offsetY = 0f
-                            }
-                        }
-                    )
-                }
-        ) {
-            content()
-        }
     }
 }
 
