@@ -187,7 +187,10 @@ internal fun AndroidSettingsScreen(playbackService: PlaybackService?, onBack: ()
 
 
     val maxVoices by SettingsDataStore.maxVoicesFlow(context).collectAsState(initial = 40)
+    val pianoRollTimingMs by SettingsDataStore.pianoRollTimingFlow(context).collectAsState(initial = 0)
     jp.project2by2.musicplayer.ui.settings.SettingsScreen(
+        pianoRollTimingMs = pianoRollTimingMs,
+        onPianoRollTimingChange = { value -> scope.launch { SettingsDataStore.setPianoRollTiming(context, value) } },
         soundFontName = soundFontName, hasSoundFont = hasSoundFont, maxVoices = maxVoices,
         soundFontLoading = soundFontLoading,
         effectsEnabled = effectsEnabled, reverbStrength = reverbStrength,

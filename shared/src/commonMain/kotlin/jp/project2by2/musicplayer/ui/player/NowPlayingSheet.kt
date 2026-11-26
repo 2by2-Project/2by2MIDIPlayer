@@ -37,10 +37,13 @@ fun NowPlayingSheet(
     onSeekToMs: (Long) -> Unit, onPrevious: () -> Unit, onNext: () -> Unit,
     onPlayPause: () -> Unit,
     trackKey: Any = title,
-    onClose: (() -> Unit)? = null
+    onClose: (() -> Unit)? = null,
+    /** Delay between the engine position and what is heard (Bluetooth plus user adjustment); negative shows the roll earlier. */
+    outputDelayMs: Int = 0
 ) {
     var stablePositionMs by remember(trackKey) { mutableLongStateOf(0L) }
     var targetPositionMs by remember(trackKey) { mutableLongStateOf(0L) }
+    var afterLoopWrap by remember(trackKey) { mutableStateOf(false) }
     LaunchedEffect(ui?.positionMs, ui?.durationMs) {
         val raw = ui?.positionMs ?: return@LaunchedEffect
         if (targetPositionMs == 0L && stablePositionMs == 0L) {
@@ -51,14 +54,19 @@ fun NowPlayingSheet(
         val deltaFromStable = raw - stablePositionMs
         if (deltaFromStable < -250L) {
             // Loop wrap / backward seek: snap immediately.
+            val loopStart = ui?.loopStartMs?.coerceAtLeast(0L) ?: 0L
+            val loopEnd = ui?.loopEndMs ?: 0L
+            afterLoopWrap = loopEnd > loopStart && stablePositionMs >= loopEnd - 400L && raw in loopStart..(loopStart + 800L)
             stablePositionMs = raw
+        } else if (deltaFromStable > 250L) {
+            afterLoopWrap = false
         }
         targetPositionMs = raw
     }
 
     // Keep the frame clock running across audio position updates; restarting skips a frame.
     // Read targetPositionMs inside the loop so rendering follows the display refresh rate.
-    LaunchedEffect(trackKey, ui?.isPlaying, ui?.durationMs, ui?.loopStartMs, ui?.loopEndMs) {
+    LaunchedEffect(trackKey, ui?.isPlaying, ui?.durationMs, ui?.loopStartMs, ui?.loopEndMs, loopEnabled) {
         var lastFrameNanos = 0L
         while (kotlinx.coroutines.currentCoroutineContext().isActive) {
             withFrameNanos { now ->
@@ -73,8 +81,11 @@ fun NowPlayingSheet(
                 val loopEnd = ui?.loopEndMs?.coerceAtLeast(loopStart) ?: duration
                 if (ui?.isPlaying == true) {
                     var predicted = (stablePositionMs + frameMs).coerceAtMost(duration)
-                    if (loopEnd > loopStart && predicted >= loopEnd) {
-                        predicted = loopStart + (predicted - loopEnd)
+                    if (loopEnabled && loopEnd > loopStart && predicted >= loopEnd) {
+                        // Wait at the loop end until the engine position itself wraps. Wrapping here first
+                        // pulled the display into the loop and made the real wrap look like a seek, so the
+                        // delayed roll showed the section before the loop point.
+                        predicted = loopEnd
                     }
                     val target = targetPositionMs.coerceIn(0L, duration)
                     val correction = ((target - predicted) * 0.20f).toLong()
@@ -89,16 +100,18 @@ fun NowPlayingSheet(
     // For seekbar slider
     var isSeeking by remember(trackKey) { mutableStateOf(false) }
     var sliderValue by remember(trackKey) { mutableStateOf(0.0f) }
-    val progress by remember(ui?.positionMs, ui?.durationMs) {
-        derivedStateOf {
-            val duration = ui?.durationMs ?: 0L
-            val position = ui?.positionMs ?: 0L
-            if (duration > 0L) {
-                (position.toFloat() / duration.toFloat()).coerceIn(0f, 1f)
-            } else {
-                0f
-            }
-        }
+    // The roll, seekbar and elapsed time all show the same position: what is heard, not the engine position.
+    // The delay is constant, also while paused: switching it on play/pause made the display jump.
+    val displayPositionMs = delayedPianoRollPositionMs(
+        positionMs = stablePositionMs,
+        delayMs = outputDelayMs.toLong(),
+        loopStartMs = ui?.loopStartMs ?: 0L,
+        loopEndMs = ui?.loopEndMs ?: 0L,
+        afterLoopWrap = afterLoopWrap
+    ).coerceIn(0L, (ui?.durationMs ?: 0L).coerceAtLeast(0L))
+    val progress = run {
+        val duration = ui?.durationMs ?: 0L
+        if (duration > 0L) (displayPositionMs.toFloat() / duration.toFloat()).coerceIn(0f, 1f) else 0f
     }
     Surface(
         color = MaterialTheme.colorScheme.surface,
@@ -186,7 +199,7 @@ fun NowPlayingSheet(
                         notes = pianoRollData.notes,
                         measureTickPositions = pianoRollData.measureTickPositions,
                         tickTimeAnchors = pianoRollData.tickTimeAnchors,
-                        currentPositionMs = stablePositionMs,
+                        currentPositionMs = displayPositionMs,
                         loopPointMs = ui.loopStartMs,
                         endPointMs = ui.loopEndMs,
                         totalDurationMs = maxOf(pianoRollData.totalDurationMs, ui.durationMs),
@@ -238,11 +251,8 @@ fun NowPlayingSheet(
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp, vertical = 0.dp),
             ) {
-                val seconds = (ui?.positionMs ?: 0L) / 1000
-                val minutes = seconds / 60
-                val remainingSeconds = seconds % 60
                 Text(
-                    text = formatPlayerDuration(ui?.positionMs ?: 0L),
+                    text = formatPlayerDuration(displayPositionMs),
                     style = MaterialTheme.typography.bodySmall,
                 )
                 Spacer(Modifier.weight(1f))

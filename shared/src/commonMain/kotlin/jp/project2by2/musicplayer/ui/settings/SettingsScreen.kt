@@ -23,7 +23,9 @@ import androidx.compose.ui.unit.dp
 import jp.project2by2.musicplayer.*
 import jp.project2by2.musicplayer.model.*
 import jp.project2by2.musicplayer.state.*
+import jp.project2by2.musicplayer.ui.player.PIANO_ROLL_TIMING_MAX_MS
 import jp.project2by2.musicplayer.ui.player.playerString
+import kotlin.math.roundToInt
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import androidx.compose.foundation.selection.selectable
@@ -38,7 +40,11 @@ fun SettingsScreen(
     onLoopChange: (Boolean) -> Unit, onShuffleChange: (Boolean) -> Unit,
     soundFontLoading: Boolean = false,
     /** Null hides the file-association section (Android cannot set a default player from an app). */
-    onConfigureFileAssociations: (suspend () -> String)? = null
+    onConfigureFileAssociations: (suspend () -> String)? = null,
+    /** Null hides the piano roll timing adjustment (hosts that apply it provide the callback). */
+    onPianoRollTimingChange: ((Int) -> Unit)? = null,
+    /** Piano roll display offset in ms; positive shows the roll later, negative earlier. */
+    pianoRollTimingMs: Int = 0
 ) {
     val scope = rememberCoroutineScope()
     var associationBusy by remember { mutableStateOf(false) }
@@ -160,6 +166,21 @@ fun SettingsScreen(
                         onCheckedChange = onShuffleChange
                     )
                 }
+                if (onPianoRollTimingChange != null) item {
+                    SettingsSliderItem(
+                        title = playerString("settings_piano_roll_timing_title"),
+                        value = pianoRollTimingMs.toFloat(),
+                        valueRange = -PIANO_ROLL_TIMING_MAX_MS.toFloat()..PIANO_ROLL_TIMING_MAX_MS.toFloat(),
+                        valueLabel = { "${if (it > 0f) "+" else ""}${it.roundToInt()} ms" },
+                        onValueChange = { onPianoRollTimingChange((it / 10f).roundToInt() * 10) }
+                    )
+                    Text(
+                        playerString("settings_piano_roll_timing_summary"),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 16.dp)
+                    )
+                }
                 if (onConfigureFileAssociations != null) item {
                     Text(playerString("settings_category_file_association"), style = MaterialTheme.typography.headlineSmall,
                         modifier = Modifier.padding(16.dp))
@@ -236,7 +257,8 @@ fun SettingsSliderItem(
     value: Float,
     valueRange: ClosedFloatingPointRange<Float> = 0f..1f,
     onValueChange: (Float) -> Unit,
-    enabled: Boolean = true
+    enabled: Boolean = true,
+    valueLabel: (Float) -> String = { it.toString() }
 ) {
     var uiValue by remember { mutableFloatStateOf(value) }
 
@@ -254,7 +276,7 @@ fun SettingsSliderItem(
         ) {
             Text(text = title, style = MaterialTheme.typography.bodyLarge)
             Text(
-                text = value.toString(),
+                text = valueLabel(uiValue),
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.End,

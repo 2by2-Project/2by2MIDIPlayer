@@ -7,6 +7,7 @@ import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import jp.project2by2.musicplayer.ui.player.PIANO_ROLL_TIMING_MAX_MS
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
@@ -29,6 +30,7 @@ object SettingsDataStore {
     private val browseFolderKey = stringPreferencesKey("browse_folder")
 
     private val maxVoicesKey = intPreferencesKey("max_voices")
+    private val pianoRollTimingKey = intPreferencesKey("piano_roll_timing_ms")
 
     fun soundFontNameFlow(context: Context): Flow<String?> {
         return context.settingsDataStore.data.map { prefs ->
@@ -123,5 +125,17 @@ object SettingsDataStore {
 
     suspend fun setMaxVoices(context: Context, maxVoices: Int) {
         context.settingsDataStore.edit { it[maxVoicesKey] = maxVoices }
+    }
+
+    /** User adjustment (ms) of the piano roll display timing; positive shows the roll later. */
+    fun pianoRollTimingFlow(context: Context): Flow<Int> =
+        context.settingsDataStore.data
+            .map { it[pianoRollTimingKey] ?: 0 }
+            .distinctUntilChanged()
+
+    suspend fun setPianoRollTiming(context: Context, offsetMs: Int) {
+        context.settingsDataStore.edit {
+            it[pianoRollTimingKey] = offsetMs.coerceIn(-PIANO_ROLL_TIMING_MAX_MS, PIANO_ROLL_TIMING_MAX_MS)
+        }
     }
 }

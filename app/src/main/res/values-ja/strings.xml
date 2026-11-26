@@ -101,4 +101,6 @@
     <string name="settings_association_linux">MIDIファイルを2by2 MIDI Playerで既定で開くように設定しました。</string>
     <string name="settings_association_unavailable">関連付けを設定するには、インストール済みアプリまたは配布用アプリイメージから起動してください。登録後はアプリの保存場所を変更しないでください。</string>
     <string name="settings_association_failed">ファイルの関連付け設定を完了できませんでした。OSの既定のアプリ設定を確認してください。Linuxではxdg-utilsとデスクトップセッションが必要です。</string>
+    <string name="settings_piano_roll_timing_title">ピアノロールのタイミング調整</string>
+    <string name="settings_piano_roll_timing_summary">実際の音とピアノロールの表示がずれている場合に調整します。＋で表示を遅く、－で早くします。</string>
 </resources>

@@ -1735,6 +1735,7 @@ private fun NowPlayingPianoRollSheet(
 
     val loopEnabled by SettingsDataStore.loopEnabledFlow(context).collectAsState(initial = false)
     val shuffleEnabled by SettingsDataStore.shuffleEnabledFlow(context).collectAsState(initial = false)
+    val pianoRollTimingMs by SettingsDataStore.pianoRollTimingFlow(context).collectAsState(initial = 0)
 
     if (fileUri == null) return
     val ui = produceState<NowPlayingRollUi?>(initialValue = null, key1 = playbackService, key2 = fileUri) {
@@ -1753,7 +1754,7 @@ private fun NowPlayingPianoRollSheet(
             delay(24)
         }
     }.value
-
+    val bluetoothDetectedDelayMs = rememberBluetoothOutputDelayMs()
 
     NowPlayingSheet(
         title = playbackService?.getCurrentTitle().orEmpty(), artist = playbackService?.currentArtist.orEmpty(),
@@ -1765,7 +1766,9 @@ private fun NowPlayingPianoRollSheet(
         showActions = showActions, onActionsClick = onActionsClick, onSeekToMs = onSeekToMs,
         onPrevious = onPrevious, onNext = onNext,
         onPlayPause = { playbackService?.let { if (it.isPlaying()) it.pause() else it.play() } },
-        trackKey = fileUri
+        trackKey = fileUri,
+        outputDelayMs = (bluetoothDetectedDelayMs?.plus(jp.project2by2.musicplayer.ui.player.BLUETOOTH_DELAY_CALIBRATION_MS) ?: 0) +
+            pianoRollTimingMs
     )
 }
 

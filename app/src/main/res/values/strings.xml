@@ -105,4 +105,6 @@
     <string name="settings_association_linux">MIDI files are now set to open with 2by2 MIDI Player.</string>
     <string name="settings_association_unavailable">Launch the installed application or packaged application image to set file associations. Keep the application in the same location after registration.</string>
     <string name="settings_association_failed">Could not complete file association setup. Check your OS default app settings. On Linux, xdg-utils and a desktop session are required.</string>
+    <string name="settings_piano_roll_timing_title">Piano roll timing</string>
+    <string name="settings_piano_roll_timing_summary">Adjust when the piano roll is out of sync with the actual sound. + shows the roll later, − earlier.</string>
 </resources>
