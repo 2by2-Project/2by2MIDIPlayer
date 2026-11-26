@@ -16,6 +16,7 @@ import androidx.compose.ui.draw.*
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.*
 import androidx.compose.ui.graphics.drawscope.clipRect
+import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.input.nestedscroll.*
 import androidx.compose.ui.layout.*
 import jp.project2by2.musicplayer.*
@@ -60,6 +61,26 @@ private val MinimumNoteWidth = (2f / 3f).dp
 
 // Display delay in milliseconds: negative values show the piano roll ahead of audio.
 private const val PIANO_ROLL_DELAY = -120
+
+// The measure being played flashes white on entering and fades back toward the next measure.
+private const val MEASURE_AREA_FLASH_ALPHA = 0.10f
+// Extra scale of the current measure number on entering (0.3 = 130% at its start).
+private const val MEASURE_LABEL_FLASH_SCALE = 0.3f
+private val MeasureLineColor = Color.Gray.copy(alpha = 0.45f)
+private val MeasureLineFlashColor = Color.White.copy(alpha = 0.95f)
+
+/** The measure containing [tick]: its index and how much of the entry flash remains (1 at its start, 0 at the next). */
+internal data class MeasureProgress(val index: Int, val startTick: Int, val endTick: Int, val flash: Float)
+
+internal fun currentMeasureProgress(tick: Int, measureTicks: List<Int>, lastTick: Int): MeasureProgress? {
+    val found = measureTicks.binarySearch(tick)
+    val index = if (found >= 0) found else -found - 2
+    if (index < 0) return null
+    val start = measureTicks[index]
+    val end = if (index + 1 < measureTicks.size) measureTicks[index + 1] else lastTick
+    val flash = if (end > start) 1f - ((tick - start).toFloat() / (end - start).toFloat()).coerceIn(0f, 1f) else 0f
+    return MeasureProgress(index, start, end, flash)
+}
 
 
 @Composable
@@ -117,13 +138,32 @@ fun PlaybackPianoRollView(
             val endDisplayTick = msToTick(endPointMs, tickTimeAnchors, durationTicks).coerceIn(0, durationTicks)
             val drawableEndTick = minOf(visibleEnd, endDisplayTick)
             val endX = ((endDisplayTick - visibleStart).toFloat() / viewport.toFloat()) * size.width
+            val currentMeasure = currentMeasureProgress(currentTick, measureTickPositions, endDisplayTick)
 
+            currentMeasure?.let { measure ->
+                val areaStart = maxOf(measure.startTick, visibleStart)
+                val areaEnd = minOf(measure.endTick, drawableEndTick)
+                if (areaEnd > areaStart) {
+                    val areaX = ((areaStart - visibleStart).toFloat() / viewport.toFloat()) * size.width
+                    val areaW = ((areaEnd - areaStart).toFloat() / viewport.toFloat()) * size.width
+                    drawRect(
+                        color = Color.White.copy(alpha = MEASURE_AREA_FLASH_ALPHA * measure.flash),
+                        topLeft = Offset(areaX, 0f),
+                        size = Size(areaW, size.height)
+                    )
+                }
+            }
 
             measureTickPositions.forEachIndexed { index, measureDisplayTick ->
                 if (measureDisplayTick !in visibleStart..drawableEndTick) return@forEachIndexed
                 val x = ((measureDisplayTick - visibleStart).toFloat() / viewport.toFloat()) * size.width
+                val measureColor = if (currentMeasure?.index == index) {
+                    lerp(MeasureLineColor, MeasureLineFlashColor, currentMeasure.flash)
+                } else {
+                    MeasureLineColor
+                }
                 drawLine(
-                    color = Color.Gray.copy(alpha = 0.45f),
+                    color = measureColor,
                     start = Offset(x, 0f),
                     end = Offset(x, size.height),
                     strokeWidth = measureLineWidth
@@ -133,12 +173,17 @@ fun PlaybackPianoRollView(
                 // Measure independently of the remaining viewport width so edge labels never wrap.
                 val label = textMeasurer.measure(
                     text = "${index + 1}",
-                    style = TextStyle(color = Color.Gray.copy(alpha = 0.45f), fontSize = 11.sp),
+                    style = TextStyle(color = measureColor, fontSize = 11.sp),
                     softWrap = false,
                     maxLines = 1
                 )
+                val labelOrigin = Offset(x + measureLabelGap, 0f)
+                val labelScale = if (currentMeasure?.index == index) 1f + MEASURE_LABEL_FLASH_SCALE * currentMeasure.flash else 1f
                 clipRect {
-                    drawText(label, topLeft = Offset(x + measureLabelGap, 0f))
+                    // Grow from the label's top-left so it stays next to its measure line.
+                    scale(labelScale, labelScale, pivot = labelOrigin) {
+                        drawText(label, topLeft = labelOrigin)
+                    }
                 }
             }
 
