@@ -1261,11 +1261,11 @@ fun MusicPlayerMainScreen(
                     },
                     demoOpen = selectedFolderKey == DEMO_FOLDER_KEY,
                     onOpenFolder = { openBrowseFolder(it) },
-                    backProgress = folderBack.previewProgress
+                    backProgress = { folderBack.previewProgress }
                 )
                 jp.project2by2.musicplayer.ui.browse.BrowseSearchField(
                     visible = isSearchActive, query = searchQuery, onQueryChange = { searchQuery = it }
-                , backProgress = searchBack.previewProgress)
+                , backProgress = { searchBack.previewProgress })
                 if (!hasAudioPermission) {
                     ElevatedButton(onClick = { storagePermissionLauncher.launch(permissionsToRequest) }) {
                         Text(stringResource(id = R.string.info_grant_storage_permission))

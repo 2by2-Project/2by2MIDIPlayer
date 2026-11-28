@@ -43,8 +43,11 @@ fun LibraryAddressBar(
     demoOpen: Boolean,
     onOpenFolder: (String) -> Unit,
     modifier: Modifier = Modifier,
-    /** Back gesture progress on phones (0..1): the open level fades and the bar scrolls back to its parent. */
-    backProgress: Float = 0f,
+    /**
+     * Back gesture progress on phones (0..1): the open level fades and the bar scrolls back to its parent.
+     * Read only while drawing and scrolling, so following the finger never recomposes the screen.
+     */
+    backProgress: () -> Float = { 0f },
 ) {
     val demo = playerString("folder_demo_name")
     val segments = folders + listOfNotNull(if (demoOpen) AddressSegment(DEMO_ADDRESS, demo) else null)
@@ -64,15 +67,18 @@ fun AddressBar(
     segments: List<AddressSegment>,
     onSegmentClick: (AddressSegment) -> Unit,
     modifier: Modifier = Modifier,
-    backProgress: Float = 0f,
+    backProgress: () -> Float = { 0f },
 ) {
     val listState = rememberLazyListState()
     // Scroll applied for the back preview, so it can follow the gesture both ways.
     var backScroll by remember { mutableFloatStateOf(0f) }
-    LaunchedEffect(backProgress) {
-        val last = listState.layoutInfo.visibleItemsInfo.lastOrNull { it.index == segments.lastIndex }
-        val wanted = if (last != null) backProgress.coerceIn(0f, 1f) * last.size else 0f
-        if (wanted != backScroll) backScroll -= listState.scrollBy(-(wanted - backScroll))
+    val lastIndex by rememberUpdatedState(segments.lastIndex)
+    LaunchedEffect(listState) {
+        snapshotFlow { backProgress().coerceIn(0f, 1f) }.collect { progress ->
+            val last = listState.layoutInfo.visibleItemsInfo.lastOrNull { it.index == lastIndex }
+            val wanted = if (last != null) progress * last.size else 0f
+            if (wanted != backScroll) backScroll -= listState.scrollBy(-(wanted - backScroll))
+        }
     }
     // Deep paths overflow the width; keep the current level in view, also while the pane is resized.
     LaunchedEffect(segments) {
@@ -88,9 +94,9 @@ fun AddressBar(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         itemsIndexed(segments, key = { _, segment -> segment.key }) { index, segment ->
-            val leaving = index == segments.lastIndex && index > 0 && backProgress > 0f
+            val leaving = index == segments.lastIndex && index > 0
             Row(verticalAlignment = Alignment.CenterVertically,
-                modifier = if (leaving) Modifier.graphicsLayer { alpha = 1f - backProgress.coerceIn(0f, 1f) } else Modifier) {
+                modifier = if (leaving) Modifier.graphicsLayer { alpha = 1f - backProgress().coerceIn(0f, 1f) } else Modifier) {
                 if (index > 0) Icon(
                     imageVector = Icons.Default.ChevronRight,
                     contentDescription = null,

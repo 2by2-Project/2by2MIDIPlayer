@@ -18,14 +18,14 @@ import jp.project2by2.musicplayer.ui.player.playerString
 fun BrowseSearchField(
     visible: Boolean, query: String, onQueryChange: (String) -> Unit,
     /** Back gesture progress on phones (0..1): the field starts to close like its exit animation. */
-    backProgress: Float = 0f,
+    backProgress: () -> Float = { 0f },
 ) {
     val focusRequester = remember { FocusRequester() }
     AnimatedVisibility(visible = visible,
         enter = slideInVertically(initialOffsetY = { -it }, animationSpec = tween(200)) + fadeIn(tween(200)),
         exit = slideOutVertically(targetOffsetY = { -it }, animationSpec = tween(200)) + fadeOut(tween(200))) {
         Surface(color = MaterialTheme.colorScheme.background, modifier = Modifier.graphicsLayer {
-            val p = backProgress.coerceIn(0f, 1f)
+            val p = backProgress().coerceIn(0f, 1f)
             translationY = -size.height * 0.5f * p
             alpha = 1f - 0.7f * p
         }) {

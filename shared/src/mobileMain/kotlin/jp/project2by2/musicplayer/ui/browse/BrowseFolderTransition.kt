@@ -12,6 +12,8 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.snapshotFlow
+import kotlinx.coroutines.flow.collectLatest
 import jp.project2by2.musicplayer.ui.navigation.PredictiveBackState
 
 /**
@@ -36,15 +38,18 @@ fun <T> BrowseFolderTransition(
     LaunchedEffect(target) {
         if (seekable.currentState != target || seekable.targetState != target) seekable.animateTo(target)
     }
-    val active = back?.active == true
-    val progress = back?.progress ?: 0f
-    LaunchedEffect(active, progress, backTarget) {
-        when {
-            active && backTarget != null && backTarget != target -> seekable.seekTo(progress, backTarget)
-            // A cancelled gesture has returned to 0: leave the preview without moving anything. (A
-            // committed one keeps its progress until the host switches to the new folder.)
-            !active && progress == 0f && seekable.targetState != target && seekable.currentState == target ->
-                seekable.snapTo(target)
+    // The gesture is read here only (not during composition), so following the finger only advances
+    // the transition; the pages themselves are not recomposed.
+    LaunchedEffect(back, backTarget, target) {
+        if (back == null) return@LaunchedEffect
+        snapshotFlow { back.active to back.progress }.collectLatest { (active, progress) ->
+            when {
+                active && backTarget != null && backTarget != target -> seekable.seekTo(progress, backTarget)
+                // A cancelled gesture has returned to 0: leave the preview without moving anything. (A
+                // committed one keeps its progress until the host switches to the new folder.)
+                !active && progress == 0f && seekable.targetState != target && seekable.currentState == target ->
+                    seekable.snapTo(target)
+            }
         }
     }
     rememberTransition(seekable, label = "BrowseContent").AnimatedContent(

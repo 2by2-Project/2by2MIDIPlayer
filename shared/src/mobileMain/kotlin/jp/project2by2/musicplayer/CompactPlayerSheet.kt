@@ -14,6 +14,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Color
@@ -86,8 +87,11 @@ fun ExpandedPlayerSheet(
     // Back closes the open sheet; the gesture previews it (M3 predictive back).
     val back = rememberPredictiveBack(enabled = visible && expanded && backEnabled) { onSettle(false, 0f) }
     // While active the preview follows the finger; a cancelled gesture returns to 0 the same way.
-    LaunchedEffect(back.active, back.progress) {
-        if (back.active) state.previewBack(back.progress)
+    // Read outside composition: following the finger moves the sheet without recomposing the player.
+    LaunchedEffect(back) {
+        snapshotFlow { back.active to back.progress }.collect { (active, progress) ->
+            if (active) state.previewBack(progress)
+        }
     }
     HideKeyboardWhen(visible && (sheetVisible || expanded))
     if (visible && (sheetVisible || expanded)) {

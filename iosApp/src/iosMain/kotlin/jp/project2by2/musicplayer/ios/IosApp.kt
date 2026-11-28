@@ -295,9 +295,9 @@ fun IosApp(controller: IosController) {
                                 },
                                 demoOpen = demos,
                                 onOpenFolder = { controller.browse(it) },
-                                backProgress = folderBack.previewProgress)
+                                backProgress = { folderBack.previewProgress })
                             BrowseSearchField(visible = search, query = query, onQueryChange = { query = it },
-                                backProgress = searchBack.previewProgress)
+                                backProgress = { searchBack.previewProgress })
                             Box(Modifier.weight(1f).fillMaxWidth()) {
                                 if (playlistsSelected) BrowseFolderTransition(
                                     // An open playlist slides over the list of playlists, like a folder.
