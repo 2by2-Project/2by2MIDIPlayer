@@ -1,5 +1,5 @@
 package jp.project2by2.musicplayer
-import jp.project2by2.musicplayer.ui.settings.*
+import jp.project2by2.musicplayer.ui.details.FileDetails
 
 import android.content.Context
 import android.net.Uri
@@ -11,32 +11,13 @@ import android.webkit.MimeTypeMap
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.unit.dp
 import jp.project2by2.musicplayer.ui.theme._2by2MusicPlayerTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -71,151 +52,34 @@ class FileDetailsActivity : ComponentActivity() {
     }
 }
 
-private data class FileDetailsSnapshot(
-    val displayName: String,
-    val parentFolder: String,
-    val mimeType: String,
-    val durationMs: Long,
-    val loopPoint: LoopPoint?,
-    val midiTitle: String?,
-    val midiArtist: String?
-)
-
-@OptIn(ExperimentalMaterial3Api::class)
+// The screen itself is shared with iOS (mobileMain); this Activity loads the values.
 @Composable
 private fun FileDetailsScreen(
     uri: Uri?,
     onBack: () -> Unit
 ) {
     val context = LocalContext.current
-    var snapshot by remember {
-        mutableStateOf(
-            FileDetailsSnapshot(
-                displayName = context.getString(R.string.unknown),
-                parentFolder = context.getString(R.string.unknown),
-                mimeType = context.getString(R.string.unknown),
-                durationMs = 0L,
-                loopPoint = null,
-                midiTitle = null,
-                midiArtist = null
-            )
-        )
-    }
+    var details by remember { mutableStateOf<FileDetails?>(null) }
 
     LaunchedEffect(uri) {
         if (uri == null) return@LaunchedEffect
-        val loaded = withContext(Dispatchers.IO) {
+        details = withContext(Dispatchers.IO) {
             loadFileDetails(context, uri)
         }
-        snapshot = loaded
     }
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text(snapshot.displayName) },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(
-                            imageVector = Icons.Default.ArrowBack,
-                            contentDescription = stringResource(id = R.string.back)
-                        )
-                    }
-                }
-            )
-        }
-    ) { innerPadding ->
-        Column(
-            modifier = Modifier
-                .padding(innerPadding)
-                .fillMaxSize(),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
-            horizontalAlignment = Alignment.Start
-        ) {
-            LazyColumn(
-                modifier = Modifier.padding(8.dp),
-                contentPadding = PaddingValues(bottom = 16.dp)
-            ) {
-                item {
-                    SettingsInfoItem(
-                        title = stringResource(id = R.string.file_details_parent_folder),
-                        value = snapshot.parentFolder
-                    )
-                }
-                item {
-                    SettingsInfoItem(
-                        title = stringResource(id = R.string.file_details_format),
-                        value = snapshot.mimeType
-                    )
-                }
-                item {
-                    SettingsInfoItem(
-                        title = stringResource(id = R.string.file_details_duration),
-                        value = formatDuration(snapshot.durationMs)
-                    )
-                }
-                item {
-                    val loopValue = if (snapshot.loopPoint?.hasLoopStartMarker == true) {
-                        formatDuration(snapshot.loopPoint!!.startMs)
-                    } else {
-                        stringResource(id = R.string.file_details_loop_none)
-                    }
-                    SettingsInfoItem(
-                        title = stringResource(id = R.string.file_details_loop_point),
-                        value = loopValue
-                    )
-                }
-                item {
-                    HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
-                }
-                item {
-                    SettingsInfoItem(
-                        title = stringResource(id = R.string.file_details_midi_title),
-                        value = snapshot.midiTitle?.takeIf { it.isNotBlank() }
-                            ?: stringResource(id = R.string.unknown)
-                    )
-                }
-                item {
-                    SettingsInfoItem(
-                        title = stringResource(id = R.string.file_details_midi_artist),
-                        value = snapshot.midiArtist?.takeIf { it.isNotBlank() }
-                            ?: stringResource(id = R.string.unknown)
-                    )
-                }
-            }
-        }
-    }
+    jp.project2by2.musicplayer.ui.details.FileDetailsScreen(details = details, onBack = onBack)
 }
 
-@Composable
-private fun formatDuration(durationMs: Long): String {
-    if (durationMs <= 0L) return stringResource(id = R.string.duration_placeholder)
-    val totalSeconds = durationMs / 1000
-    val minutes = totalSeconds / 60
-    val seconds = totalSeconds % 60
-    return String.format("%d:%02d", minutes, seconds)
-}
-
-private fun loadFileDetails(context: Context, uri: Uri): FileDetailsSnapshot {
-    val displayName = resolveDisplayName(context, uri)
-    val parentFolder = resolveParentFolderName(context, uri).ifBlank { context.getString(R.string.unknown) }
-    val mimeType = resolveMimeType(context, uri).ifBlank { context.getString(R.string.unknown) }
+private fun loadFileDetails(context: Context, uri: Uri): FileDetails {
     val parser = MidiParser(context.contentResolver)
     val metadata = parser.getMetadata(uri)
-    val loopPoint = metadata.loopPointMs?.let {
-        LoopPoint(
-            startMs = it,
-            endMs = metadata.durationMs ?: 0L,
-            hasLoopStartMarker = true
-        )
-    }
-
-    return FileDetailsSnapshot(
-        displayName = displayName.ifBlank { context.getString(R.string.unknown) },
-        parentFolder = parentFolder,
-        mimeType = mimeType,
+    return FileDetails(
+        displayName = resolveDisplayName(context, uri),
+        parentFolder = resolveParentFolderName(context, uri),
+        format = resolveMimeType(context, uri),
         durationMs = metadata.durationMs ?: 0L,
-        loopPoint = loopPoint,
+        loopPointMs = metadata.loopPointMs,
         midiTitle = metadata.title,
         midiArtist = metadata.copyright
     )

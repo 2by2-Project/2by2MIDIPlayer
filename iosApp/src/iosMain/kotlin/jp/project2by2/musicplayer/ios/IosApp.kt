@@ -18,6 +18,8 @@ import jp.project2by2.musicplayer.*
 import jp.project2by2.musicplayer.model.*
 import jp.project2by2.musicplayer.state.NowPlayingState
 import jp.project2by2.musicplayer.ui.browse.*
+import jp.project2by2.musicplayer.ui.details.FileDetails
+import jp.project2by2.musicplayer.ui.details.FileDetailsScreen
 import jp.project2by2.musicplayer.ui.player.*
 import jp.project2by2.musicplayer.ui.playlist.*
 import jp.project2by2.musicplayer.ui.settings.RecommendedSoundFontDialog
@@ -70,6 +72,8 @@ fun IosApp(controller: IosController) {
     var folderActions by remember { mutableStateOf<LibraryFolder?>(null) }
     var renameFolder by remember { mutableStateOf<LibraryFolder?>(null) }
     var addTrack by remember { mutableStateOf<String?>(null) }
+    // Android opens FileDetailsActivity; here the shared screen covers the window.
+    var detailsFor by remember { mutableStateOf<String?>(null) }
     var editing by remember { mutableStateOf(false) }
     var playlistNameDraft by remember { mutableStateOf("") }
     // The edited order of an open playlist (Android's edit buffer); null until something is edited.
@@ -333,6 +337,7 @@ fun IosApp(controller: IosController) {
                                                     actions = { track, close ->
                                                         TrackActions(controller, track.uri, title(track.uri), showPlay = true, close = close,
                                                             onAddToPlaylist = { addTrack = track.uri },
+                                                            onDetails = { detailsFor = track.uri },
                                                             onQueueNext = { controller.queueNext(track.uri, paths, sourceTitle) })
                                                     },
                                                     hasDirectoryEntries = browsingFolder && (childFolders.isNotEmpty() || atHome),
@@ -362,11 +367,19 @@ fun IosApp(controller: IosController) {
                 }
             },
         )
+        detailsFor?.let { key ->
+            val details by produceState<FileDetails?>(null, key) {
+                value = withContext(Dispatchers.Default) { controller.fileDetails(key) }
+            }
+            Surface(Modifier.fillMaxSize().zIndex(10f)) {
+                FileDetailsScreen(details = details, onBack = { detailsFor = null })
+            }
+        }
     }
 
     if (nowPlayingActions) state.current?.let { current ->
         TrackActions(controller, current, title(current), showPlay = false, close = { nowPlayingActions = false },
-            onAddToPlaylist = { addTrack = current }, onQueueNext = {})
+            onAddToPlaylist = { addTrack = current }, onDetails = { detailsFor = current }, onQueueNext = {})
     }
     folderActions?.let { folder ->
         val linkedRoot = library.isLinkedRoot(folder.key)
@@ -411,12 +424,13 @@ fun IosApp(controller: IosController) {
 @Composable
 private fun TrackActions(
     controller: IosController, key: String, title: String, showPlay: Boolean, close: () -> Unit,
-    onAddToPlaylist: () -> Unit, onQueueNext: () -> Unit,
+    onAddToPlaylist: () -> Unit, onDetails: () -> Unit, onQueueNext: () -> Unit,
 ) {
     MidiFileActionsDialog(title = title, onDismiss = close, showPlayAction = showPlay,
         loopEditEnabled = !controller.library.isDemo(key),
         onPlay = { close(); onQueueNext() },
         onShare = { close(); controller.library.resolve(key)?.let(IosPlatformUi::share) },
+        onDetails = { close(); onDetails() },
         onAddToPlaylist = { close(); onAddToPlaylist() })
 }
 

@@ -232,6 +232,27 @@ class IosController(
 
     // endregion
 
+    /** Values for the shared file details screen. Call off the main thread. */
+    fun fileDetails(key: String): jp.project2by2.musicplayer.ui.details.FileDetails {
+        val metadata = metadataFor(key)
+        val name = library.fileName(key)
+        val extension = name.substringAfterLast('.', "")
+        return jp.project2by2.musicplayer.ui.details.FileDetails(
+            displayName = name,
+            parentFolder = if (library.isDemo(key)) text("folder_demo_name") else library.parent(key)?.let(library::label),
+            format = platform.UniformTypeIdentifiers.UTType.typeWithFilenameExtension(extension)?.preferredMIMEType,
+            durationMs = metadata?.durationMs ?: 0L,
+            loopPointMs = metadata?.loopPointMs,
+            midiTitle = metadata?.title,
+            midiArtist = metadata?.copyright,
+        )
+    }
+
+    private fun metadataFor(key: String): MidiMetadata? = mutable.value.metadata[key]
+        ?: runCatching { parseMidiMetadata(library.readBytes(key)) }.getOrNull()?.also { metadata ->
+            mutable.update { it.copy(metadata = it.metadata + (key to metadata)) }
+        }
+
     // region Playback
 
     /** A tap in Browse, search or a playlist: the list becomes the queue (Android's handleMidiTap). */

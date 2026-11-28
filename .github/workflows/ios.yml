@@ -22,7 +22,7 @@ jobs:
     env:
       LOG_DIR: ${{ github.workspace }}/ci-logs
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           persist-credentials: false
 
@@ -40,7 +40,7 @@ jobs:
           with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
               print(f'version={version}', file=output)
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
@@ -93,7 +93,7 @@ jobs:
       - name: Shared tests on the iOS simulator
         run: |
           set -o pipefail
-          ./gradlew --no-daemon --stacktrace :shared:iosSimulatorArm64Test 2>&1 | tee "$LOG_DIR/shared-tests.log"
+          bash ./gradlew --no-daemon --stacktrace :shared:iosSimulatorArm64Test 2>&1 | tee "$LOG_DIR/shared-tests.log"
 
       - name: Generate Xcode project
         working-directory: iosApp/xcode

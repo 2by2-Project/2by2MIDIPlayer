@@ -62,4 +62,4 @@ targets:
         basedOnDependencyAnalysis: false
         script: |
           cd "$SRCROOT/../.."
-          ./gradlew :iosApp:embedAndSignAppleFrameworkForXcode
+          bash ./gradlew :iosApp:embedAndSignAppleFrameworkForXcode
