@@ -19,7 +19,7 @@ fun BrowseSearchField(visible: Boolean, query: String, onQueryChange: (String) -
     AnimatedVisibility(visible = visible,
         enter = slideInVertically(initialOffsetY = { -it }, animationSpec = tween(200)) + fadeIn(tween(200)),
         exit = slideOutVertically(targetOffsetY = { -it }, animationSpec = tween(200)) + fadeOut(tween(200))) {
-        Surface(color = MaterialTheme.colorScheme.surfaceVariant.copy(0.5f)) {
+        Surface(color = MaterialTheme.colorScheme.background) {
             OutlinedTextField(value = query, onValueChange = onQueryChange,
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)
                     .zIndex(0f).focusRequester(focusRequester),
