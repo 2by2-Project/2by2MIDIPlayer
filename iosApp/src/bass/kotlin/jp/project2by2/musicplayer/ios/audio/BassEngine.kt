@@ -16,7 +16,49 @@ private const val POSITION_ERROR = ULong.MAX_VALUE // (QWORD)-1
 private const val DATA_ERROR = UInt.MAX_VALUE // (DWORD)-1
 
 private fun bassError(): Int = BASS_ErrorGetCode()
-private fun Boolean.toBool(): Int = if (this) 1 else 0
+
+/**
+ * One BASS output device for the player and the loop editor's preview (Android's BassRuntime).
+ * BASS keeps the current device per thread, so every engine selects it before creating streams.
+ */
+private object BassDevice {
+    private val lock = platform.Foundation.NSRecursiveLock()
+    private var users = 0
+    private var device = 0u
+
+    fun acquire() {
+        lock.lock()
+        try {
+            if (users == 0) {
+                check(BASS_GetVersion() shr 16 == 0x0204u && BASS_MIDI_GetVersion() shr 16 == 0x0204u) { "BASS/BASSMIDI 2.4 is required" }
+                // The app configures AVAudioSession (playback category) itself; see AudioSessionController.
+                BASS_SetConfig(BASS_CONFIG_IOS_NOCATEGORY.toUInt(), 1u)
+                BASS_SetConfig(BASS_CONFIG_MIDI_COMPACT.toUInt(), 0u)
+                check(BASS_Init(-1, SAMPLE_RATE.toUInt(), 0u, null, null) != 0) { "Cannot start audio output (BASS ${bassError()})" }
+                device = BASS_GetDevice()
+            }
+            users += 1
+        } finally {
+            lock.unlock()
+        }
+    }
+
+    fun select() {
+        if (device != 0u && device != UInt.MAX_VALUE) BASS_SetDevice(device)
+    }
+
+    fun release() {
+        lock.lock()
+        try {
+            if (users > 0) {
+                users -= 1
+                if (users == 0) BASS_Free()
+            }
+        } finally {
+            lock.unlock()
+        }
+    }
+}
 
 /**
  * BASS output and decoders through the official C API (bass.xcframework / bassmidi.xcframework).
@@ -32,13 +74,10 @@ class BassEngine : MidiEngine {
 
     override fun initialize(): String {
         if (!initialized) {
-            check(BASS_GetVersion() shr 16 == 0x0204u && BASS_MIDI_GetVersion() shr 16 == 0x0204u) { "BASS/BASSMIDI 2.4 is required" }
-            // The app configures AVAudioSession (playback category) itself; see AudioSessionController.
-            BASS_SetConfig(BASS_CONFIG_IOS_NOCATEGORY.toUInt(), 1u)
-            BASS_SetConfig(BASS_CONFIG_MIDI_COMPACT.toUInt(), 0u)
-            check(BASS_Init(-1, SAMPLE_RATE.toUInt(), 0u, null, null) != 0) { "Cannot start audio output (BASS ${bassError()})" }
+            BassDevice.acquire()
             initialized = true
         }
+        BassDevice.select()
         return "BASS ${version(BASS_GetVersion())} · BASSMIDI ${version(BASS_MIDI_GetVersion())}"
     }
 
@@ -157,7 +196,7 @@ class BassEngine : MidiEngine {
         unload()
         if (font != 0u) BASS_MIDI_FontFree(font)
         font = 0u
-        if (initialized) BASS_Free()
+        if (initialized) BassDevice.release()
         initialized = false
     }
 

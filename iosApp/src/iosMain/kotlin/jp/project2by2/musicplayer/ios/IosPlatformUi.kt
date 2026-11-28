@@ -66,6 +66,12 @@ object IosPlatformUi {
         present(picker) { urls -> urls.firstOrNull()?.let(onPicked) }
     }
 
+    /** Lets the user choose where a copy of [path] is saved; true saved, false failed, null cancelled. */
+    fun exportFile(path: String, onResult: (Boolean?) -> Unit) {
+        val picker = UIDocumentPickerViewController(forExportingURLs = listOf(NSURL.fileURLWithPath(path)), asCopy = true)
+        present(picker) { urls -> onResult(if (urls.isEmpty()) null else true) }
+    }
+
     /** The system share sheet, Android's ACTION_SEND chooser. */
     fun share(path: String) {
         val host = top() ?: return

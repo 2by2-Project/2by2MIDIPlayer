@@ -4,11 +4,6 @@ import android.content.Context
 import android.net.Uri
 import android.util.Log
 
-data class LoopEditorInitialData(
-    val pianoRollData: PianoRollData,
-    val loopPointMs: Long
-)
-
 private object PianoRollIndexCache {
     @Volatile
     var uriKey: String? = null
@@ -117,20 +112,5 @@ suspend fun loadPianoRollDataFast(context: Context, uri: Uri): PianoRollData {
 
 suspend fun loadLoopEditorInitialDataFast(context: Context, uri: Uri): LoopEditorInitialData? {
     val index = getOrBuildPianoRollIndex(context, uri) ?: return null
-    val pianoRollData = PianoRollData(
-        notes = index.notes,
-        totalDurationMs = index.totalDurationMs,
-        measurePositions = index.measurePositionsMs,
-        measureTickPositions = index.measureTickPositions,
-        totalTicks = index.totalTicks,
-        tickTimeAnchors = index.tickTimeAnchors
-    )
-    val loopPointMs = index.loopPointTick
-        ?.let { tickToMsFast(it, index.tickTimeAnchors) }
-        ?.coerceIn(0L, (index.totalDurationMs - 1L).coerceAtLeast(0L))
-        ?: 0L
-    return LoopEditorInitialData(
-        pianoRollData = pianoRollData,
-        loopPointMs = loopPointMs
-    )
+    return loopEditorInitialData(index)
 }

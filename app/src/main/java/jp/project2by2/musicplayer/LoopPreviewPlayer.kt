@@ -6,6 +6,7 @@ import android.util.Log
 import com.un4seen.bass.BASS
 import com.un4seen.bass.BASSMIDI
 import java.io.File
+import jp.project2by2.musicplayer.ui.loop.LoopPreviewControl
 
 data class PreviewWindow(
     val loopStartMs: Long?,
@@ -14,7 +15,7 @@ data class PreviewWindow(
 
 class LoopPreviewPlayer(
     private val context: Context
-) {
+) : LoopPreviewControl {
     private var handles: MidiHandles? = null
     private var tempMidiFile: File? = null
     private var bassAcquired = false
@@ -38,22 +39,22 @@ class LoopPreviewPlayer(
         return true
     }
 
-    @Synchronized fun setPreviewWindow(loopStartMs: Long?, endMs: Long?) {
+    @Synchronized override fun setPreviewWindow(loopStartMs: Long?, endMs: Long?) {
         previewWindow = PreviewWindow(loopStartMs = loopStartMs, endMs = endMs)
         refreshBoundarySync()
     }
 
-    @Synchronized fun play(): Boolean {
+    @Synchronized override fun play(): Boolean {
         val h = handles ?: return false
         if (h.audio.positionMs() >= h.audio.durationMs) h.audio.seek(0)
         return BASS.BASS_ChannelPlay(h.stream, false)
     }
 
-    @Synchronized fun pause() {
+    @Synchronized override fun pause() {
         handles?.let { BASS.BASS_ChannelPause(it.stream) }
     }
 
-    @Synchronized fun seekTo(ms: Long) {
+    @Synchronized override fun seekTo(ms: Long) {
         handles?.audio?.seek(ms)
     }
 
@@ -61,11 +62,13 @@ class LoopPreviewPlayer(
         return handles?.audio?.positionMs() ?: 0L
     }
 
+    override fun currentPositionMs(): Long = getCurrentPositionMs()
+
     @Synchronized fun getDurationMs(): Long {
         return handles?.audio?.durationMs ?: 0L
     }
 
-    @Synchronized fun isPlaying(): Boolean {
+    @Synchronized override fun isPlaying(): Boolean {
         val stream = handles?.stream ?: return false
         return BASS.BASS_ChannelIsActive(stream) == BASS.BASS_ACTIVE_PLAYING
     }

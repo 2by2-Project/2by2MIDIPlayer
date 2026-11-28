@@ -253,6 +253,49 @@ class IosController(
             mutable.update { it.copy(metadata = it.metadata + (key to metadata)) }
         }
 
+    /**
+     * Opens the shared loop point editor: playback pauses (as Android does) and the file is prepared
+     * with a separate preview stream. Call off the main thread.
+     */
+    fun loopEditorSource(key: String, preview: IosLoopPreview): jp.project2by2.musicplayer.ui.loop.LoopEditorSource? {
+        pause()
+        val bytes = runCatching { library.readBytes(key) }.getOrNull() ?: return null
+        val index = parseSmfToPianoRollIndex(bytes) ?: return null
+        val initial = jp.project2by2.musicplayer.loopEditorInitialData(index)
+        val font = mutable.value.settings.soundFontFile?.let { soundFontDirectory() + "/" + it }
+        val path = library.resolve(key)
+        val previewLoaded = font != null && path != null &&
+            preview.load(path, font, initial.loopPointMs, initial.pianoRollData.totalDurationMs)
+        return jp.project2by2.musicplayer.ui.loop.LoopEditorSource(library.fileName(key), initial, preview.takeIf { previewLoaded })
+    }
+
+    /** Writes the edited copy (Android exports through the Storage Access Framework) where the user chooses. */
+    suspend fun exportLoopEdit(key: String, name: String, loopTick: Int, endTick: Int): jp.project2by2.musicplayer.ui.loop.LoopExportResult {
+        val bytes = withContext(Dispatchers.Default) {
+            runCatching { library.readBytes(key) }.getOrNull()?.let { jp.project2by2.musicplayer.buildLoopPointMidi(it, loopTick, endTick) }
+        } ?: return jp.project2by2.musicplayer.ui.loop.LoopExportResult.SerializationFailed
+        val directory = NSTemporaryDirectory().trimEnd('/') + "/loop-export-" + NSUUID().UUIDString
+        val files = NSFileManager.defaultManager
+        files.createDirectoryAtPath(directory, true, null, null)
+        val path = "$directory/${name.replace('/', '_')}"
+        try {
+            if (!bytes.toNSData().writeToFile(path, atomically = true)) return jp.project2by2.musicplayer.ui.loop.LoopExportResult.Failed
+            val chosen = CompletableDeferred<Boolean?>()
+            IosPlatformUi.exportFile(path) { chosen.complete(it) }
+            return when (chosen.await()) {
+                true -> {
+                    // The copy may have been saved into the library (Documents or a linked folder).
+                    refreshLibrary()
+                    jp.project2by2.musicplayer.ui.loop.LoopExportResult.Saved
+                }
+                false -> jp.project2by2.musicplayer.ui.loop.LoopExportResult.Failed
+                null -> jp.project2by2.musicplayer.ui.loop.LoopExportResult.Cancelled
+            }
+        } finally {
+            files.removeItemAtPath(directory, null)
+        }
+    }
+
     // region Playback
 
     /** A tap in Browse, search or a playlist: the list becomes the queue (Android's handleMidiTap). */

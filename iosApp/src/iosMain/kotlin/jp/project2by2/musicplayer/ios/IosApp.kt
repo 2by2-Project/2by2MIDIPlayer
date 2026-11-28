@@ -20,6 +20,8 @@ import jp.project2by2.musicplayer.state.NowPlayingState
 import jp.project2by2.musicplayer.ui.browse.*
 import jp.project2by2.musicplayer.ui.details.FileDetails
 import jp.project2by2.musicplayer.ui.details.FileDetailsScreen
+import jp.project2by2.musicplayer.ui.loop.LoopPointEditorScreen
+import jp.project2by2.musicplayer.ios.audio.IosLoopPreview
 import jp.project2by2.musicplayer.ui.player.*
 import jp.project2by2.musicplayer.ui.playlist.*
 import jp.project2by2.musicplayer.ui.settings.RecommendedSoundFontDialog
@@ -74,6 +76,8 @@ fun IosApp(controller: IosController) {
     var addTrack by remember { mutableStateOf<String?>(null) }
     // Android opens FileDetailsActivity; here the shared screen covers the window.
     var detailsFor by remember { mutableStateOf<String?>(null) }
+    // Android opens EditLoopPointActivity; the shared editor covers the window here.
+    var loopEditFor by remember { mutableStateOf<String?>(null) }
     var editing by remember { mutableStateOf(false) }
     var playlistNameDraft by remember { mutableStateOf("") }
     // The edited order of an open playlist (Android's edit buffer); null until something is edited.
@@ -338,6 +342,7 @@ fun IosApp(controller: IosController) {
                                                         TrackActions(controller, track.uri, title(track.uri), showPlay = true, close = close,
                                                             onAddToPlaylist = { addTrack = track.uri },
                                                             onDetails = { detailsFor = track.uri },
+                                                            onEditLoopPoint = { loopEditFor = track.uri },
                                                             onQueueNext = { controller.queueNext(track.uri, paths, sourceTitle) })
                                                     },
                                                     hasDirectoryEntries = browsingFolder && (childFolders.isNotEmpty() || atHome),
@@ -375,11 +380,25 @@ fun IosApp(controller: IosController) {
                 FileDetailsScreen(details = details, onBack = { detailsFor = null })
             }
         }
+        loopEditFor?.let { key ->
+            val preview = remember(key) { IosLoopPreview() }
+            DisposableEffect(preview) { onDispose { preview.release() } }
+            Surface(Modifier.fillMaxSize().zIndex(11f)) {
+                LoopPointEditorScreen(
+                    key = key,
+                    load = { withContext(Dispatchers.Default) { controller.loopEditorSource(key, preview) } },
+                    export = { name, loopTick, endTick -> controller.exportLoopEdit(key, name, loopTick, endTick) },
+                    onBack = { loopEditFor = null },
+                    onSaved = { loopEditFor = null },
+                )
+            }
+        }
     }
 
     if (nowPlayingActions) state.current?.let { current ->
         TrackActions(controller, current, title(current), showPlay = false, close = { nowPlayingActions = false },
-            onAddToPlaylist = { addTrack = current }, onDetails = { detailsFor = current }, onQueueNext = {})
+            onAddToPlaylist = { addTrack = current }, onDetails = { detailsFor = current },
+            onEditLoopPoint = { loopEditFor = current }, onQueueNext = {})
     }
     folderActions?.let { folder ->
         val linkedRoot = library.isLinkedRoot(folder.key)
@@ -420,17 +439,18 @@ fun IosApp(controller: IosController) {
     }
 }
 
-/** The song actions of Android's MidiFileActionsDialog (details and loop editing follow later). */
+/** The song actions of Android's MidiFileActionsDialog. */
 @Composable
 private fun TrackActions(
     controller: IosController, key: String, title: String, showPlay: Boolean, close: () -> Unit,
-    onAddToPlaylist: () -> Unit, onDetails: () -> Unit, onQueueNext: () -> Unit,
+    onAddToPlaylist: () -> Unit, onDetails: () -> Unit, onEditLoopPoint: () -> Unit, onQueueNext: () -> Unit,
 ) {
     MidiFileActionsDialog(title = title, onDismiss = close, showPlayAction = showPlay,
         loopEditEnabled = !controller.library.isDemo(key),
         onPlay = { close(); onQueueNext() },
         onShare = { close(); controller.library.resolve(key)?.let(IosPlatformUi::share) },
         onDetails = { close(); onDetails() },
+        onEditLoopPoint = { close(); onEditLoopPoint() },
         onAddToPlaylist = { close(); onAddToPlaylist() })
 }
 
