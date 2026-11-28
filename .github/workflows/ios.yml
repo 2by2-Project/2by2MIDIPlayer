@@ -284,6 +284,36 @@ jobs:
           xcrun simctl terminate "$UDID" "$BUNDLE_ID" || true
           ls -l shots
 
+      - name: Play a MIDI file with a SoundFont
+        env:
+          UDID: ${{ steps.sim.outputs.udid }}
+        run: |
+          set -euo pipefail
+          data=$(xcrun simctl get_app_container "$UDID" "$BUNDLE_ID" data)
+          fonts="$data/Library/Application Support/SoundFonts"
+          mkdir -p "$fonts"
+          # One of the recommended banks (the app downloads the same file).
+          curl -sSL --retry 3 -o "$fonts/GeneralUser-GS.sf2" https://github.com/mrbumpy409/GeneralUser-GS/raw/refs/heads/main/GeneralUser-GS.sf2
+          ls -l "$fonts"
+          xcrun simctl spawn "$UDID" defaults write "$BUNDLE_ID" sound_font_file -string GeneralUser-GS.sf2
+          xcrun simctl spawn "$UDID" defaults write "$BUNDLE_ID" sound_font_name -string 'General User GS'
+          song=$(ls "$data/Documents/Game Music" | head -1)
+          xcrun simctl launch --console-pty "$UDID" "$BUNDLE_ID" -AppleLanguages '(ja)' -smokePlay "doc:/Game Music/$song" > "$LOG_DIR/app-play.log" 2>&1 &
+          sleep 12
+          xcrun simctl io "$UDID" screenshot shots/3-now-playing.png
+          sleep 5
+          xcrun simctl terminate "$UDID" "$BUNDLE_ID" || true
+          grep 'smoke:' "$LOG_DIR/app-play.log" || true
+          # The position must advance while playing (BASS output, renderer, SoundFont).
+          python3 - "$LOG_DIR/app-play.log" <<'PYTHON'
+          import re, sys
+          lines = [l for l in open(sys.argv[1], errors='replace') if l.startswith('smoke:')]
+          positions = [int(m.group(1)) for l in lines for m in [re.search(r'playing=true position=(\d+)', l)] if m]
+          print('positions while playing:', positions)
+          if len(positions) < 3 or positions[-1] - positions[0] < 2000:
+              print('::warning::Playback did not advance in the simulator: ' + (lines[-1].strip() if lines else 'no smoke output'))
+          PYTHON
+
       - uses: actions/upload-artifact@v4
         if: always()
         with:
