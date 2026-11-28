@@ -28,7 +28,9 @@ import jp.project2by2.musicplayer.ui.settings.RecommendedSoundFontDialog
 import jp.project2by2.musicplayer.ui.settings.SettingsScreen
 import jp.project2by2.musicplayer.ui.settings.SoundFontLoadingDialog
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
@@ -156,11 +158,21 @@ fun IosApp(controller: IosController) {
                 metadata?.durationMs ?: 0, controller.trackId(key), metadata?.loopPointMs)
         }
     }
+    // Playlist songs whose file is gone are marked like Android ("File is missing").
+    val availability by produceState(emptyMap<String, MidiFileAvailability>(), playlist?.tracks, state.libraryRevision) {
+        val keys = playlist?.tracks.orEmpty()
+        value = withContext(Dispatchers.Default) {
+            keys.associateWith { if (library.isAvailable(it)) MidiFileAvailability.Available else MidiFileAvailability.Missing }
+        }
+    }
     val sourceTitle = when {
         playlistsSelected -> playlist?.name
         else -> library.label(dir).takeIf { !demos } ?: demoName
     }
     val listState = remember(dir, playlistsSelected, playlistId) { LazyListState() }
+    // Pull to refresh reads the folders again (Android's Browse refresh).
+    val refreshScope = rememberCoroutineScope()
+    var refreshing by remember { mutableStateOf(false) }
     val currentArtwork = rememberArtwork(library, state.current?.let(library::parent))
 
     // Transient messages (Android's Toasts).
@@ -320,6 +332,7 @@ fun IosApp(controller: IosController) {
                                                     listContext = if (playlistsSelected) MidiListContext.Playlist else if (searching) MidiListContext.Search else MidiListContext.Browse,
                                                     isLoading = state.busy || (search && searchFiles == null),
                                                     isEditMode = editing && playlistsSelected, selectedUri = state.current,
+                                                    availability = if (playlistsSelected) availability else emptyMap(),
                                                     listState = listState,
                                                     onMoveItem = { id, delta ->
                                                         val order = (playlistEditOrder ?: playlist?.tracks.orEmpty()).toMutableList()
@@ -334,7 +347,9 @@ fun IosApp(controller: IosController) {
                                                     },
                                                     onItemClick = { track ->
                                                         showSettings = false
-                                                        controller.select(track.uri, paths, sourceTitle, playlist?.id)
+                                                        // The queue skips songs known to be missing, as on Android.
+                                                        controller.select(track.uri, paths.filter { availability[it] != MidiFileAvailability.Missing },
+                                                            sourceTitle, playlist?.id)
                                                     },
                                                     onAddToPlaylist = { addTrack = it.uri },
                                                     onQueueNext = { controller.queueNext(it.uri, paths, sourceTitle) },
@@ -354,13 +369,26 @@ fun IosApp(controller: IosController) {
                                                             onFolderActions = { folder -> folderActions = folder })
                                                     })
                                             }
-                                            if (browsingFolder) FolderBrowseHeader(folderBrowseSummary(childFolders.size, tracks.size), viewMode,
-                                                onViewModeChange = { controller.setFolderViewMode(it == FolderViewMode.List) }) { padding ->
-                                                if (openListing != null) {
-                                                    if (atHome && childFolders.isEmpty() && tracks.isEmpty()) EmptyLibraryHint(padding)
-                                                    list(padding)
+                                            val browse: @Composable () -> Unit = {
+                                                if (browsingFolder) FolderBrowseHeader(folderBrowseSummary(childFolders.size, tracks.size), viewMode,
+                                                    onViewModeChange = { controller.setFolderViewMode(it == FolderViewMode.List) }) { padding ->
+                                                    if (openListing != null) {
+                                                        if (atHome && childFolders.isEmpty() && tracks.isEmpty()) EmptyLibraryHint(padding)
+                                                        list(padding)
+                                                    }
+                                                } else list(PaddingValues())
+                                            }
+                                            if (playlistsSelected) browse() else BrowseRefreshContainer(
+                                                isRefreshing = refreshing,
+                                                onRefresh = {
+                                                    refreshing = true
+                                                    refreshScope.launch {
+                                                        controller.refreshLibrary()
+                                                        delay(600)
+                                                        refreshing = false
+                                                    }
                                                 }
-                                            } else list(PaddingValues())
+                                            ) { browse() }
                                         }
                                     }
                                 }

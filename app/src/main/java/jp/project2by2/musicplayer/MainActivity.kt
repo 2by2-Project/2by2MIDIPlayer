@@ -9,6 +9,7 @@ import jp.project2by2.musicplayer.ui.browse.DemoMusicButton
 import jp.project2by2.musicplayer.ui.browse.AddressSegment
 import jp.project2by2.musicplayer.ui.browse.LibraryAddressBar
 import jp.project2by2.musicplayer.ui.browse.MidiFileActionsDialog
+import jp.project2by2.musicplayer.ui.browse.BrowseRefreshContainer
 import jp.project2by2.musicplayer.ui.playlist.*
 import jp.project2by2.musicplayer.ui.player.NowPlayingSheet
 
@@ -2422,24 +2423,6 @@ private fun findCoverImageUri(context: Context, folderKey: String): Uri? {
         }
     }
     return null
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun BrowseRefreshContainer(
-    isRefreshing: Boolean,
-    onRefresh: () -> Unit,
-    content: @Composable BoxScope.() -> Unit
-) {
-    val refreshState = rememberPullToRefreshState()
-    PullToRefreshBox(
-        isRefreshing = isRefreshing,
-        onRefresh = onRefresh,
-        state = refreshState,
-        modifier = Modifier.fillMaxSize()
-    ) {
-        content(this)
-    }
 }
 
 @Composable

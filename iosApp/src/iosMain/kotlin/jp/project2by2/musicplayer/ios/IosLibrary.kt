@@ -121,6 +121,13 @@ class IosLibrary(private val store: IosStore) {
     }
 
     fun exists(key: String): Boolean = resolve(key)?.let { files.fileExistsAtPath(it) } == true
+
+    /** Playable now or after an iCloud download (its placeholder is ".name.icloud"). */
+    fun isAvailable(key: String): Boolean {
+        val path = resolve(key) ?: return false
+        if (files.fileExistsAtPath(path)) return true
+        return files.fileExistsAtPath(path.substringBeforeLast('/') + "/." + path.substringAfterLast('/') + ".icloud")
+    }
     fun isDirectory(key: String): Boolean = resolve(key)?.let(::directory) == true
 
     private fun directory(path: String): Boolean = memScoped {
