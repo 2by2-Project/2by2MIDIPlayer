@@ -87,6 +87,11 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "$LOG_DIR"
+          # Linking the release Kotlin/Native framework (Compose) needs more heap than the project default.
+          # User-level properties override gradle.properties, also for Gradle runs started by Xcode.
+          gradle_home="${GRADLE_USER_HOME:-$HOME/.gradle}"
+          mkdir -p "$gradle_home"
+          echo 'org.gradle.jvmargs=-Xmx5g -XX:+UseParallelGC -Dfile.encoding=UTF-8' >> "$gradle_home/gradle.properties"
           xcodebuild -version
           brew install xcodegen
 
