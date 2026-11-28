@@ -21,13 +21,15 @@ data class LibraryRoot(val id: String, val path: String, val label: String)
  */
 class IosLibrary(private val store: IosStore) {
     private val files = NSFileManager.defaultManager
-    val documents: String = (NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, true).first() as String).trimEnd('/')
+    val documents: String = normalizePath(NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, true).first() as String)
     val support: String = (NSSearchPathForDirectoriesInDomains(NSApplicationSupportDirectory, NSUserDomainMask, true).first() as String).trimEnd('/')
     private val demoDirectory: String = "${NSBundle.mainBundle.resourcePath}/demo"
     private var linked: List<LibraryRoot> = emptyList()
     private val linkedRecords = mutableMapOf<String, LinkedFolderRecord>()
 
     val home: String get() = "$DOCUMENTS:"
+    // UIKit: read once on the main thread (the library is created there).
+    private val documentsLabel = documentsLabel()
 
     init {
         files.createDirectoryAtPath(support, withIntermediateDirectories = true, attributes = null, error = null)
@@ -43,12 +45,12 @@ class IosLibrary(private val store: IosStore) {
             val url = NSURL.URLByResolvingBookmarkData(record.bookmark, options = 0u, relativeToURL = null,
                 bookmarkDataIsStale = null, error = null) ?: return@mapNotNull null
             url.startAccessingSecurityScopedResource()
-            val path = url.path?.trimEnd('/') ?: return@mapNotNull null
+            val path = url.path?.let(::normalizePath) ?: return@mapNotNull null
             LibraryRoot(record.id, path, url.lastPathComponent ?: path)
         }
     }
 
-    fun roots(): List<LibraryRoot> = listOf(LibraryRoot(DOCUMENTS, documents, documentsLabel())) + linked
+    fun roots(): List<LibraryRoot> = listOf(LibraryRoot(DOCUMENTS, documents, documentsLabel)) + linked
     fun linkedRoots(): List<LibraryRoot> = linked
     fun isLinkedRoot(key: String) = rootId(key).startsWith(LINKED_PREFIX) && relative(key).isEmpty()
 
@@ -56,7 +58,7 @@ class IosLibrary(private val store: IosStore) {
         url.startAccessingSecurityScopedResource()
         val bookmark = url.bookmarkDataWithOptions(0u, includingResourceValuesForKeys = null, relativeToURL = null, error = null)
             ?: error(localized("Cannot keep access to this folder", "このフォルダへのアクセスを保持できません"))
-        val path = url.path?.trimEnd('/') ?: error("Invalid folder")
+        val path = url.path?.let(::normalizePath) ?: error("Invalid folder")
         // Adding the same folder again opens the existing entry.
         linked.firstOrNull { it.path == path }?.let { return "${it.id}:" }
         if (path == documents || path.startsWith("$documents/")) return keyForPath(path) ?: home
@@ -90,7 +92,7 @@ class IosLibrary(private val store: IosStore) {
 
     /** Key for a file inside Documents or a linked folder (files opened from other apps). */
     fun keyForPath(path: String): String? {
-        val clean = path.trimEnd('/')
+        val clean = normalizePath(path)
         for (root in roots()) {
             if (clean == root.path) return "${root.id}:"
             if (clean.startsWith(root.path + "/")) return "${root.id}:${clean.removePrefix(root.path)}"
@@ -293,6 +295,9 @@ class IosLibrary(private val store: IosStore) {
         const val IMPORT_FOLDER = "Imported"
         private const val MAX_DEPTH = 12
         private const val MAX_FILES = 10000
+
+        /** "/private/var/..." and "/var/..." name the same container files; compare them in one form. */
+        fun normalizePath(path: String): String = path.trimEnd('/').let { if (it.startsWith("/private/var/")) it.removePrefix("/private") else it }
 
         fun isMidiName(name: String): Boolean = name.substringAfterLast('.', "").lowercase() in listOf("mid", "midi", "kar", "rmi", "smf")
 

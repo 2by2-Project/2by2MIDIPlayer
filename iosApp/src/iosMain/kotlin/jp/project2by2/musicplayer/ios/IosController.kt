@@ -128,7 +128,8 @@ class IosController(
         trackIds.clear()
         operation {
             session.start()
-            nowPlaying.start()
+            // Remote command handlers are registered (and called) on the main thread.
+            platform.darwin.dispatch_async(platform.darwin.dispatch_get_main_queue()) { nowPlaying.start() }
             refreshOutputDelay()
             engine.initialize()
             applySynthSettings()
@@ -667,6 +668,18 @@ class IosController(
 
     fun dismissMessage(id: Long) = mutable.update { if (it.message?.id == id) it.copy(message = null) else it }
 
+    private var artworkFolder: String? = null
+    private var artworkData: NSData? = null
+
+    /** Lock screen artwork of the playing song's folder, read once per folder. */
+    private fun artworkFor(folder: String): NSData? {
+        if (folder != artworkFolder) {
+            artworkFolder = folder
+            artworkData = library.artworkData(folder)
+        }
+        return artworkData
+    }
+
     private fun updateNowPlaying() {
         val state = mutable.value
         val key = state.current
@@ -678,7 +691,7 @@ class IosController(
                 durationMs = state.audio.durationMs,
                 positionMs = state.audio.positionMs,
                 playing = state.audio.playing,
-                artwork = library.parent(it)?.let(library::artworkData),
+                artwork = library.parent(it)?.let(::artworkFor),
             )
         }
         val settings = state.settings
