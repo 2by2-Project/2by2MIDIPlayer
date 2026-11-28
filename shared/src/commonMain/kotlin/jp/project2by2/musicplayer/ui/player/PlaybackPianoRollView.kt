@@ -66,6 +66,15 @@ private const val PIANO_ROLL_DELAY = -120
 private const val MEASURE_AREA_FLASH_ALPHA = 0.10f
 // Extra scale of the current measure number on entering (0.3 = 130% at its start).
 private const val MEASURE_LABEL_FLASH_SCALE = 0.3f
+// The growing label is drawn at a limited set of sizes. Skia rasterizes text once per size; a new
+// size every frame overflowed its glyph cache on iOS (Metal), and other text turned into boxes.
+private const val MEASURE_LABEL_SCALE_STEPS = 12
+
+/** [flash] (0..1) as a label scale, rounded to [MEASURE_LABEL_SCALE_STEPS] steps. */
+internal fun measureLabelScale(flash: Float): Float {
+    val step = kotlin.math.round(flash.coerceIn(0f, 1f) * MEASURE_LABEL_SCALE_STEPS) / MEASURE_LABEL_SCALE_STEPS
+    return 1f + MEASURE_LABEL_FLASH_SCALE * step
+}
 private val MeasureLineColor = Color.Gray.copy(alpha = 0.45f)
 private val MeasureLineFlashColor = Color.White.copy(alpha = 0.95f)
 
@@ -178,7 +187,7 @@ fun PlaybackPianoRollView(
                     maxLines = 1
                 )
                 val labelOrigin = Offset(x + measureLabelGap, 0f)
-                val labelScale = if (currentMeasure?.index == index) 1f + MEASURE_LABEL_FLASH_SCALE * currentMeasure.flash else 1f
+                val labelScale = if (currentMeasure?.index == index) measureLabelScale(currentMeasure.flash) else 1f
                 clipRect {
                     // Grow from the label's top-left so it stays next to its measure line.
                     scale(labelScale, labelScale, pivot = labelOrigin) {
