@@ -562,7 +562,13 @@ class IosController(
             var success = false
             var file: String? = null
             try {
-                val (path, name) = withContext(Dispatchers.Default) { source() }
+                val (path, name) = withContext(Dispatchers.Default) {
+                    val work = currentCoroutineContext()
+                    val (copied, name) = source()
+                    // DLS banks are converted to SF2 with the shared converter, as on Android.
+                    try { convertDlsIfNeeded(copied) { work.ensureActive() } to name }
+                    catch (e: Throwable) { platform.Foundation.NSFileManager.defaultManager.removeItemAtPath(copied, null); throw e }
+                }
                 file = path
                 checkSoundFontHeader(path)
                 engine.setSoundFont(path)
@@ -591,10 +597,7 @@ class IosController(
         val header = try { handle.readDataOfLength(12u).toByteArray() } finally { handle.closeFile() }
         val riff = header.size >= 12 && header.decodeToString(0, 4) == "RIFF"
         val form = if (header.size >= 12) header.decodeToString(8, 12) else ""
-        require(riff && form == "sfbk") {
-            if (riff && form == "DLS ") localized("DLS sound banks are not supported on iOS yet", "DLS音源はiOS版では未対応です")
-            else localized("Not a SoundFont (SF2/SF3) file", "SoundFont (SF2/SF3) ファイルではありません")
-        }
+        require(riff && form == "sfbk") { localized("Not a SoundFont (SF2/SF3/DLS) file", "SoundFont (SF2/SF3/DLS) ファイルではありません") }
     }
 
     // endregion

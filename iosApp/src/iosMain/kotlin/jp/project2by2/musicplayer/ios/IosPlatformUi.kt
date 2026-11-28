@@ -61,7 +61,8 @@ object IosPlatformUi {
 
     /** SoundFonts have no system type; any file is accepted and its header is checked. */
     fun pickSoundFont(onPicked: (NSURL) -> Unit) {
-        val types = listOfNotNull(UTType.typeWithFilenameExtension("sf2"), UTType.typeWithFilenameExtension("sf3"), UTTypeData)
+        val types = listOfNotNull(UTType.typeWithFilenameExtension("sf2"), UTType.typeWithFilenameExtension("sf3"),
+            UTType.typeWithFilenameExtension("dls"), UTTypeData)
         val picker = UIDocumentPickerViewController(forOpeningContentTypes = types, asCopy = true)
         present(picker) { urls -> urls.firstOrNull()?.let(onPicked) }
     }
