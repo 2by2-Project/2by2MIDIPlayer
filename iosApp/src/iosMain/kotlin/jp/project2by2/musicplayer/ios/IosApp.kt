@@ -68,7 +68,6 @@ fun IosApp(controller: IosController) {
     var search by remember { mutableStateOf(false) }
     var query by remember { mutableStateOf("") }
     var nowPlayingActions by remember { mutableStateOf(false) }
-    var trackActionsFor by remember { mutableStateOf<String?>(null) }
     var createPlaylist by remember { mutableStateOf(false) }
     var playlistActions by remember { mutableStateOf<IosPlaylist?>(null) }
     var renamePlaylist by remember { mutableStateOf<IosPlaylist?>(null) }
@@ -250,7 +249,6 @@ fun IosApp(controller: IosController) {
             library = { wide ->
                 Box(Modifier.fillMaxSize().playerSheetHost(playerSheet)) {
                     Scaffold(
-                        snackbarHost = { SnackbarHost(snackbar) },
                         topBar = {
                             LibraryTopAppBar(
                                 openPlaylistName = playlist?.name,
@@ -400,6 +398,9 @@ fun IosApp(controller: IosController) {
                 }
             },
         )
+        // Toast-like messages over every pane (Settings included), above the bottom bar and mini player.
+        SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).zIndex(20f)
+            .windowInsetsPadding(WindowInsets.navigationBars).padding(bottom = 140.dp))
         detailsFor?.let { key ->
             val details by produceState<FileDetails?>(null, key) {
                 value = withContext(Dispatchers.Default) { controller.fileDetails(key) }
