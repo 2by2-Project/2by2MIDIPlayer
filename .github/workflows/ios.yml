@@ -216,6 +216,11 @@ jobs:
                   shutil.rmtree(target / f'{name}.xcframework', ignore_errors=True)
                   shutil.copytree(unpacked / f'{name}.xcframework', target / f'{name}.xcframework', symlinks=True)
                   shutil.copy2(unpacked / f'{name}.h', target / f'{name}.h')
+          # The app bundles these notices (Licenses folder), as in the device build.
+          licenses = pathlib.Path('iosApp/xcode/Licenses')
+          licenses.mkdir(parents=True, exist_ok=True)
+          for name in ('LICENSE', 'NOTICE', 'THIRD_PARTY_NOTICES.md'):
+              shutil.copy2(name, licenses / name)
 
       - name: Tools
         run: |
