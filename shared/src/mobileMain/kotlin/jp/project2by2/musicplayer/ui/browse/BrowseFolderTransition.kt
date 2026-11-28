@@ -1,6 +1,7 @@
 package jp.project2by2.musicplayer.ui.browse
 
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.SeekableTransitionState
 import androidx.compose.animation.core.rememberTransition
 import androidx.compose.animation.core.tween
@@ -10,6 +11,7 @@ import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.snapshotFlow
@@ -55,21 +57,26 @@ fun <T> BrowseFolderTransition(
     rememberTransition(seekable, label = "BrowseContent").AnimatedContent(
         transitionSpec = {
             val deeper = depth(targetState) - depth(initialState)
+            // Following the back gesture, the pages move in proportion to the finger: no easing, and the
+            // fade lasts as long as the slide. Taps keep the eased explorer animation.
+            val following = back?.active == true
+            val slide = if (following) tween<IntOffset>(220, easing = LinearEasing) else tween(220)
+            val fade = if (following) tween<Float>(220, easing = LinearEasing) else tween(120)
             when {
                 sameScreen(targetState, initialState) && deeper != 0 -> {
                     val direction = if (deeper > 0) 1 else -1
                     slideInHorizontally(
                         initialOffsetX = { it * direction },
-                        animationSpec = tween(220)
-                    ) + fadeIn(animationSpec = tween(120)) togetherWith
+                        animationSpec = slide
+                    ) + fadeIn(animationSpec = fade) togetherWith
                         slideOutHorizontally(
                             targetOffsetX = { -it * direction },
-                            animationSpec = tween(220)
-                        ) + fadeOut(animationSpec = tween(120))
+                            animationSpec = slide
+                        ) + fadeOut(animationSpec = fade)
                 }
                 else ->
-                    fadeIn(animationSpec = tween(120)) togetherWith
-                        fadeOut(animationSpec = tween(120))
+                    fadeIn(animationSpec = fade) togetherWith
+                        fadeOut(animationSpec = fade)
             }
         },
     ) { content(it) }
