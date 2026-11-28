@@ -189,13 +189,15 @@ fun PlaybackPianoRollView(
 
             // Sounding notes, glossed once every note is drawn.
             val glossNotes = ArrayList<NoteGlossNote>()
-            notes.forEachIndexed { index, note ->
+            // Drawn last-to-first so that earlier notes end up on top of overlapping later ones.
+            for (index in notes.indices.reversed()) {
+                val note = notes[index]
                 val startDisplayTick = note.startTick.coerceIn(0, durationTicks)
                 val endNoteTick = note.endTick.coerceIn(0, durationTicks)
-                if (startDisplayTick >= drawableEndTick || endNoteTick <= visibleStart) return@forEachIndexed
+                if (startDisplayTick >= drawableEndTick || endNoteTick <= visibleStart) continue
                 val clippedStartTick = maxOf(startDisplayTick, visibleStart)
                 val clippedEndTick = minOf(endNoteTick, drawableEndTick)
-                if (clippedEndTick <= clippedStartTick) return@forEachIndexed
+                if (clippedEndTick <= clippedStartTick) continue
                 val x = ((clippedStartTick - visibleStart).toFloat() / viewport.toFloat()) * size.width
                 val w = ((clippedEndTick - clippedStartTick).toFloat() / viewport.toFloat()) * size.width
                 val y = ((127 - note.noteNumber).toFloat() / 127f) * size.height
