@@ -119,6 +119,25 @@ class DesktopFolderIndex(
         }
     }
 
+    /**
+     * Searches [dir] and its subfolders on disk, independent of the home index, so folders outside
+     * home (other drives, mounted storage) and anything the home scan skips or capped are covered.
+     * Results are reported in growing batches (each holds everything found so far) while the walk
+     * runs; it stops when [stop] returns true. The folder opened is always searched, even if hidden.
+     */
+    fun searchUnder(dir: String, stop: () -> Boolean, onFound: (List<String>) -> Unit) {
+        if (dir == DRIVES) return
+        val found = ArrayList<String>()
+        var lastReport = 0L
+        walk(File(dir).toPath(), maxDepth = SEARCH_DEPTH, maxDirectories = SEARCH_DIRECTORIES, stop = stop) { file ->
+            found += file.toString()
+            val now = System.nanoTime()
+            if (now - lastReport > REPORT_INTERVAL_NANOS) { lastReport = now; onFound(found.toList()) }
+            found.size < MAX_FILES
+        }
+        if (!stop()) onFound(found.toList())
+    }
+
     /** Keeps indexed paths valid after a folder is renamed on disk. */
     fun remap(source: String, target: String) {
         fun move(path: String) = if (path == source || path.startsWith(childPrefix(source))) target + path.substring(source.length) else path
@@ -126,12 +145,16 @@ class DesktopFolderIndex(
         saveCache()
     }
 
-    private fun walk(start: Path, maxDepth: Int, maxDirectories: Int, onMidi: (Path) -> Boolean) {
+    private fun walk(
+        start: Path, maxDepth: Int, maxDirectories: Int,
+        stop: () -> Boolean = { cancelled },
+        onMidi: (Path) -> Boolean,
+    ) {
         if (!Files.isDirectory(start)) return
         var directories = 0
         Files.walkFileTree(start, emptySet(), maxDepth, object : SimpleFileVisitor<Path>() {
             override fun preVisitDirectory(dir: Path, attrs: BasicFileAttributes): FileVisitResult = when {
-                cancelled || ++directories > maxDirectories -> FileVisitResult.TERMINATE
+                cancelled || stop() || ++directories > maxDirectories -> FileVisitResult.TERMINATE
                 dir != start && isExcluded(dir) -> FileVisitResult.SKIP_SUBTREE
                 else -> FileVisitResult.CONTINUE
             }
@@ -156,6 +179,9 @@ class DesktopFolderIndex(
     companion object {
         const val DRIVES = "drives:"
         private const val MAX_FILES = 50_000
+        private const val SEARCH_DEPTH = 64
+        private const val SEARCH_DIRECTORIES = 500_000
+        private const val REPORT_INTERVAL_NANOS = 200_000_000L
         private val EXCLUDED_ANYWHERE = setOf("node_modules", "appdata", "\$recycle.bin", "system volume information", "__pycache__")
         private val EXCLUDED_WINDOWS_ROOT = setOf("windows", "program files", "program files (x86)", "programdata", "recovery", "perflogs")
         private val EXCLUDED_UNIX_ROOT = setOf("proc", "sys", "dev", "run", "boot", "snap", "lost+found", "usr", "lib", "lib64", "bin", "sbin", "etc", "var")

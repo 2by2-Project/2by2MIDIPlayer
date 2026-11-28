@@ -20,6 +20,7 @@ import jp.project2by2.musicplayer.ui.browse.*
 import jp.project2by2.musicplayer.ui.playlist.*
 import jp.project2by2.musicplayer.ui.player.*
 import jp.project2by2.musicplayer.ui.settings.SettingsScreen
+import kotlinx.coroutines.isActive
 import java.io.File
 
 /** Navigation and platform callbacks only; Android-derived screen presentation is in commonMain. */
@@ -98,13 +99,22 @@ fun DesktopApp(controller: DesktopController) {
     val childFolders = openListing?.folders.orEmpty()
     val directoryTracks = openListing?.tracks.orEmpty()
     val searching = search && query.isNotBlank()
+    // Search walks the open folder on disk (started when the search field opens), so it works in any
+    // folder, not only where the home index reaches. The drive list has no folder to walk and uses the index.
+    val searchFiles by produceState<List<String>?>(null, dir, search, indexState.revision) {
+        value = null
+        if (!search || dir == DesktopFolderIndex.DRIVES) return@produceState
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            index.searchUnder(dir, stop = { !isActive }) { found -> value = found }
+        }
+    }
     val browsingFolder = !playlistsSelected && !demos && !searching
-    val paths = remember(directoryTracks, indexState, state.demoFiles, state.metadata, playlist, playlistsSelected, dir, demos, searching, query) {
+    val paths = remember(directoryTracks, indexState, searchFiles, state.demoFiles, state.metadata, playlist, playlistsSelected, dir, demos, searching, query) {
         when {
             playlistsSelected -> playlist?.paths.orEmpty()
             demos -> state.demoFiles
             // Search covers the open folder and everything below it, like Android.
-            searching -> index.filesUnder(dir, indexState)
+            searching -> searchFiles ?: index.filesUnder(dir, indexState)
             else -> directoryTracks
         }.filter { path ->
             !searching || matchesMidiSearch(DesktopMidiFiles.fileName(path), state.metadata[path]?.title,

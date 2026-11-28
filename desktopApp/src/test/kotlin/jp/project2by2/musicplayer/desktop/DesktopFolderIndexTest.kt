@@ -37,6 +37,29 @@ class DesktopFolderIndexTest {
         assertEquals(emptyList(), index.children(File(home, "Music/Game/Album").path))
     }
 
+    @Test fun searchWalksTheOpenFolderEvenOutsideHomeAndTheIndex() {
+        midi("other-drive/Songs/Deep/a.mid")
+        midi("other-drive/Songs/b.mid")
+        midi("other-drive/Songs/.hidden/c.mid")
+        midi("other-drive/Songs/readme.txt")
+        midi("home/user/Music/d.mid")
+        val index = index().apply { scanHome() }
+        val songs = File(root, "other-drive/Songs").path
+
+        // Nothing outside home is indexed, but the folder itself is searched on disk.
+        assertEquals(emptyList(), index.filesUnder(songs))
+        var found = emptyList<String>()
+        index.searchUnder(songs, stop = { false }) { found = it }
+        assertEquals(setOf(File(songs, "Deep/a.mid").path, File(songs, "b.mid").path), found.toSet())
+
+        // A stopped search reports nothing more.
+        var calls = 0
+        index.searchUnder(songs, stop = { true }) { calls++ }
+        assertEquals(0, calls)
+        index.searchUnder(DesktopFolderIndex.DRIVES, stop = { false }) { calls++ }
+        assertEquals(0, calls)
+    }
+
     @Test fun ancestryListsEveryLevelFromTheRoot() {
         val index = index()
         val levels = index.ancestry(File(home, "Music").path)
