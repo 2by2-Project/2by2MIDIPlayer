@@ -109,11 +109,22 @@ fun buildLoopPointMidi(bytes: ByteArray, loopTick: Int, endTick: Int): ByteArray
     val newLoopTick = loopTick.coerceIn(0, maxTick)
     val newEndTick = endTick.coerceIn((newLoopTick + 1).coerceAtMost(maxTick), maxTick)
 
+    // Remove the previous loop starts. Their delta times move to the next event, so the rest of the
+    // track keeps its timing.
     for (track in music.tracks) {
-        track.events.removeAll { event ->
+        val kept = mutableListOf<Midi1Event>()
+        var carriedTicks = 0
+        for (event in track.events) {
             val message = event.message
-            ((message.statusByte.toInt() and 0xF0) == MidiChannelStatus.CC) && message.msb.toInt() == 111
+            if (((message.statusByte.toInt() and 0xF0) == MidiChannelStatus.CC) && message.msb.toInt() == 111) {
+                carriedTicks += event.deltaTime
+                continue
+            }
+            kept += if (carriedTicks == 0) event else Midi1Event(event.deltaTime + carriedTicks, message)
+            carriedTicks = 0
         }
+        track.events.clear()
+        track.events.addAll(kept)
     }
 
     for (track in music.tracks) {
@@ -170,7 +181,8 @@ fun insertCCEvent(track: Midi1Track, targetTick: Int, ccNumber: Int, value: Int)
     var accumulatedTick = 0
     var insertIndex = 0
     for ((index, event) in track.events.withIndex()) {
-        if (accumulatedTick + event.deltaTime > targetTick) {
+        // Never after End of Track, where players stop reading the track.
+        if (accumulatedTick + event.deltaTime > targetTick || isEndOfTrack(event)) {
             insertIndex = index
             break
         }
