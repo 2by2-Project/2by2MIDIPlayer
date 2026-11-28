@@ -12,6 +12,12 @@ shared/src/mobileMain   Smartphone parts shared by Android and iOS (not desktop)
   playback/PlaybackQueue.kt               queue, wrap-around and shuffle order
   playback/LoopFadePolicy.kt              CC#111: repeat once, then fade into the next song
   ui/playlist/MobilePlaylistDialogs.kt    add to playlist, delete playlist
+  ui/browse/BrowseRefreshContainer.kt     pull to refresh in Browse
+  ui/details/FileDetailsScreen.kt         file details
+  ui/loop/LoopPointEditorScreen.kt        loop point editor (hosts supply preview and export)
+  LoopPointMidi.kt                        loop editor rules: snapping, CC#111/end rewrite, SMF writer
+shared/src/mobileTest   tests for the above (Android unit tests and the iOS simulator)
+shared/src/commonMain/.../soundfont/DlsBankConverter.kt   DLS to SF2 for every platform
 shared/src/iosMain      iOS actuals (text decoding, strings, platform identity)
 iosApp/                 Gradle module :iosApp, the iOS host (framework "PlayerKit")
   src/iosMain           controller, files, AVAudioSession, lock screen controls, pickers, Compose host
@@ -68,7 +74,11 @@ On Windows or Linux the iOS Kotlin code can be type-checked (no linking, no BASS
 - Library keys are stored relative to their root (`doc:/Music/a.mid`, `ext-<id>:/a.mid`,
   `demo:/a.mid`), because iOS may move the app container on updates.
 - Settings use Android's DataStore key names in NSUserDefaults. SoundFonts are copied to
-  `Application Support/SoundFonts`.
+  `Application Support/SoundFonts`; DLS banks are converted to SF2 there, as on Android.
+- Parsed titles and loop points are cached in `Application Support/metadata-cache.plist` while the
+  file's size and modification time are unchanged (Android's Room cache).
+- The loop point editor previews on a second stream of the shared BASS device and exports the
+  edited copy through the document picker (Android uses the Storage Access Framework).
 
 ## Playback
 
