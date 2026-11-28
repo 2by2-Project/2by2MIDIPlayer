@@ -172,3 +172,140 @@ jobs:
                   for i in range(0, len(errors), 20):
                       emit(f'{name} errors {i // 20 + 1}', '\n'.join(errors[i:i + 20]))
               emit(f'{name} tail', '\n'.join(tail))
+
+  # Launch check: builds for the simulator, starts the app (English and Japanese), and keeps
+  # screenshots. It verifies startup (Compose, resources, BASS init); sound is checked on devices.
+  simulator:
+    runs-on: macos-15
+    timeout-minutes: 75
+    env:
+      LOG_DIR: ${{ github.workspace }}/ci-logs
+      BUNDLE_ID: jp.project2by2.musicplayer
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Cache Kotlin/Native toolchain
+        uses: actions/cache@v4
+        with:
+          path: ~/.konan
+          key: konan-${{ runner.os }}-${{ hashFiles('gradle/libs.versions.toml') }}
+          restore-keys: konan-${{ runner.os }}-
+
+      - name: Download BASS and BASSMIDI (iOS)
+        shell: python
+        run: |
+          import pathlib, shutil, tempfile, urllib.request, zipfile
+          target = pathlib.Path('proprietary/ios')
+          target.mkdir(parents=True, exist_ok=True)
+          for name in ('bass', 'bassmidi'):
+              with tempfile.TemporaryDirectory() as tmp:
+                  archive = pathlib.Path(tmp) / 'download.zip'
+                  urllib.request.urlretrieve(f'https://www.un4seen.com/files/{name}24-ios.zip', archive)
+                  unpacked = pathlib.Path(tmp) / 'unpacked'
+                  with zipfile.ZipFile(archive) as z:
+                      z.extractall(unpacked)
+                  shutil.rmtree(target / f'{name}.xcframework', ignore_errors=True)
+                  shutil.copytree(unpacked / f'{name}.xcframework', target / f'{name}.xcframework', symlinks=True)
+                  shutil.copy2(unpacked / f'{name}.h', target / f'{name}.h')
+
+      - name: Tools
+        run: |
+          set -euo pipefail
+          mkdir -p "$LOG_DIR"
+          gradle_home="${GRADLE_USER_HOME:-$HOME/.gradle}"
+          mkdir -p "$gradle_home"
+          echo 'org.gradle.jvmargs=-Xmx5g -XX:+UseParallelGC -Dfile.encoding=UTF-8' >> "$gradle_home/gradle.properties"
+          brew install xcodegen
+          (cd iosApp/xcode && xcodegen generate)
+
+      - name: Boot a simulator
+        id: sim
+        run: |
+          set -euo pipefail
+          udid=$(xcrun simctl list devices available -j | python3 -c '
+          import json, sys
+          devices = json.load(sys.stdin)["devices"]
+          print(next(d["udid"] for runtime, items in sorted(devices.items(), reverse=True) if "iOS" in runtime
+                     for d in items if d["name"].startswith("iPhone")))')
+          echo "udid=$udid" >> "$GITHUB_OUTPUT"
+          xcrun simctl boot "$udid"
+          xcrun simctl bootstatus "$udid" -b
+          xcrun simctl list devices | grep "$udid"
+
+      - name: Build app for the simulator
+        env:
+          UDID: ${{ steps.sim.outputs.udid }}
+        run: |
+          set +e
+          xcodebuild -project iosApp/xcode/iosApp.xcodeproj -scheme iosApp -configuration Debug \
+            -destination "id=$UDID" -derivedDataPath build/sim CODE_SIGNING_ALLOWED=NO \
+            build > "$LOG_DIR/xcodebuild-simulator.log" 2>&1
+          status=$?
+          grep -E '^e: |error:|BUILD (SUCCEEDED|FAILED)|\*\* ' "$LOG_DIR/xcodebuild-simulator.log" | tail -100
+          exit $status
+
+      - name: Launch and take screenshots
+        env:
+          UDID: ${{ steps.sim.outputs.udid }}
+        run: |
+          set -euo pipefail
+          mkdir -p shots
+          xcrun simctl install "$UDID" build/sim/Build/Products/Debug-iphonesimulator/2by2MIDIPlayer.app
+          # A few files in Documents, as if copied there with the Files app.
+          data=$(xcrun simctl get_app_container "$UDID" "$BUNDLE_ID" data)
+          mkdir -p "$data/Documents/Game Music"
+          ls app/src/main/assets/demo | head -6 | while read -r f; do cp "app/src/main/assets/demo/$f" "$data/Documents/Game Music/"; done
+          cp "$(ls app/src/main/assets/demo/* | head -1)" "$data/Documents/"
+          check_running() {
+            sleep "$1"
+            if ! xcrun simctl spawn "$UDID" launchctl list | grep -q "$BUNDLE_ID"; then
+              echo "::error::The app is not running $1 s after launch ($2)"
+              find ~/Library/Logs/DiagnosticReports -name '*2by2MIDIPlayer*' -newer shots -exec cat {} \; | head -150
+              exit 1
+            fi
+          }
+          xcrun simctl launch --console-pty "$UDID" "$BUNDLE_ID" -AppleLanguages '(en)' > "$LOG_DIR/app-en.log" 2>&1 &
+          check_running 20 en
+          xcrun simctl io "$UDID" screenshot shots/1-launch-en.png
+          xcrun simctl terminate "$UDID" "$BUNDLE_ID" || true
+          sleep 2
+          xcrun simctl launch --console-pty "$UDID" "$BUNDLE_ID" -AppleLanguages '(ja)' > "$LOG_DIR/app-ja.log" 2>&1 &
+          check_running 20 ja
+          xcrun simctl io "$UDID" screenshot shots/2-launch-ja.png
+          xcrun simctl terminate "$UDID" "$BUNDLE_ID" || true
+          ls -l shots
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: iOS-simulator-screenshots
+          path: |
+            shots/*.png
+            ci-logs/app-*.log
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Report failure details
+        if: failure()
+        shell: python
+        run: |
+          import os, pathlib, re
+          logs = pathlib.Path(os.environ['LOG_DIR'])
+          for log in sorted(logs.glob('*.log')) if logs.is_dir() else []:
+              lines = log.read_text(errors='replace').splitlines()
+              errors = [l for l in lines if re.match(r'^(e: |error: )', l) or ' error: ' in l
+                        or re.search(r'Undefined symbol|ld: |FAILED|Exception|Terminating|fatal', l)]
+              for i in range(0, min(len(errors), 60), 20):
+                  text = '\n'.join(errors[i:i + 20])[:3800].replace('%', '%25').replace('\n', '%0A')
+                  print(f'::error title={log.name} errors {i // 20 + 1}::{text}')
+              text = '\n'.join(lines[-40:])[:3800].replace('%', '%25').replace('\n', '%0A')
+              print(f'::error title={log.name} tail::{text}')
