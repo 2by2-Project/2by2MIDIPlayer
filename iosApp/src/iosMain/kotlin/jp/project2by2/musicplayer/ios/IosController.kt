@@ -113,8 +113,8 @@ class IosController(
         onPause = { operation { pauseInternal() } },
         onToggle = { togglePlay() },
         onNext = { next() },
-        // Android's notification "previous" goes back to the start of the song.
-        onBackToStart = { seek(0) },
+        // Like the in-app button (and iOS Music): back to the start after 3 s, otherwise the previous song.
+        onPrevious = { previous() },
         onSeek = { seek(it) },
         onLoop = { setLoop(it) },
         onShuffle = { setShuffle(it) },

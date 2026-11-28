@@ -1357,36 +1357,17 @@ fun MusicPlayerMainScreen(
                                 isSearching -> BrowseScreen.Search to selectedFolderKey
                                 else -> BrowseScreen.Files to selectedFolderKey
                             }
-                            AnimatedContent(
-                                targetState = screenState,
-                                transitionSpec = {
-                                    // Counted from the volume, so switching volumes fades instead of sliding.
-                                    fun depth(key: String?): Int = when (key) {
-                                        null -> 1
-                                        DEMO_FOLDER_KEY -> 2
-                                        else -> pathLevelsWithin(key, storageRoots).size
-                                    }
-                                    val deeper = depth(targetState.second) - depth(initialState.second)
-                                    val sameScreen = targetState.first == initialState.first
-                                    when {
-                                        sameScreen && deeper != 0 -> {
-                                            // Explorer-style: opening a folder slides in from the right, going up from the left.
-                                            val direction = if (deeper > 0) 1 else -1
-                                            slideInHorizontally(
-                                                initialOffsetX = { it * direction },
-                                                animationSpec = tween(220)
-                                            ) + fadeIn(animationSpec = tween(120)) togetherWith
-                                                slideOutHorizontally(
-                                                    targetOffsetX = { -it * direction },
-                                                    animationSpec = tween(220)
-                                                ) + fadeOut(animationSpec = tween(120))
-                                        }
-                                        else ->
-                                            fadeIn(animationSpec = tween(120)) togetherWith
-                                                fadeOut(animationSpec = tween(120))
-                                    }
-                                },
-                                label = "BrowseContent"
+                            // Counted from the volume, so switching volumes fades instead of sliding.
+                            fun depth(key: String?): Int = when (key) {
+                                null -> 1
+                                DEMO_FOLDER_KEY -> 2
+                                else -> pathLevelsWithin(key, storageRoots).size
+                            }
+                            // Explorer-style slide, shared with iOS (mobileMain).
+                            jp.project2by2.musicplayer.ui.browse.BrowseFolderTransition(
+                                target = screenState,
+                                depth = { depth(it.second) },
+                                sameScreen = { a, b -> a.first == b.first }
                             ) { (screen, folderKey) ->
                                 when (screen) {
                                     BrowseScreen.Files -> {

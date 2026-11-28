@@ -85,13 +85,13 @@ data class NowPlayingInfo(
     val artwork: NSData?,
 )
 
-/** Remote commands mirror Android's media notification: back to start, next, loop and shuffle toggles. */
+/** Lock screen, Control Center and headphone commands: play/pause, previous/next, seeking, loop and shuffle. */
 class NowPlayingCenter(
     private val onPlay: () -> Unit,
     private val onPause: () -> Unit,
     private val onToggle: () -> Unit,
     private val onNext: () -> Unit,
-    private val onBackToStart: () -> Unit,
+    private val onPrevious: () -> Unit,
     private val onSeek: (Long) -> Unit,
     private val onLoop: (Boolean) -> Unit,
     private val onShuffle: (Boolean) -> Unit,
@@ -105,7 +105,7 @@ class NowPlayingCenter(
         commands.pauseCommand.addTargetWithHandler { _ -> onPause(); MPRemoteCommandHandlerStatusSuccess }
         commands.togglePlayPauseCommand.addTargetWithHandler { _ -> onToggle(); MPRemoteCommandHandlerStatusSuccess }
         commands.nextTrackCommand.addTargetWithHandler { _ -> onNext(); MPRemoteCommandHandlerStatusSuccess }
-        commands.previousTrackCommand.addTargetWithHandler { _ -> onBackToStart(); MPRemoteCommandHandlerStatusSuccess }
+        commands.previousTrackCommand.addTargetWithHandler { _ -> onPrevious(); MPRemoteCommandHandlerStatusSuccess }
         commands.changePlaybackPositionCommand.addTargetWithHandler { event ->
             val time = (event as? MPChangePlaybackPositionCommandEvent)?.positionTime
             if (time == null) MPRemoteCommandHandlerStatusCommandFailed

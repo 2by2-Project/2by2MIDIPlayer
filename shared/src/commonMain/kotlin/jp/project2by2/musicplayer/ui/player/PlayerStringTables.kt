@@ -114,7 +114,7 @@ internal val englishPlayerStrings: Map<String, String> = mapOf(
     "ios_documents_root" to "On My {device}",
     "ios_add_folder" to "Add folder",
     "ios_open_files" to "Open MIDI files",
-    "ios_files_hint" to "Put MIDI files in the “2by2 MIDI Player” folder of the Files app, or add a folder with the folder button above.",
+    "ios_files_hint" to "From a PC: connect the iPhone and open iTunes (Apple Devices on Windows 11). Press the iPhone button, choose File Sharing, select 2by2 MIDI Player and drop MIDI files there. You can also put files in this app's folder with the Files app, or use the buttons above.",
     "ios_folder_unavailable" to "Cannot open this folder. Add it again with the folder button.",
     "ios_icloud_downloading" to "Downloading from iCloud…",
 )
@@ -227,7 +227,7 @@ internal val japanesePlayerStrings: Map<String, String> = mapOf(
     "ios_documents_root" to "この{device}内",
     "ios_add_folder" to "フォルダを追加",
     "ios_open_files" to "MIDIファイルを開く",
-    "ios_files_hint" to "「ファイル」アプリの「2by2 MIDI Player」フォルダにMIDIファイルを入れるか、上のフォルダボタンからフォルダを追加してください。",
+    "ios_files_hint" to "PCから入れるには、iPhoneをつないでiTunes（Windows 11では「Appleデバイス」）を開き、iPhoneのボタン →「ファイル共有」→「2by2 MIDI Player」にMIDIファイルをドラッグしてください。「ファイル」アプリでこのアプリのフォルダに入れるか、上のボタンから追加することもできます。",
     "ios_folder_unavailable" to "このフォルダを開けません。フォルダボタンからもう一度追加してください。",
     "ios_icloud_downloading" to "iCloudからダウンロードしています…",
 )
