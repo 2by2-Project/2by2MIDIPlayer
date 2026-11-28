@@ -48,6 +48,37 @@ class PianoRollIndexTest {
     }
 
     @Test
+    fun noteVolumeAndExpressionFollowTheChannelControllers() {
+        val index = assertNotNull(parseSmfToPianoRollIndex(smf(
+            0, 0xB0, 7, 50,                   // channel 0 volume 50
+            0, 0xB1, 7, 20,                   // another channel does not count
+            0, 0xB0, 11, 64,                  // channel 0 expression 64
+            0, 0x90, 60, 100,
+            0x83, 0x60, 0x80, 60, 0,          // note off at tick 480
+            0, 0xB0, 7, 120,                  // volume 120 from tick 480
+            0, 0x90, 62, 100,
+            0x83, 0x60, 0x80, 62, 0,
+            0, 0xFF, 0x2F, 0
+        )))
+        val (first, second) = index.notes
+        assertEquals(50, first.volume)
+        assertEquals(64, first.expression)
+        assertEquals(120, second.volume)
+        assertEquals(64, second.expression)
+    }
+
+    @Test
+    fun withoutControllersTheDefaultVolumeAndExpressionApply() {
+        val index = assertNotNull(parseSmfToPianoRollIndex(smf(
+            0, 0x90, 60, 100,
+            0x83, 0x60, 0x80, 60, 0,
+            0, 0xFF, 0x2F, 0
+        )))
+        assertEquals(100, index.notes.single().volume)
+        assertEquals(127, index.notes.single().expression)
+    }
+
+    @Test
     fun timingClampsAtBoundariesAndAcceptsEmptyAnchors() {
         val anchors = listOf(TickTimeAnchor(0, 0), TickTimeAnchor(480, 500))
         assertEquals(0L, tickToMsFast(-10, anchors))

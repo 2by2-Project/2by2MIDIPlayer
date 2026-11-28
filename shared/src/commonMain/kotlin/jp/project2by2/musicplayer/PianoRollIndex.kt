@@ -13,6 +13,7 @@ private data class RawNote(
 )
 
 private data class TempoEvent(val tick: Int, val usPerQuarter: Int)
+private class ControllerEvent(val tick: Int, val value: Int)
 private data class TimeSigEvent(val tick: Int, val numerator: Int, val denominator: Int)
 
 data class PianoRollIndex(
@@ -63,6 +64,9 @@ fun parseSmfToPianoRollIndex(bytes: ByteArray): PianoRollIndex? {
     val timeSigEvents = ArrayList<TimeSigEvent>(32)
     var maxTick = 0
     var loopPointTick: Int? = null
+    // Channel volume (controller 7) and expression (controller 11) changes, per channel, in file order.
+    val volumeEvents = Array(16) { ArrayList<ControllerEvent>() }
+    val expressionEvents = Array(16) { ArrayList<ControllerEvent>() }
 
     repeat(trackCount) { trackIndex ->
         if (!r.canRead(8)) return@repeat
@@ -159,6 +163,10 @@ fun parseSmfToPianoRollIndex(bytes: ByteArray): PianoRollIndex? {
                         }
                     } else if (eventType == 0xB0 && d1 == 111) {
                         loopPointTick = loopPointTick?.let { minOf(it, tick) } ?: tick
+                    } else if (eventType == 0xB0 && d1 == 7) {
+                        volumeEvents[channel].add(ControllerEvent(tick, d2))
+                    } else if (eventType == 0xB0 && d1 == 11) {
+                        expressionEvents[channel].add(ControllerEvent(tick, d2))
                     }
                 }
                 else -> {
@@ -173,6 +181,7 @@ fun parseSmfToPianoRollIndex(bytes: ByteArray): PianoRollIndex? {
     val tickToMs = { tick: Int -> tickToMsFast(tick, anchors) }
     val measureTicks = buildMeasureTicks(maxTick, ticksPerQuarter, timeSigEvents)
     val measureMs = measureTicks.map(tickToMs)
+    for (events in volumeEvents + expressionEvents) events.sortBy { it.tick } // stable: later events at a tick win
     val notes = rawNotes
         .asSequence()
         .map { n ->
@@ -184,7 +193,9 @@ fun parseSmfToPianoRollIndex(bytes: ByteArray): PianoRollIndex? {
                 endTick = n.endTick,
                 velocity = n.velocity,
                 channel = n.channel,
-                trackIndex = n.trackIndex
+                trackIndex = n.trackIndex,
+                volume = controllerAt(volumeEvents[n.channel], n.startTick, 100),
+                expression = controllerAt(expressionEvents[n.channel], n.startTick, 127)
             )
         }
         .sortedBy { it.startTick }
@@ -199,6 +210,17 @@ fun parseSmfToPianoRollIndex(bytes: ByteArray): PianoRollIndex? {
         notes = notes,
         loopPointTick = loopPointTick
     )
+}
+
+/** The value of the last controller change at or before [tick], or [default] before the first one. */
+private fun controllerAt(events: List<ControllerEvent>, tick: Int, default: Int): Int {
+    var low = 0
+    var high = events.size
+    while (low < high) {
+        val mid = (low + high) ushr 1
+        if (events[mid].tick <= tick) low = mid + 1 else high = mid
+    }
+    return if (low == 0) default else events[low - 1].value
 }
 
 private fun buildAnchorsFromTempo(

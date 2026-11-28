@@ -8,7 +8,11 @@ data class PianoRollNote(
     val endTick: Int,
     val velocity: Int,
     val channel: Int,
-    val trackIndex: Int
+    val trackIndex: Int,
+    /** Channel volume (controller 7) when the note starts; 100 is the General MIDI default. */
+    val volume: Int = 100,
+    /** Channel expression (controller 11) when the note starts; 127 is the default. */
+    val expression: Int = 127
 )
 
 data class TickTimeAnchor(

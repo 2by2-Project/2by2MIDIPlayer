@@ -187,6 +187,8 @@ fun PlaybackPianoRollView(
                 }
             }
 
+            // Sounding notes, glossed once every note is drawn.
+            val glossNotes = ArrayList<NoteGlossNote>()
             notes.forEachIndexed { index, note ->
                 val startDisplayTick = note.startTick.coerceIn(0, durationTicks)
                 val endNoteTick = note.endTick.coerceIn(0, durationTicks)
@@ -235,8 +237,10 @@ fun PlaybackPianoRollView(
                         topLeft = Offset(x, y),
                         size = Size(animatedWidth, h)
                     )
+                    glossNotes.add(NoteGlossNote(x, y, animatedWidth, h, channelColor, highlightStrength * glossStrengthOf(note.velocity, note.volume, note.expression)))
                 }
             }
+            drawNoteGloss(glossNotes)
 
             fun drawMarker(ms: Long, color: Color) {
                 val markerDisplayTick = msToTick(ms, tickTimeAnchors, durationTicks).coerceIn(0, durationTicks)
