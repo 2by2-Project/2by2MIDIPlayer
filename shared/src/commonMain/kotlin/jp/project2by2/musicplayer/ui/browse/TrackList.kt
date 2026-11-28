@@ -53,7 +53,10 @@ fun TrackList(
     hasDirectoryEntries: Boolean = false,
     directoryContent: LazyListScope.() -> Unit = {},
     /** Extra space at the top, e.g. under a floating [FolderBrowseHeader]. */
-    contentPadding: PaddingValues = PaddingValues()
+    contentPadding: PaddingValues = PaddingValues(),
+    /** Track marked by keyboard navigation (its uri), drawn as a pale highlight. */
+    highlightedUri: String? = null,
+    listState: LazyListState = rememberLazyListState()
 ) {
     val topPadding = contentPadding.calculateTopPadding()
     val scope = rememberCoroutineScope()
@@ -83,6 +86,7 @@ fun TrackList(
         return
     }
     LazyColumn(
+        state = listState,
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(top = topPadding, bottom = 72.dp)
     ) {
@@ -145,6 +149,7 @@ fun TrackList(
                     availability = itemAvailability,
                     rowModifier = Modifier.graphicsLayer { translationY = animatedShift },
                     isSelected = item.uri == selectedUri,
+                    isHighlighted = item.uri == highlightedUri,
                     showReorderHandle = isEditMode,
                     isRemoving = itemId != null && removingItemIds.contains(itemId),
                     onDragStart = {
@@ -212,6 +217,7 @@ private fun MidiFileRow(
     availability: MidiFileAvailability = MidiFileAvailability.Unknown,
     rowModifier: Modifier = Modifier,
     isSelected: Boolean,
+    isHighlighted: Boolean = false,
     showReorderHandle: Boolean = false,
     isRemoving: Boolean = false,
     onDragStart: () -> Unit = {},
@@ -341,6 +347,7 @@ private fun MidiFileRow(
                     }
                 )
                 .padding(horizontal = 0.dp, vertical = 0.dp)
+                .keyboardHighlight(isHighlighted)
                 .background(background, RoundedCornerShape(4.dp)),
             verticalAlignment = Alignment.CenterVertically
         ) {

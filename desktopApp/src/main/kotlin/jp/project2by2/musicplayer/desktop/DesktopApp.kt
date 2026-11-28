@@ -7,6 +7,10 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
+import androidx.compose.foundation.focusable
+import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.input.key.*
 import androidx.compose.ui.unit.dp
 import jp.project2by2.musicplayer.MiniPlayerContent
@@ -58,6 +62,11 @@ fun DesktopApp(controller: DesktopController) {
     var settings by remember { mutableStateOf(false) }
     var nowPlaying by remember { mutableStateOf(false) }
     var search by remember { mutableStateOf(false) }
+    var searchFocused by remember { mutableStateOf(false) }
+    // Entry marked with the arrow keys, valid only for the folder/search it was made in.
+    var highlight by remember { mutableStateOf<KeyHighlight?>(null) }
+    // True while the library is composed: in a narrow window the player can cover it.
+    var libraryShown by remember { mutableStateOf(false) }
     var demos by remember { mutableStateOf(false) }
     var nowPlayingActions by remember { mutableStateOf(false) }
     var shareTrack by remember { mutableStateOf<String?>(null) }
@@ -127,6 +136,20 @@ fun DesktopApp(controller: DesktopController) {
             midiDisplaySecondaryText(DesktopMidiFiles.fileName(path), folderName(path), state.metadata[path]?.title, state.metadata[path]?.copyright),
             state.metadata[path]?.durationMs ?: 0, controller.trackId(path), state.metadata[path]?.loopPointMs) }
     }
+    val showDemo = browsingFolder && dir == index.home.path
+    val gridFolders = browsingFolder && viewMode == FolderViewMode.Grid
+    val folderKeys = if (browsingFolder) childFolders.map { it.key } else emptyList()
+    val entryKeys = remember(folderKeys, showDemo, paths) { browseEntryKeys(folderKeys, showDemo, paths) }
+    val activeHighlight = highlight?.takeIf { it.scope == highlightScope(dir, demos, searching) && it.key in entryKeys }?.key
+    // A folder opens at the top (fresh state), and the highlighted entry is scrolled into view.
+    val listState = remember(dir, demos, playlistsSelected, playlistId) { LazyListState() }
+    LaunchedEffect(activeHighlight, listState) {
+        activeHighlight?.let { listState.ensureVisible(browseListIndex(entryKeys, folderKeys.size, gridFolders, it)) }
+    }
+    // Text dialogs and modal dialogs keep the keyboard to themselves.
+    val dialogOpen = recommendedFonts || state.soundFontLoading || state.error != null || createPlaylist || renameFolder != null ||
+        renamePlaylist != null || deletePlaylist != null || folderActions != null || playlistActions != null ||
+        addTrack != null || nowPlayingActions || shareTrack != null
     // Callbacks may outlive the composition that created them (the compiler memoizes function
     // references), so they read the open folder from the controller instead of capturing [dir].
     fun backLibrary() {
@@ -144,7 +167,73 @@ fun DesktopApp(controller: DesktopController) {
             else -> backLibrary()
         }
     }
-    Box(Modifier.fillMaxSize().desktopFileDropTarget(controller)) {
+    // Shortcuts: Ctrl+F toggles search; Right/Left skip measures; Up/Down/Enter/Backspace
+    // drive the library like a file explorer. The handler is installed once, so it reads the controller
+    // state directly where it can.
+    fun handleShortcut(event: KeyEvent): Boolean {
+        if (event.type != KeyEventType.KeyDown) return false
+        val primary = event.isCtrlPressed || event.isMetaPressed
+        val plain = !primary && !event.isAltPressed && !event.isShiftPressed
+        val blocked = settings || editing || dialogOpen
+        val browsable = !blocked && libraryShown && !playlistsSelected
+        when {
+            primary && event.key == Key.F -> {
+                if (playlistsSelected) return false
+                // Like the toolbar button: opens the search field, or closes it again.
+                search = !search; query = ""
+                return true
+            }
+            plain && (event.key == Key.DirectionRight || event.key == Key.DirectionLeft) -> {
+                // Text being typed keeps its arrow keys for the cursor.
+                if (blocked || searchFocused) return false
+                val current = controller.state.value
+                val measures = current.index?.measurePositionsMs?.takeIf { current.current != null } ?: return false
+                val target = measureSkipTarget(measures, current.audio.positionMs, if (event.key == Key.DirectionRight) 1 else -1)
+                if (target != null) controller.seek(target)
+                return true
+            }
+            plain && (event.key == Key.DirectionDown || event.key == Key.DirectionUp) -> {
+                // Also works from the search field: its single line has no use for Up/Down.
+                if (!browsable) return false
+                val next = moveBrowseHighlight(entryKeys, folderKeys.size, gridFolders, activeHighlight, event.key == Key.DirectionDown) ?: return false
+                highlight = KeyHighlight(highlightScope(dir, demos, searching), next)
+                return true
+            }
+            plain && (event.key == Key.Enter || event.key == Key.NumPadEnter) -> {
+                if (!browsable) return false
+                val key = activeHighlight ?: return false
+                when {
+                    key == DEMO_ENTRY_KEY -> { demos = true; controller.loadDemos() }
+                    key in folderKeys -> controller.browse(key)
+                    else -> { settings = false; controller.select(key, paths) }
+                }
+                return true
+            }
+            plain && event.key == Key.Backspace -> {
+                // Never while searching: Backspace edits the query there.
+                if (!browsable || search || searchFocused) return false
+                if (demos) { demos = false; return true }
+                val current = controller.state.value.browseDir ?: index.home.path
+                val parent = index.parent(current) ?: return true
+                // Like Explorer, the folder just left is marked in its parent.
+                highlight = KeyHighlight(highlightScope(parent, false, false), current)
+                controller.browse(parent)
+                return true
+            }
+        }
+        return false
+    }
+    val shortcut by rememberUpdatedState<(KeyEvent) -> Boolean>({ handleShortcut(it) })
+    // Key events only reach this window while something holds focus, so the root takes it at start and
+    // back whenever focus is lost (a closed search field or dialog leaves nothing focused).
+    val rootFocus = remember { androidx.compose.ui.focus.FocusRequester() }
+    var rootHasFocus by remember { mutableStateOf(false) }
+    LaunchedEffect(rootHasFocus, search, createPlaylist, renameFolder, renamePlaylist, addTrack, folderActions, playlistActions, nowPlayingActions) {
+        if (!rootHasFocus && !searchFocused) runCatching { rootFocus.requestFocus() }
+    }
+    Box(Modifier.fillMaxSize().onPreviewKeyEvent { shortcut(it) }
+        .focusRequester(rootFocus).onFocusChanged { rootHasFocus = it.hasFocus }.focusable()
+        .desktopFileDropTarget(controller)) {
         ResponsivePlayerLayout(
             showSettings = settings,
             showPlayer = nowPlaying && state.current != null,
@@ -166,6 +255,7 @@ fun DesktopApp(controller: DesktopController) {
                 onShuffleChange = { if (it != state.shuffle) controller.toggleShuffle() })
             },
             library = { wide ->
+            DisposableEffect(Unit) { libraryShown = true; onDispose { libraryShown = false } }
             Scaffold(topBar = {
                 // The logo stays put; where you are is shown by the address bar below.
                 LibraryTopAppBar(
@@ -208,7 +298,9 @@ fun DesktopApp(controller: DesktopController) {
                         demoOpen = demos,
                         // Callbacks may outlive their composition; they must not capture [dir].
                         onOpenFolder = { demos = false; controller.browse(it) })
-                    BrowseSearchField(visible = search, query = query, onQueryChange = { query = it })
+                    Box(Modifier.onFocusChanged { searchFocused = it.hasFocus }) {
+                        BrowseSearchField(visible = search, query = query, onQueryChange = { query = it })
+                    }
                     // A new location gets fresh list state, so every folder or playlist opens at the top.
                     Box(Modifier.weight(1f).fillMaxWidth()) { key(dir, demos, playlistsSelected, playlistId) {
                     when {
@@ -218,11 +310,11 @@ fun DesktopApp(controller: DesktopController) {
                             onShowPlaylistActions = { item -> playlistActions = state.playlists.first { it.id == item.id } },
                             onPlayPlaylist = { item -> settings = false; state.playlists.first { it.id == item.id }.paths.let { p -> p.firstOrNull()?.let { controller.select(it, p) } } })
                         else -> {
-                        val showDemo = browsingFolder && dir == index.home.path
                         val list: @Composable (PaddingValues) -> Unit = { headerPadding -> TrackList(tracks, contentPadding = headerPadding,
                             listContext = if (playlistsSelected) MidiListContext.Playlist else if (search) MidiListContext.Search else MidiListContext.Browse,
                             isLoading = state.busy,
                             isEditMode = editing && !search, selectedUri = state.current,
+                            highlightedUri = activeHighlight, listState = listState,
                             onMoveItem = { id, delta -> playlist?.let { controller.movePlaylistTrack(it.id, tracks.first { t -> t.playlistItemId == id }.uri, delta) } },
                             onRemoveItem = { id -> playlist?.let { controller.removeFromPlaylist(tracks.first { t -> t.playlistItemId == id }.uri, it.id) } },
                             onItemClick = { settings = false; controller.select(it.uri, paths) }, onAddToPlaylist = { addTrack = it.uri },
@@ -240,7 +332,8 @@ fun DesktopApp(controller: DesktopController) {
                                     demo = if (showDemo) ({ demos = true; controller.loadDemos() }) else null,
                                     cover = { folder -> rememberDesktopArtwork(artworkLoader, File(folder.key)) },
                                     // Drive roots cannot be renamed; other folders offer open and rename.
-                                    onFolderActions = { folder -> if (File(folder.key).parentFile != null) folderActions = folder })
+                                    onFolderActions = { folder -> if (File(folder.key).parentFile != null) folderActions = folder },
+                                    highlightKey = activeHighlight)
                             }) }
                         if (browsingFolder) FolderBrowseHeader(folderBrowseSummary(childFolders.size, tracks.size), viewMode,
                             onViewModeChange = { viewMode = it }) { if (openListing != null) list(it) } else list(PaddingValues())
@@ -303,5 +396,10 @@ fun DesktopApp(controller: DesktopController) {
             state.playlists.forEach { list -> TextButton(onClick = { controller.addToPlaylist(path, list.id); addTrack = null }) { Text(list.name) } }
         } }, confirmButton = {}, dismissButton = { TextButton(onClick = { addTrack = null }) { Text("キャンセル") } }) }
 }
+
+/** Entry marked with the keyboard, tied to the [scope] (folder and mode) it was made in. */
+private data class KeyHighlight(val scope: String, val key: String)
+
+private fun highlightScope(dir: String, demos: Boolean, searching: Boolean) = "$dir|$demos|$searching"
 
 private data class DirectoryListing(val dir: String, val folders: List<LibraryFolder>, val tracks: List<String>)

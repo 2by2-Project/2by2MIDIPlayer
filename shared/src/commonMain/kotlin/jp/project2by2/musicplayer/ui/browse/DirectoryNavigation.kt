@@ -145,6 +145,9 @@ private fun FolderViewModeButton(viewMode: FolderViewMode, onViewModeChange: (Fo
     }
 }
 
+/** Keyboard-highlight key of the sample-music entry that follows the folders. */
+const val DEMO_ENTRY_KEY = "directory:demo"
+
 /** Child folders listed ahead of a directory's tracks, in the same Grid/List style as the top level. */
 fun LazyListScope.directoryEntries(
     folders: List<LibraryFolder>,
@@ -152,7 +155,9 @@ fun LazyListScope.directoryEntries(
     onFolder: (LibraryFolder) -> Unit,
     demo: (() -> Unit)? = null,
     cover: @Composable (LibraryFolder) -> ImageBitmap? = { null },
-    onFolderActions: ((LibraryFolder) -> Unit)? = null
+    onFolderActions: ((LibraryFolder) -> Unit)? = null,
+    /** Entry marked by keyboard navigation: a folder's key or [DEMO_ENTRY_KEY]. */
+    highlightKey: String? = null
 ) {
     if (viewMode == FolderViewMode.Grid) {
         folders.chunked(2).forEach { row ->
@@ -161,7 +166,8 @@ fun LazyListScope.directoryEntries(
                     row.forEach { folder ->
                         Box(Modifier.weight(1f)) {
                             FolderCard(folder, cover = cover, onClick = { onFolder(folder) },
-                                onActions = onFolderActions?.let { { it(folder) } })
+                                onActions = onFolderActions?.let { { it(folder) } },
+                                highlighted = folder.key == highlightKey)
                         }
                     }
                     if (row.size == 1) Spacer(Modifier.weight(1f))
@@ -172,9 +178,10 @@ fun LazyListScope.directoryEntries(
         folders.forEach { folder ->
             item(key = "directory:${folder.key}") {
                 FolderListRow(folder, cover = cover, onClick = { onFolder(folder) },
-                    onActions = onFolderActions?.let { { it(folder) } })
+                    onActions = onFolderActions?.let { { it(folder) } },
+                    highlighted = folder.key == highlightKey)
             }
         }
     }
-    if (demo != null) item(key = "directory:demo") { DemoMusicButton(demo) }
+    if (demo != null) item(key = "directory:demo") { DemoMusicButton(demo, highlighted = highlightKey == DEMO_ENTRY_KEY) }
 }

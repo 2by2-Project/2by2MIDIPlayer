@@ -133,17 +133,27 @@ private fun FolderList(
     }
 }
 
+/** Strength of the pale highlight that marks the row selected with the keyboard. */
+internal const val KeyboardHighlightAlpha = 0.10f
+
+/** Paints the pale keyboard-selection highlight behind a list entry while [active]. */
+@Composable
+internal fun Modifier.keyboardHighlight(active: Boolean, shape: Shape = RoundedCornerShape(4.dp)): Modifier =
+    if (active) background(MaterialTheme.colorScheme.onSurface.copy(alpha = KeyboardHighlightAlpha), shape) else this
+
 @Composable
 internal fun FolderListRow(
     folder: LibraryFolder,
     cover: @Composable (LibraryFolder) -> ImageBitmap? = { null },
     onClick: () -> Unit,
-    onActions: (() -> Unit)?
+    onActions: (() -> Unit)?,
+    highlighted: Boolean = false
 ) {
     val coverBitmap = cover(folder)
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .keyboardHighlight(highlighted)
             .desktopContextClick(enabled = onActions != null) { onActions?.invoke() }
             .clickable(onClick = onClick)
             .padding(horizontal = 16.dp, vertical = 8.dp),
@@ -189,11 +199,16 @@ internal fun FolderCard(
     folder: LibraryFolder,
     cover: @Composable (LibraryFolder) -> ImageBitmap? = { null },
     onClick: () -> Unit,
-    onActions: (() -> Unit)?
+    onActions: (() -> Unit)?,
+    highlighted: Boolean = false
 ) {
     val coverBitmap = cover(folder)
     Card(
         onClick = onClick,
+        colors = if (highlighted) CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.onSurface.copy(alpha = KeyboardHighlightAlpha)
+                .compositeOver(MaterialTheme.colorScheme.surfaceContainerHighest)
+        ) else CardDefaults.cardColors(),
         modifier = Modifier.fillMaxWidth()
             .desktopContextClick(enabled = onActions != null) { onActions?.invoke() }
     ) {
@@ -239,7 +254,8 @@ internal fun FolderCard(
 fun DemoMusicButton(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
-    showDividers: Boolean = true
+    showDividers: Boolean = true,
+    highlighted: Boolean = false
 ) {
     Column(modifier = modifier.fillMaxWidth()) {
         if (showDividers) {
@@ -252,7 +268,8 @@ fun DemoMusicButton(
         TextButton(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 4.dp),
+                .padding(horizontal = 16.dp, vertical = 4.dp)
+                .keyboardHighlight(highlighted, RoundedCornerShape(50)),
             onClick = onClick
         ) {
             Icon(
