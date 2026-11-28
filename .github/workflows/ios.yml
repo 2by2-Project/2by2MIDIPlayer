@@ -6,6 +6,11 @@ on:
   push:
     branches: [ios, 'ios/**']
   workflow_dispatch:
+    inputs:
+      simulator:
+        description: Also launch the app on an iOS simulator and keep screenshots (adds about 40 minutes)
+        type: boolean
+        default: false
   workflow_call:
 
 permissions:
@@ -173,9 +178,11 @@ jobs:
                       emit(f'{name} errors {i // 20 + 1}', '\n'.join(errors[i:i + 20]))
               emit(f'{name} tail', '\n'.join(tail))
 
-  # Launch check: builds for the simulator, starts the app (English and Japanese), and keeps
-  # screenshots. It verifies startup (Compose, resources, BASS init); sound is checked on devices.
+  # Launch check, run on request only (Actions > Build iOS > Run workflow > simulator): builds for the
+  # simulator, starts the app (English and Japanese), plays a song and keeps screenshots. Pushes skip it
+  # because it takes much longer than the IPA build.
   simulator:
+    if: github.event_name == 'workflow_dispatch' && inputs.simulator
     runs-on: macos-15
     timeout-minutes: 75
     env:
