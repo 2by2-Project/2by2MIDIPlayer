@@ -255,6 +255,9 @@ fun MusicPlayerMainScreen(
     var pianoRollData by remember { mutableStateOf<PianoRollData?>(null) }
     // Compact player sheet: the mini bar and full Now Playing share one drag position.
     val playerSheet = rememberPlayerSheetState()
+    // Starting a song shows the piano roll; the search keyboard must not stay over it (also wide windows).
+    var playbackStartedToken by remember { mutableLongStateOf(0L) }
+    HideKeyboardWhenChanged(playbackStartedToken)
     LaunchedEffect(showNowPlaying) {
         if (playerSheet.targetExpanded != showNowPlaying) playerSheet.animateTo(showNowPlaying)
     }
@@ -855,6 +858,7 @@ fun MusicPlayerMainScreen(
                         .onSuccess {
                             scope.launch {
                                 showNowPlaying = true
+                                playbackStartedToken += 1
                             }
                         }
                         .onFailure {

@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.offset
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -19,6 +20,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.zIndex
 import kotlin.math.roundToInt
@@ -77,6 +80,7 @@ fun ExpandedPlayerSheet(
     content: @Composable () -> Unit,
 ) {
     val sheetVisible by remember(state) { derivedStateOf { state.progress > 0f } }
+    HideKeyboardWhen(visible && (sheetVisible || expanded))
     if (visible && (sheetVisible || expanded)) {
         Box(
             modifier = Modifier
@@ -94,6 +98,36 @@ fun ExpandedPlayerSheet(
             ) {
                 content()
             }
+        }
+    }
+}
+
+/**
+ * Closes the on-screen keyboard (and leaves the search field) once [condition] turns true, e.g. when
+ * the piano roll is shown: the keyboard would otherwise cover it.
+ */
+@Composable
+fun HideKeyboardWhen(condition: Boolean) {
+    val keyboard = LocalSoftwareKeyboardController.current
+    val focus = LocalFocusManager.current
+    LaunchedEffect(condition) {
+        if (condition) {
+            keyboard?.hide()
+            focus.clearFocus()
+        }
+    }
+}
+
+/** Closes the on-screen keyboard each time [token] changes, e.g. when a tapped song starts playing. */
+@Composable
+fun HideKeyboardWhenChanged(token: Any) {
+    val keyboard = LocalSoftwareKeyboardController.current
+    val focus = LocalFocusManager.current
+    val initial = remember { token }
+    LaunchedEffect(token) {
+        if (token != initial) {
+            keyboard?.hide()
+            focus.clearFocus()
         }
     }
 }

@@ -96,7 +96,9 @@ fun IosApp(controller: IosController) {
     }
     val viewMode = if (settingsState.folderViewMode == 1) FolderViewMode.List else FolderViewMode.Grid
 
-    // Playback that starts from a tap opens the player, like Android.
+    // Playback that starts from a tap opens the player, like Android, and closes the search keyboard
+    // so it does not cover the piano roll (also in wide windows, where the player is always shown).
+    HideKeyboardWhenChanged(state.showPlayerRequest)
     var handledPlayerRequest by remember { mutableStateOf(state.showPlayerRequest) }
     LaunchedEffect(state.showPlayerRequest) {
         if (state.showPlayerRequest != handledPlayerRequest) {
