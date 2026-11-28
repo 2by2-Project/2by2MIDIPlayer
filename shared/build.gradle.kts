@@ -15,6 +15,21 @@ kotlin {
     jvm("desktop") {
         compilerOptions.jvmTarget.set(JvmTarget.JVM_11)
     }
+    // iOS library targets; the application framework is built by :iosApp.
+    // Apple targets compile only on macOS (CI); Android and desktop builds skip them elsewhere.
+    iosArm64()
+    iosSimulatorArm64()
+    // mobileMain: smartphone components shared by Android and iOS only (player sheet, play queue,
+    // loop editor, ...). Desktop uses commonMain.
+    @OptIn(org.jetbrains.kotlin.gradle.ExperimentalKotlinGradlePluginApi::class)
+    applyDefaultHierarchyTemplate {
+        common {
+            group("mobile") {
+                withAndroidTarget()
+                group("ios")
+            }
+        }
+    }
     sourceSets {
         // Platform-neutral JVM audio lifecycle code, shared by JNI (Android) and JNA (desktop).
         androidMain { kotlin.srcDir("src/jvmMain/kotlin") }

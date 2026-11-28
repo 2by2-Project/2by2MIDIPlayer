@@ -14,16 +14,21 @@ when (currentPlatform) {
     Platform.Android -> Unit
     Platform.Windows -> Unit
     Platform.Linux -> Unit
+    Platform.IOS -> Unit
 }
 ```
 
-`isAndroid`, `isWindows`, `isLinux`, and `isDesktop` are properties of `Platform`.
+`isAndroid`, `isWindows`, `isLinux`, `isIos`, `isDesktop` (Windows or Linux) and `isMobile`
+(Android or iOS) are properties of `Platform`.
 For example, `RecommendedSoundFontDialog` explicitly checks `currentPlatform.isWindows`
 before showing the gm.dls card; its callback supplies the actual loading operation.
 The read-only `currentPlatform` needs no Context, CompositionLocal, or initialization
 by the application. Android supplies a fixed value; desktop resolves `os.name` once.
 Unsupported desktop operating systems fail explicitly. Native audio separately
 validates CPU architecture before loading its libraries.
+
+Code shared only by the smartphone platforms (Android and iOS) belongs in the `mobileMain`
+source set of `:shared` rather than behind an OS check in commonMain; see `docs/ios.md`.
 
 Use this identity for OS-dependent decisions. Window layout remains based on available
 size, and mouse/touch behavior should reflect input rather than OS identity.

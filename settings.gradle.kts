@@ -25,3 +25,4 @@ rootProject.name = "2by2MIDIPlayer"
 include(":app")
 include(":shared")
 include(":desktopApp")
+include(":iosApp")

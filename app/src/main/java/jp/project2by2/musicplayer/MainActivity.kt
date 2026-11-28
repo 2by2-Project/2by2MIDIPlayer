@@ -1035,10 +1035,7 @@ fun MusicPlayerMainScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .onGloballyPositioned {
-                playerSheet.hostTopInWindow = it.positionInWindow().y
-                playerSheet.hostHeight = it.size.height.toFloat()
-            }
+            .playerSheetHost(playerSheet)
     ) {
     Scaffold(
         topBar = {
@@ -1149,28 +1146,11 @@ fun MusicPlayerMainScreen(
         },
         bottomBar = {
             Column {
-                AnimatedVisibility(
+                MiniPlayerSheetBar(
+                    state = playerSheet,
                     visible = !wide && selectedMidiFileUri != null,
-                    enter = slideInVertically(initialOffsetY = { it }, animationSpec = tween(400)) +
-                            fadeIn(animationSpec = tween(400)),
-                    exit = slideOutVertically(targetOffsetY = { it }, animationSpec = tween(400)) +
-                            fadeOut(animationSpec = tween(400))
+                    onSettle = settlePlayerSheet
                 ) {
-                    PlayerSheetDragArea(
-                        state = playerSheet,
-                        onSettle = settlePlayerSheet,
-                        modifier = Modifier.onGloballyPositioned {
-                            playerSheet.miniTopInWindow = it.positionInWindow().y
-                        }
-                    ) {
-                        // The mini bar rides on the top edge of the rising sheet while it fades.
-                        Box(
-                            modifier = Modifier.graphicsLayer {
-                                val p = playerSheet.progress
-                                translationY = -p * playerSheet.travelPx
-                                alpha = 1f - (p / 0.3f).coerceIn(0f, 1f)
-                            }
-                        ) {
                         MiniPlayerContainer(
                             playbackService = playbackService,
                             selectedMidiFileUri = selectedMidiFileUri,
@@ -1201,8 +1181,6 @@ fun MusicPlayerMainScreen(
                                 showNowPlaying = true
                             }
                         )
-                        }
-                    }
                 }
                 jp.project2by2.musicplayer.ui.player.PlayerNavigationBar(
                     playlistsSelected = rootTab == RootTab.Playlists,
@@ -1515,25 +1493,13 @@ fun MusicPlayerMainScreen(
             }
         }
     }
-    val playerSheetVisible by remember { derivedStateOf { playerSheet.progress > 0f } }
-    if (!wide && selectedMidiFileUri != null && (playerSheetVisible || showNowPlaying)) {
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .zIndex(3f)
-                .drawBehind { drawRect(Color.Black, alpha = 0.35f * playerSheet.progress) }
-        ) {
-            PlayerSheetDragArea(
-                state = playerSheet,
-                onSettle = settlePlayerSheet,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .offset { IntOffset(0, ((1f - playerSheet.progress) * playerSheet.travelPx).roundToInt()) }
-                    .graphicsLayer { alpha = ((playerSheet.progress - 0.05f) / 0.3f).coerceIn(0f, 1f) }
-            ) {
-                playerContent()
-            }
-        }
+    ExpandedPlayerSheet(
+        state = playerSheet,
+        visible = !wide && selectedMidiFileUri != null,
+        expanded = showNowPlaying,
+        onSettle = settlePlayerSheet
+    ) {
+        playerContent()
     }
     }
 
@@ -1873,31 +1839,6 @@ private fun PlaylistHome(
 }
 
 @Composable
-private fun ConfirmDeletePlaylistDialog(
-    playlistName: String,
-    onDismiss: () -> Unit,
-    onConfirm: () -> Unit
-) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(text = stringResource(id = R.string.action_delete_playlist)) },
-        text = {
-            Text(text = stringResource(id = R.string.confirm_delete_playlist_message, playlistName))
-        },
-        confirmButton = {
-            TextButton(onClick = onConfirm) {
-                Text(text = stringResource(id = R.string.action_delete))
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text(text = stringResource(id = R.string.cancel))
-            }
-        }
-    )
-}
-
-@Composable
 private fun PlaylistTracks(
     repository: PlaylistRepository,
     playlistId: Long,
@@ -2114,37 +2055,13 @@ private fun AddToPlaylistDialog(
             repository.listPlaylists()
         }
     }.value
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(text = candidate.displayTitle()) },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                ElevatedButton(
-                    modifier = Modifier.fillMaxWidth(),
-                    onClick = onCreatePlaylist
-                ) {
-                    Text(text = stringResource(id = R.string.action_create_playlist))
-                }
-                if (playlists.isEmpty()) {
-                    Text(text = stringResource(id = R.string.info_no_playlists_found))
-                } else {
-                    playlists.forEach { playlist ->
-                        TextButton(
-                            modifier = Modifier.fillMaxWidth(),
-                            onClick = { onAdd(playlist.id) }
-                        ) {
-                            Text(text = playlist.name, modifier = Modifier.fillMaxWidth())
-                        }
-                    }
-                }
-            }
-        },
-        confirmButton = {},
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text(text = stringResource(id = R.string.cancel))
-            }
-        }
+    // Shared with iOS (mobileMain).
+    jp.project2by2.musicplayer.ui.playlist.AddToPlaylistDialog(
+        title = candidate.displayTitle(),
+        playlists = playlists.map { LibraryPlaylist(it.id.toString(), it.name, it.itemCount) },
+        onDismiss = onDismiss,
+        onCreatePlaylist = onCreatePlaylist,
+        onAdd = { selected -> onAdd(selected.id.toLong()) }
     )
 }
 

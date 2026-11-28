@@ -22,7 +22,7 @@ enum class NativePlatform(val directory: String, val core: String, val midi: Str
             return when (platform) {
                 Platform.Windows -> Windows
                 Platform.Linux -> Linux
-                Platform.Android -> error("対応するOSはWindows/Linuxです: $platform")
+                Platform.Android, Platform.IOS -> error("対応するOSはWindows/Linuxです: $platform")
             }
         }
     }

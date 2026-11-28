@@ -31,6 +31,10 @@ import com.google.common.util.concurrent.ListenableFuture
 import com.un4seen.bass.BASS
 import com.un4seen.bass.BASSMIDI
 import jp.project2by2.musicplayer.audio.MidiLoopStream
+import jp.project2by2.musicplayer.playback.LOOP_FADE_OUT_DURATION_MS
+import jp.project2by2.musicplayer.playback.LoopBoundaryAction
+import jp.project2by2.musicplayer.playback.LoopFadePolicy
+import jp.project2by2.musicplayer.playback.PlaybackQueue
 import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
@@ -52,7 +56,6 @@ class PlaybackService : MediaSessionService() {
 
     private val mainHandler = Handler(Looper.getMainLooper())
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private val random = Random(System.currentTimeMillis())
 
     @Volatile private var handles: MidiHandles? = null
     private var loopPoint: LoopPoint? = null
@@ -61,7 +64,8 @@ class PlaybackService : MediaSessionService() {
     private var volumeSlideSyncHandle: Int = 0
     private var volumeSlideSyncProc: BASS.SYNCPROC? = null
     private val fadeEpoch = AtomicLong()
-    private var loopRepeatCount: Int = 0
+    // Shared with iOS (mobileMain): repeat a CC#111 loop once, then fade into the next song.
+    private val loopFade = LoopFadePolicy()
     private val transitionInProgress = AtomicBoolean(false)
     @Volatile private var loopEnabledSnapshot: Boolean = false
     @Volatile private var shuffleEnabledSnapshot: Boolean = false
@@ -77,11 +81,8 @@ class PlaybackService : MediaSessionService() {
     private var currentTitle: String? = null
     public var currentArtist: String? = null
     public var currentArtworkUri: Uri? = null
-    private var activeQueueId: Long? = null
-    private var activeQueueTitle: String? = null
-    private var activeQueueItems: List<String> = emptyList()
-    private var shuffledOrder: List<Int> = emptyList()
-    private var shuffledCursor: Int = -1
+    // Shared with iOS (mobileMain): wraps at both ends, shuffled order starts from the current song.
+    private val playQueue = PlaybackQueue(Random(System.currentTimeMillis()))
     private val playlistRepository: PlaylistRepository by lazy {
         PlaylistStore.repository(this)
     }
@@ -234,7 +235,7 @@ class PlaybackService : MediaSessionService() {
     @Synchronized
     private fun loadMidiInternal(uriString: String, precomputedLoopPoint: LoopPoint?): Boolean {
         val uri = android.net.Uri.parse(uriString)
-        loopRepeatCount = 0
+        loopFade.reset()
         temporaryLoopPointMs = null
         temporaryEndPointMs = null
 
@@ -436,7 +437,7 @@ class PlaybackService : MediaSessionService() {
             it.audio.close()
             BASSMIDI.BASS_MIDI_FontFree(it.font)
         }
-        loopRepeatCount = 0
+        loopFade.reset()
         syncProc = null
         volumeSlideSyncProc = null
         transitionInProgress.set(false)
@@ -448,19 +449,15 @@ class PlaybackService : MediaSessionService() {
     private fun handlePlaybackBoundary(lp: LoopPoint, streamHandle: Int): Boolean {
         if (handles?.stream != streamHandle) return false
         val temporary = temporaryLoopPointMs != null || temporaryEndPointMs != null
-        if (temporary || loopEnabledSnapshot) {
-            loopRepeatCount = 0
-            return true
+        // End: the output END sync advances the queue at playtime.
+        return when (loopFade.onBoundary(temporary || loopEnabledSnapshot, lp.hasLoopStartMarker, transitionInProgress.get())) {
+            LoopBoundaryAction.Repeat -> true
+            LoopBoundaryAction.End -> false
+            LoopBoundaryAction.RepeatAndFade -> {
+                fadeOutThenPlayNext(streamHandle, shuffleEnabledSnapshot)
+                true
+            }
         }
-        if (!lp.hasLoopStartMarker) return false // Output END sync advances the queue at playtime.
-        if (transitionInProgress.get()) return true // Keep looping underneath the full track fade.
-        if (loopRepeatCount < LOOP_REPEAT_BEFORE_FADE_COUNT) {
-            loopRepeatCount += 1
-            return true
-        }
-        loopRepeatCount = 0
-        fadeOutThenPlayNext(streamHandle, shuffleEnabledSnapshot)
-        return true
     }
 
     @Synchronized
@@ -498,7 +495,7 @@ class PlaybackService : MediaSessionService() {
     private fun fadeOutThenPlayNext(
         streamHandle: Int,
         shuffleEnabled: Boolean,
-        fadeDurationMs: Int = FADE_OUT_DURATION_MS,
+        fadeDurationMs: Int = LOOP_FADE_OUT_DURATION_MS,
         alreadyLocked: Boolean = false
     ) {
         if (!alreadyLocked && !transitionInProgress.compareAndSet(false, true)) return
@@ -554,20 +551,15 @@ class PlaybackService : MediaSessionService() {
                 volumeSlideSyncProc = null
                 BASS.BASS_ChannelSlideAttribute(h.stream, BASS.BASS_ATTRIB_VOL, 1f, 0)
             }
-            loopRepeatCount = 0
+            loopFade.reset()
             transitionInProgress.set(false)
         } finally { BASS.BASS_ChannelLock(h.stream, false) }
     }
 
     fun setTransientQueue(items: List<String>, title: String?, startUri: String? = null): Boolean {
-        val normalized = items.distinct().filter { it.isNotBlank() }
-        if (normalized.isEmpty()) return false
-        activeQueueId = null
-        activeQueueTitle = title?.takeIf { it.isNotBlank() }
-        activeQueueItems = normalized
-        resetShuffleState()
-        currentArtist = activeQueueTitle
-        if (startUri != null && normalized.none { it == startUri }) return false
+        if (!playQueue.set(items, title)) return false
+        currentArtist = playQueue.title
+        if (startUri != null && playQueue.items.none { it == startUri }) return false
         return true
     }
 
@@ -576,11 +568,9 @@ class PlaybackService : MediaSessionService() {
         val queue = tracks.sortedBy { it.position }.map { it.uriString }.distinct().filter { it.isNotBlank() }
         if (queue.isEmpty()) return false
         if (startUri != null && queue.none { it == startUri }) return false
-        activeQueueId = queueId
-        activeQueueTitle = runBlocking { playlistRepository.getPlaylistName(queueId) }
-        activeQueueItems = queue
-        resetShuffleState()
-        currentArtist = activeQueueTitle
+        val title = runBlocking { playlistRepository.getPlaylistName(queueId) }
+        playQueue.set(queue, title, queueId.toString())
+        currentArtist = playQueue.title
         return true
     }
 
@@ -588,35 +578,8 @@ class PlaybackService : MediaSessionService() {
         uriString: String,
         fallbackItems: List<String> = emptyList(),
         fallbackTitle: String? = null
-    ): Boolean {
-        val target = uriString.trim()
-        if (target.isBlank()) return false
-        val current = currentUriString ?: return false
-
-        var queue = activeQueueItems
-        if (queue.isEmpty()) {
-            val normalizedFallback = fallbackItems.distinct().filter { it.isNotBlank() }
-            queue = if (normalizedFallback.contains(current)) {
-                activeQueueId = null
-                activeQueueTitle = fallbackTitle?.takeIf { it.isNotBlank() }
-                currentArtist = activeQueueTitle
-                normalizedFallback
-            } else {
-                listOf(current)
-            }
-        }
-
-        val mutable = queue.toMutableList()
-        var currentIndex = mutable.indexOf(current)
-        if (currentIndex < 0) {
-            mutable.add(0, current)
-            currentIndex = 0
-        }
-        mutable.add(currentIndex + 1, target)
-
-        activeQueueItems = mutable
-        resetShuffleState()
-        return true
+    ): Boolean = playQueue.enqueueNext(uriString, currentUriString, fallbackItems, fallbackTitle) {
+        currentArtist = playQueue.title
     }
 
     suspend fun playNextInQueue(shuffleEnabled: Boolean, alreadyLocked: Boolean = false) {
@@ -684,79 +647,11 @@ class PlaybackService : MediaSessionService() {
         playPreviousInQueue(shuffleEnabled = shuffleEnabled, alreadyLocked = alreadyLocked)
     }
 
-    private fun findNextUriInActiveQueue(shuffleEnabled: Boolean): String? {
-        val queue = activeQueueItems
-        if (queue.isEmpty()) return null
-        val current = currentUriString
-        val currentIndex = if (current != null) queue.indexOf(current) else -1
-        if (currentIndex < 0) return queue.first()
+    private fun findNextUriInActiveQueue(shuffleEnabled: Boolean): String? =
+        playQueue.next(currentUriString, shuffleEnabled)
 
-        if (shuffleEnabled) {
-            return findFromShuffledOrder(queue, currentIndex, forward = true)
-        }
-
-        return queue[(currentIndex + 1) % queue.size]
-    }
-
-    private fun findPreviousUriInActiveQueue(shuffleEnabled: Boolean): String? {
-        val queue = activeQueueItems
-        if (queue.isEmpty()) return null
-        val current = currentUriString
-        val currentIndex = if (current != null) queue.indexOf(current) else -1
-        if (currentIndex < 0) return queue.last()
-
-        if (shuffleEnabled) {
-            return findFromShuffledOrder(queue, currentIndex, forward = false)
-        }
-
-        val previousIndex = if (currentIndex == 0) queue.lastIndex else currentIndex - 1
-        return queue[previousIndex]
-    }
-
-    private fun findFromShuffledOrder(queue: List<String>, currentIndex: Int, forward: Boolean): String {
-        if (queue.size <= 1) return queue.first()
-
-        ensureShuffleOrder(queue, currentIndex)
-        val order = shuffledOrder
-        if (order.isEmpty()) return queue[currentIndex]
-
-        val cursor = if (shuffledCursor in order.indices) shuffledCursor else 0
-        val nextCursor = if (forward) {
-            (cursor + 1) % order.size
-        } else {
-            if (cursor == 0) order.lastIndex else cursor - 1
-        }
-        shuffledCursor = nextCursor
-        return queue[order[nextCursor]]
-    }
-
-    private fun ensureShuffleOrder(queue: List<String>, currentIndex: Int) {
-        val queueSizeChanged = shuffledOrder.size != queue.size
-        val outOfRange = shuffledOrder.any { it !in queue.indices }
-        if (queueSizeChanged || outOfRange || shuffledOrder.isEmpty()) {
-            rebuildShuffleOrder(queue, currentIndex)
-            return
-        }
-
-        val located = shuffledOrder.indexOf(currentIndex)
-        if (located >= 0) {
-            shuffledCursor = located
-        } else {
-            rebuildShuffleOrder(queue, currentIndex)
-        }
-    }
-
-    private fun rebuildShuffleOrder(queue: List<String>, currentIndex: Int) {
-        val others = queue.indices.filter { it != currentIndex }.toMutableList()
-        others.shuffle(random)
-        shuffledOrder = listOf(currentIndex) + others
-        shuffledCursor = 0
-    }
-
-    private fun resetShuffleState() {
-        shuffledOrder = emptyList()
-        shuffledCursor = -1
-    }
+    private fun findPreviousUriInActiveQueue(shuffleEnabled: Boolean): String? =
+        playQueue.previous(currentUriString, shuffleEnabled)
 
     private fun bassInit(): Boolean {
         var ok = false
@@ -823,7 +718,7 @@ class PlaybackService : MediaSessionService() {
     }
 
     private fun resolveFolderDisplayName(uri: Uri): String? {
-        activeQueueTitle?.let { if (it.isNotBlank()) return it }
+        playQueue.title?.let { if (it.isNotBlank()) return it }
         if (DemoMidiContract.isDemoUri(uri)) {
             return getString(R.string.folder_demo_name)
         }
@@ -1055,8 +950,6 @@ class PlaybackService : MediaSessionService() {
         private const val NOTIFICATION_ID = 1001
         private const val MIDI_FILE = "midi.mid"
         private const val SOUND_FONT_FILE = "soundfont.sf2"
-        private const val LOOP_REPEAT_BEFORE_FADE_COUNT = 1
-        private const val FADE_OUT_DURATION_MS = 8000
         private const val CUSTOM_COMMAND_TOGGLE_LOOP = "jp.project2by2.musicplayer.command.TOGGLE_LOOP"
         fun findLoopPoint(midiFile: File): LoopPoint = try {
             val timing = parseMidiTiming(midiFile.readBytes())

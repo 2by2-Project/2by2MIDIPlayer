@@ -1,0 +1,167 @@
+name: Build iOS
+
+# Runs for the iOS work branches directly; master, pull requests and release tags run it through
+# release.yml (workflow_call), which also attaches the IPA to GitHub Releases.
+on:
+  push:
+    branches: [ios, 'ios/**']
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+jobs:
+  ios:
+    runs-on: macos-15
+    timeout-minutes: 75
+    env:
+      LOG_DIR: ${{ github.workspace }}/ci-logs
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Read appVersion
+        id: version
+        shell: python
+        run: |
+          import os, pathlib, re
+          values = re.findall(r'^\s*appVersion\s*=\s*(.*?)\s*$', pathlib.Path('gradle.properties').read_text(), re.M)
+          if len(values) != 1 or not re.fullmatch(r'\d+\.\d+(\.\d+)?', values[0]):
+              raise SystemExit('Invalid appVersion')
+          version = values[0]
+          if os.environ['GITHUB_REF_TYPE'] == 'tag' and os.environ['GITHUB_REF_NAME'] != f'v{version}':
+              raise SystemExit(f'Tag must be v{version}')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              print(f'version={version}', file=output)
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Cache Kotlin/Native toolchain
+        uses: actions/cache@v4
+        with:
+          path: ~/.konan
+          key: konan-${{ runner.os }}-${{ hashFiles('gradle/libs.versions.toml') }}
+          restore-keys: konan-${{ runner.os }}-
+
+      - name: Download BASS and BASSMIDI (iOS)
+        shell: python
+        run: |
+          import hashlib, pathlib, shutil, tempfile, urllib.request, zipfile
+          target = pathlib.Path('proprietary/ios')
+          licenses = pathlib.Path('iosApp/xcode/Licenses')
+          target.mkdir(parents=True, exist_ok=True)
+          licenses.mkdir(parents=True, exist_ok=True)
+          for name in ('bass', 'bassmidi'):
+              with tempfile.TemporaryDirectory() as tmp:
+                  archive = pathlib.Path(tmp) / 'download.zip'
+                  urllib.request.urlretrieve(f'https://www.un4seen.com/files/{name}24-ios.zip', archive)
+                  print(name, hashlib.sha256(archive.read_bytes()).hexdigest())
+                  unpacked = pathlib.Path(tmp) / 'unpacked'
+                  with zipfile.ZipFile(archive) as z:
+                      z.extractall(unpacked)
+                  framework = unpacked / f'{name}.xcframework'
+                  for slice in ('ios-arm64_armv7_armv7s', 'ios-arm64_i386_x86_64-simulator'):
+                      binary = framework / slice / f'{name}.framework' / name
+                      if not binary.is_file():
+                          raise RuntimeError(f'Missing {binary.relative_to(unpacked)} in the official archive')
+                  shutil.rmtree(target / f'{name}.xcframework', ignore_errors=True)
+                  shutil.copytree(framework, target / f'{name}.xcframework', symlinks=True)
+                  for extra in (f'{name}.h', f'{name}.txt'):
+                      shutil.copy2(unpacked / extra, target / extra)
+                  shutil.copy2(unpacked / f'{name}.txt', licenses / f'{name}.txt')
+          for name in ('LICENSE', 'NOTICE', 'THIRD_PARTY_NOTICES.md'):
+              shutil.copy2(name, licenses / name)
+
+      - name: Tools
+        run: |
+          set -euo pipefail
+          mkdir -p "$LOG_DIR"
+          xcodebuild -version
+          brew install xcodegen
+
+      - name: Shared tests on the iOS simulator
+        run: |
+          set -o pipefail
+          ./gradlew --no-daemon --stacktrace :shared:iosSimulatorArm64Test 2>&1 | tee "$LOG_DIR/shared-tests.log"
+
+      - name: Generate Xcode project
+        working-directory: iosApp/xcode
+        run: xcodegen generate
+
+      - name: Build app (unsigned)
+        env:
+          APP_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set +e
+          # Gradle builds the Kotlin framework (PlayerKit) inside Xcode's pre-build script.
+          xcodebuild -project iosApp/xcode/iosApp.xcodeproj -scheme iosApp -configuration Release \
+            -destination 'generic/platform=iOS' -derivedDataPath build/ios \
+            MARKETING_VERSION="$APP_VERSION" CURRENT_PROJECT_VERSION="$GITHUB_RUN_NUMBER" \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            build > "$LOG_DIR/xcodebuild.log" 2>&1
+          status=$?
+          grep -E '^e: |error:|BUILD (SUCCEEDED|FAILED)|\*\* ' "$LOG_DIR/xcodebuild.log" | tail -200
+          tail -30 "$LOG_DIR/xcodebuild.log"
+          exit $status
+
+      - name: Package IPA
+        env:
+          APP_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          app=build/ios/Build/Products/Release-iphoneos/2by2MIDIPlayer.app
+          test -x "$app/2by2MIDIPlayer"
+          for name in bass bassmidi; do test -f "$app/Frameworks/$name.framework/$name"; done
+          test -d "$app/demo"
+          test -f "$app/Licenses/THIRD_PARTY_NOTICES.md"
+          # The executable must be an arm64 device binary.
+          lipo -archs "$app/2by2MIDIPlayer" | grep -qw arm64
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Info.plist"
+          mkdir -p dist/Payload
+          cp -R "$app" dist/Payload/
+          (cd dist && zip -qry "2by2MIDIPlayer-$APP_VERSION-ios-unsigned.ipa" Payload)
+          rm -rf dist/Payload
+          ls -l dist
+          echo 'The IPA is unsigned. Sign it when installing (AltStore, Sideloadly, or your own certificate).' >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: iOS-${{ steps.version.outputs.version }}
+          path: dist/*.ipa
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+
+      # Job logs need a token to download; annotations are public, so failures are summarized there.
+      - name: Report failure details
+        if: failure()
+        shell: python
+        run: |
+          import os, pathlib, re
+          logs = pathlib.Path(os.environ['LOG_DIR'])
+          found = []
+          for log in sorted(logs.glob('*.log')) if logs.is_dir() else []:
+              lines = log.read_text(errors='replace').splitlines()
+              errors = [l for l in lines if re.match(r'^(e: |error: )', l) or ' error: ' in l or 'What went wrong' in l
+                        or re.search(r'Undefined symbol|ld: |clang: error|FAILED|Exception', l)]
+              tail = lines[-40:]
+              found.append((log.name, errors[:60], tail))
+          def emit(title, text):
+              text = text[:3800].replace('%', '%25').replace('\r', '').replace('\n', '%0A')
+              print(f'::error title={title}::{text}')
+          for name, errors, tail in found:
+              if errors:
+                  for i in range(0, len(errors), 20):
+                      emit(f'{name} errors {i // 20 + 1}', '\n'.join(errors[i:i + 20]))
+              emit(f'{name} tail', '\n'.join(tail))

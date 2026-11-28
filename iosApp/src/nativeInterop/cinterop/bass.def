@@ -1,0 +1,5 @@
+# BASS and BASSMIDI C APIs from the official iOS XCFrameworks (proprietary/ios, not in Git).
+# The Kotlin framework is static: the app target links and embeds bass/bassmidi.xcframework.
+headers = bass.h bassmidi.h
+headerFilter = bass.h bassmidi.h
+package = jp.project2by2.musicplayer.ios.bass
