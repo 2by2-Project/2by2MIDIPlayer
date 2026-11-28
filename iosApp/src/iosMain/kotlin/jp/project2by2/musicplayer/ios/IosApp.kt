@@ -28,6 +28,8 @@ import jp.project2by2.musicplayer.ui.browse.*
 import jp.project2by2.musicplayer.ui.details.FileDetails
 import jp.project2by2.musicplayer.ui.details.FileDetailsScreen
 import jp.project2by2.musicplayer.ui.loop.LoopPointEditorScreen
+import jp.project2by2.musicplayer.ui.navigation.rememberPredictiveBack
+import androidx.compose.ui.graphics.graphicsLayer
 import jp.project2by2.musicplayer.ui.player.*
 import jp.project2by2.musicplayer.ui.playlist.*
 import jp.project2by2.musicplayer.ui.settings.RecommendedSoundFontDialog
@@ -206,6 +208,22 @@ fun IosApp(controller: IosController) {
     BoxWithConstraints(Modifier.fillMaxSize()) {
         // Wide windows show Settings in the right pane; phones open it as its own screen like Android.
         val wideWindow = isWidePlayerLayout(maxWidth, maxHeight)
+
+        // Back (iOS: swipe from the left edge) follows Android's order, with exactly one destination
+        // enabled at a time: pages, Settings, the player sheet, search, the playlist, the parent folder.
+        // The topmost folder has none, so the gesture does nothing there (iOS apps do not close themselves).
+        val pageOpen = loopEditFor != null || detailsFor != null
+        val sheetOpen = !wideWindow && showNowPlaying && state.current != null
+        val libraryFront = !pageOpen && !showSettings && !sheetOpen
+        rememberPredictiveBack(enabled = showSettings && wideWindow && !pageOpen) { showSettings = false }
+        val searchBack = rememberPredictiveBack(enabled = libraryFront && search) { search = false; query = "" }
+        val playlistBack = rememberPredictiveBack(enabled = libraryFront && !search && playlistsSelected && playlistId != null) {
+            closePlaylist()
+        }
+        val parentDir = if (!playlistsSelected && !search) library.parent(dir) else null
+        val folderBack = rememberPredictiveBack(enabled = libraryFront && parentDir != null) {
+            parentDir?.let(controller::browse)
+        }
         ResponsivePlayerLayout(
             showSettings = showSettings && wideWindow,
             // The compact player is the draggable sheet inside the library, as on Android.
@@ -276,43 +294,56 @@ fun IosApp(controller: IosController) {
                                     }
                                 },
                                 demoOpen = demos,
-                                onOpenFolder = { controller.browse(it) })
-                            BrowseSearchField(visible = search, query = query, onQueryChange = { query = it })
+                                onOpenFolder = { controller.browse(it) },
+                                backProgress = folderBack.previewProgress)
+                            BrowseSearchField(visible = search, query = query, onQueryChange = { query = it },
+                                backProgress = searchBack.previewProgress)
                             Box(Modifier.weight(1f).fillMaxWidth()) {
-                                when {
-                                    playlistsSelected && playlist == null -> PlaylistScreen(
+                                if (playlistsSelected) BrowseFolderTransition(
+                                    // An open playlist slides over the list of playlists, like a folder.
+                                    target = PlaylistPage(playlist?.id),
+                                    depth = { if (it.id == null) 0 else 1 },
+                                    sameScreen = { _, _ -> true },
+                                    backTarget = if (playlist != null) PlaylistPage(null) else null,
+                                    back = playlistBack,
+                                ) { page ->
+                                    val shown = page.id?.let { id -> state.playlists.find { it.id == id } }
+                                    if (shown == null) PlaylistScreen(
                                         state.playlists.map { LibraryPlaylist(it.id, it.name, it.tracks.size) },
                                         onCreatePlaylist = { createPlaylist = true },
                                         onOpenPlaylist = { playlistId = it.id },
                                         onShowPlaylistActions = { item -> playlistActions = state.playlists.first { it.id == item.id } },
                                         onPlayPlaylist = { item -> controller.playPlaylist(item.id) })
-                                    playlist != null -> key(playlist.id) {
-                                        PlaylistPane(controller, state, playlist, editing, playlistEditOrder,
+                                    else key(shown.id) {
+                                        PlaylistPane(controller, state, shown, editing && shown.id == playlistId, playlistEditOrder,
                                             onEditOrderChange = { playlistEditOrder = it }, actions = browseActions)
                                     }
-                                    else -> BrowseFolderTransition(
+                                } else BrowseFolderTransition(
                                         target = BrowseTarget(dir, searching),
                                         depth = { if (it.searching) 0 else browseDepth(library, it.dir) },
                                         sameScreen = { a, b -> a.searching == b.searching },
+                                        backTarget = parentDir?.let { BrowseTarget(it, false) },
+                                        back = folderBack,
                                     ) { target ->
                                         BrowseRefreshContainer(isRefreshing = refreshing, onRefresh = browseActions.refresh) {
                                             BrowsePane(controller, state, target, query, viewMode, browseActions)
                                         }
                                     }
-                                }
                             }
                         }
                     }
                     ExpandedPlayerSheet(state = playerSheet, visible = !wide && state.current != null,
-                        expanded = showNowPlaying, onSettle = settlePlayerSheet) { playerContent(false) }
+                        expanded = showNowPlaying, onSettle = settlePlayerSheet,
+                        backEnabled = !pageOpen && !showSettings) { playerContent(false) }
                 }
             },
         )
-        FullScreenPage(visible = showSettings && !wideWindow) { settingsContent() }
+        FullScreenPage(visible = showSettings && !wideWindow, backEnabled = !pageOpen,
+            onBack = { showSettings = false }) { settingsContent() }
         // The last key stays while the page slides out.
         var detailsShown by remember { mutableStateOf<String?>(null) }
         if (detailsFor != null) detailsShown = detailsFor
-        FullScreenPage(visible = detailsFor != null) {
+        FullScreenPage(visible = detailsFor != null, backEnabled = loopEditFor == null, onBack = { detailsFor = null }) {
             detailsShown?.let { key ->
                 val details by produceState<FileDetails?>(null, key) {
                     value = withContext(Dispatchers.Default) { controller.fileDetails(key) }
@@ -322,7 +353,7 @@ fun IosApp(controller: IosController) {
         }
         var loopEditShown by remember { mutableStateOf<String?>(null) }
         if (loopEditFor != null) loopEditShown = loopEditFor
-        FullScreenPage(visible = loopEditFor != null) {
+        FullScreenPage(visible = loopEditFor != null, onBack = { loopEditFor = null }) {
             loopEditShown?.let { key ->
                 val preview = remember(key) { IosLoopPreview() }
                 DisposableEffect(preview) { onDispose { preview.release() } }
@@ -388,6 +419,9 @@ private class BrowseActions(
 )
 
 private data class BrowseTarget(val dir: String, val searching: Boolean)
+
+/** The playlist tab's page: the list of playlists (null) or one playlist. */
+private data class PlaylistPage(val id: String?)
 
 /** Levels from the storage root, like Android: the start folder and linked folders are 1, samples 2. */
 private fun browseDepth(library: IosLibrary, dir: String): Int =
@@ -544,16 +578,24 @@ private fun TrackActions(
         onAddToPlaylist = { close(); actions.addToPlaylist(key) })
 }
 
-/** A page over the whole window that slides in from the right, where Android starts an Activity. */
+/**
+ * A page over the whole window that slides in from the right, where Android starts an Activity. The
+ * back gesture drags it to the right (iOS's interactive pop); letting go early puts it back.
+ */
 @Composable
-private fun BoxScope.FullScreenPage(visible: Boolean, content: @Composable () -> Unit) {
+private fun BoxScope.FullScreenPage(
+    visible: Boolean, onBack: () -> Unit, backEnabled: Boolean = true, content: @Composable () -> Unit,
+) {
+    val back = rememberPredictiveBack(enabled = visible && backEnabled, onBack = onBack)
+    // A committed gesture keeps its offset while the page slides out; a page opening again starts at 0.
+    LaunchedEffect(visible) { if (visible) back.reset() }
     AnimatedVisibility(
         visible = visible,
         modifier = Modifier.matchParentSize().zIndex(10f),
         enter = slideInHorizontally(animationSpec = tween(250)) { it } + fadeIn(tween(250)),
         exit = slideOutHorizontally(animationSpec = tween(250)) { it } + fadeOut(tween(250)),
     ) {
-        Surface(Modifier.fillMaxSize()) { content() }
+        Surface(Modifier.fillMaxSize().graphicsLayer { translationX = size.width * back.progress }) { content() }
     }
 }
 

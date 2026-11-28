@@ -92,6 +92,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.mutableStateListOf
@@ -784,19 +785,31 @@ fun MusicPlayerMainScreen(
         selectedPlaylistName = null
     }
 
-    BackHandler(enabled = selectedPlaylistId != null || selectedFolderKey != null || isSearchActive) {
-        when {
-            isSearchActive -> {
-                isSearchActive = false
-                searchQuery = ""
-                clearSearchState()
-            }
-            selectedPlaylistId != null -> closePlaylist()
-            selectedFolderKey != null -> {
-                browseParent()
-            }
-        }
+    /** The folder [browseParent] opens, in Browse's key form (null = the start folder). */
+    fun browseParentKey(): String? {
+        val dir = selectedFolderKey ?: return null
+        val parent = absolutePathParent(dir)
+        val insideVolume = parent != null && storageRoots.any { root -> dir != root && isWithinPath(dir, root) }
+        return (if (dir != DEMO_FOLDER_KEY && insideVolume) parent else null)?.takeIf { it != primaryStorageRoot }
     }
+
+    // M3 predictive back, shared with iOS (mobileMain): search, then the open playlist, then the parent
+    // folder. The player sheet and wide Settings take the gesture while they are open. At the start folder
+    // nothing is enabled, so the system shows its back-to-home animation.
+    var libraryCovered by remember { mutableStateOf(false) }
+    val searchBack = jp.project2by2.musicplayer.ui.navigation.rememberPredictiveBack(
+        enabled = !libraryCovered && isSearchActive
+    ) {
+        isSearchActive = false
+        searchQuery = ""
+        clearSearchState()
+    }
+    val playlistBack = jp.project2by2.musicplayer.ui.navigation.rememberPredictiveBack(
+        enabled = !libraryCovered && !isSearchActive && selectedPlaylistId != null
+    ) { closePlaylist() }
+    val folderBack = jp.project2by2.musicplayer.ui.navigation.rememberPredictiveBack(
+        enabled = !libraryCovered && !isSearchActive && selectedPlaylistId == null && selectedFolderKey != null
+    ) { browseParent() }
 
     fun handleMidiTap(
         item: MidiFileItem,
@@ -1036,7 +1049,8 @@ fun MusicPlayerMainScreen(
         modifier = modifier,
         verticalFoldInWindow = rememberVerticalFoldInWindow(),
         library = { wide ->
-    BackHandler(enabled = !wide && showNowPlaying) { showNowPlaying = false }
+    // Covered by the open player sheet or wide Settings: those take the back gesture.
+    SideEffect { libraryCovered = (!wide && showNowPlaying && selectedMidiFileUri != null) || (wide && showSettings) }
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -1246,11 +1260,12 @@ fun MusicPlayerMainScreen(
                         }
                     },
                     demoOpen = selectedFolderKey == DEMO_FOLDER_KEY,
-                    onOpenFolder = { openBrowseFolder(it) }
+                    onOpenFolder = { openBrowseFolder(it) },
+                    backProgress = folderBack.previewProgress
                 )
                 jp.project2by2.musicplayer.ui.browse.BrowseSearchField(
                     visible = isSearchActive, query = searchQuery, onQueryChange = { searchQuery = it }
-                )
+                , backProgress = searchBack.previewProgress)
                 if (!hasAudioPermission) {
                     ElevatedButton(onClick = { storagePermissionLauncher.launch(permissionsToRequest) }) {
                         Text(stringResource(id = R.string.info_grant_storage_permission))
@@ -1265,96 +1280,106 @@ fun MusicPlayerMainScreen(
                 } else {
                     val isSearching = isSearchActive && searchQuery.isNotBlank()
                     when {
-                        rootTab == RootTab.Playlists && !isSearching && selectedFolderKey == null && selectedPlaylistId == null -> {
-                            PlaylistHome(
-                                repository = playlistRepository,
-                                refreshToken = playlistRefreshToken,
-                                onCreatePlaylist = { showCreatePlaylistDialog = true },
-                                onOpenPlaylist = { summary ->
-                                    selectedPlaylistId = summary.id
-                                    selectedPlaylistName = summary.name
-                                },
-                                onShowPlaylistActions = { summary ->
-                                    activePlaylistActions = summary
-                                },
-                                onPlayPlaylist = { summary ->
-                                    scope.launch {
-                                        val items = playlistRepository.getPlaylistItems(summary.id)
-                                        val first = items.firstOrNull()?.uriString ?: return@launch
-                                        val firstItem = MidiFileItem(
-                                            uri = Uri.parse(first),
-                                            fileName = items.firstOrNull()?.title.orEmpty(),
-                                            folderName = summary.name,
-                                            folderKey = "playlist_${summary.id}",
-                                            durationMs = items.firstOrNull()?.durationMs ?: 0L
-                                        )
-                                        if (!ensureItemAvailable(firstItem, MidiListContext.Playlist)) return@launch
-                                        val service = playbackService ?: return@launch
-                                        if (!service.setActiveQueue(summary.id, first)) return@launch
-                                        service.currentArtworkUri = null
-                                        service.currentArtist = summary.name
-                                        handleMidiTap(
-                                            item = firstItem,
-                                            listContext = MidiListContext.Playlist,
-                                            sourceItems = items.map {
-                                                MidiFileItem(
-                                                    uri = Uri.parse(it.uriString),
-                                                    fileName = it.title.orEmpty(),
+                        rootTab == RootTab.Playlists && !isSearching && selectedFolderKey == null -> {
+                            // An open playlist slides over the list like a folder; back scrubs it (mobileMain).
+                            jp.project2by2.musicplayer.ui.browse.BrowseFolderTransition(
+                                target = PlaylistPage(selectedPlaylistId),
+                                depth = { if (it.id == null) 0 else 1 },
+                                sameScreen = { _, _ -> true },
+                                backTarget = if (selectedPlaylistId != null) PlaylistPage(null) else null,
+                                back = playlistBack
+                            ) { page ->
+                                if (page.id == null) {
+                                    PlaylistHome(
+                                        repository = playlistRepository,
+                                        refreshToken = playlistRefreshToken,
+                                        onCreatePlaylist = { showCreatePlaylistDialog = true },
+                                        onOpenPlaylist = { summary ->
+                                            selectedPlaylistId = summary.id
+                                            selectedPlaylistName = summary.name
+                                        },
+                                        onShowPlaylistActions = { summary ->
+                                            activePlaylistActions = summary
+                                        },
+                                        onPlayPlaylist = { summary ->
+                                            scope.launch {
+                                                val items = playlistRepository.getPlaylistItems(summary.id)
+                                                val first = items.firstOrNull()?.uriString ?: return@launch
+                                                val firstItem = MidiFileItem(
+                                                    uri = Uri.parse(first),
+                                                    fileName = items.firstOrNull()?.title.orEmpty(),
                                                     folderName = summary.name,
                                                     folderKey = "playlist_${summary.id}",
-                                                    durationMs = it.durationMs
+                                                    durationMs = items.firstOrNull()?.durationMs ?: 0L
                                                 )
-                                            },
-                                            sourceTitle = summary.name,
-                                            configureTransientQueue = false
-                                        )
-                                    }
+                                                if (!ensureItemAvailable(firstItem, MidiListContext.Playlist)) return@launch
+                                                val service = playbackService ?: return@launch
+                                                if (!service.setActiveQueue(summary.id, first)) return@launch
+                                                service.currentArtworkUri = null
+                                                service.currentArtist = summary.name
+                                                handleMidiTap(
+                                                    item = firstItem,
+                                                    listContext = MidiListContext.Playlist,
+                                                    sourceItems = items.map {
+                                                        MidiFileItem(
+                                                            uri = Uri.parse(it.uriString),
+                                                            fileName = it.title.orEmpty(),
+                                                            folderName = summary.name,
+                                                            folderKey = "playlist_${summary.id}",
+                                                            durationMs = it.durationMs
+                                                        )
+                                                    },
+                                                    sourceTitle = summary.name,
+                                                    configureTransientQueue = false
+                                                )
+                                            }
+                                        }
+                                    )
+                                } else {
+                                    PlaylistTracks(
+                                        repository = playlistRepository,
+                                        playlistId = page.id,
+                                        playlistName = selectedPlaylistName.orEmpty(),
+                                        refreshToken = playlistRefreshToken,
+                                        isEditMode = isPlaylistEditModeActive,
+                                        selectedUri = selectedMidiFileUri,
+                                        availability = midiAvailability,
+                                        onEditItemsChanged = { editedItems ->
+                                            playlistEditOrderDraft = editedItems
+                                        },
+                                        onPrimeItem = { item: MidiFileItem ->
+                                            updateMidiAvailability(item, forceRefresh = true)
+                                        },
+                                        onMissingItemDetected = { item: MidiFileItem -> handleMissingItem(item, MidiListContext.Playlist) },
+                                        onItemClick = { uriString, queue ->
+                                            scope.launch {
+                                                val selectedItem = queue.firstOrNull { it.uri.toString() == uriString } ?: MidiFileItem(
+                                                    uri = Uri.parse(uriString),
+                                                    fileName = uriString.substringAfterLast('/'),
+                                                    folderName = selectedPlaylistName.orEmpty(),
+                                                    folderKey = "playlist_${page.id}",
+                                                    durationMs = 0L
+                                                )
+                                                if (!ensureItemAvailable(selectedItem, MidiListContext.Playlist)) return@launch
+                                                val service = playbackService ?: return@launch
+                                                if (!service.setActiveQueue(page.id, uriString)) return@launch
+                                                service.currentArtworkUri = null
+                                                service.currentArtist = selectedPlaylistName
+                                                handleMidiTap(
+                                                    item = selectedItem,
+                                                    listContext = MidiListContext.Playlist,
+                                                    sourceItems = queue,
+                                                    sourceTitle = selectedPlaylistName,
+                                                    configureTransientQueue = false
+                                                )
+                                            }
+                                        },
+                                        onQueueNext = { item, queue ->
+                                            queueTrackNext(item, queue, selectedPlaylistName)
+                                        }
+                                    )
                                 }
-                            )
-                        }
-                        selectedPlaylistId != null -> {
-                            PlaylistTracks(
-                                repository = playlistRepository,
-                                playlistId = selectedPlaylistId!!,
-                                playlistName = selectedPlaylistName.orEmpty(),
-                                refreshToken = playlistRefreshToken,
-                                isEditMode = isPlaylistEditModeActive,
-                                selectedUri = selectedMidiFileUri,
-                                availability = midiAvailability,
-                                onEditItemsChanged = { editedItems ->
-                                    playlistEditOrderDraft = editedItems
-                                },
-                                onPrimeItem = { item: MidiFileItem ->
-                                    updateMidiAvailability(item, forceRefresh = true)
-                                },
-                                onMissingItemDetected = { item: MidiFileItem -> handleMissingItem(item, MidiListContext.Playlist) },
-                                onItemClick = { uriString, queue ->
-                                    scope.launch {
-                                        val selectedItem = queue.firstOrNull { it.uri.toString() == uriString } ?: MidiFileItem(
-                                            uri = Uri.parse(uriString),
-                                            fileName = uriString.substringAfterLast('/'),
-                                            folderName = selectedPlaylistName.orEmpty(),
-                                            folderKey = "playlist_${selectedPlaylistId!!}",
-                                            durationMs = 0L
-                                        )
-                                        if (!ensureItemAvailable(selectedItem, MidiListContext.Playlist)) return@launch
-                                        val service = playbackService ?: return@launch
-                                        if (!service.setActiveQueue(selectedPlaylistId!!, uriString)) return@launch
-                                        service.currentArtworkUri = null
-                                        service.currentArtist = selectedPlaylistName
-                                        handleMidiTap(
-                                            item = selectedItem,
-                                            listContext = MidiListContext.Playlist,
-                                            sourceItems = queue,
-                                            sourceTitle = selectedPlaylistName,
-                                            configureTransientQueue = false
-                                        )
-                                    }
-                                },
-                                onQueueNext = { item, queue ->
-                                    queueTrackNext(item, queue, selectedPlaylistName)
-                                }
-                            )
+                            }
                         }
                         else -> {
                             val screenState: Pair<BrowseScreen, String?> = when {
@@ -1371,7 +1396,10 @@ fun MusicPlayerMainScreen(
                             jp.project2by2.musicplayer.ui.browse.BrowseFolderTransition(
                                 target = screenState,
                                 depth = { depth(it.second) },
-                                sameScreen = { a, b -> a.first == b.first }
+                                sameScreen = { a, b -> a.first == b.first },
+                                backTarget = if (screenState.first == BrowseScreen.Files && selectedFolderKey != null)
+                                    BrowseScreen.Files to browseParentKey() else null,
+                                back = folderBack
                             ) { (screen, folderKey) ->
                                 when (screen) {
                                     BrowseScreen.Files -> {
@@ -2050,6 +2078,9 @@ private fun AddToPlaylistDialog(
         onAdd = { selected -> onAdd(selected.id.toLong()) }
     )
 }
+
+/** The Playlists tab's page: the list of playlists (null) or one playlist. */
+private data class PlaylistPage(val id: Long?)
 
 private enum class BrowseScreen {
     Files,

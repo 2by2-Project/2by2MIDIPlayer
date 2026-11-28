@@ -24,6 +24,7 @@ import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.zIndex
+import jp.project2by2.musicplayer.ui.navigation.rememberPredictiveBack
 import kotlin.math.roundToInt
 
 // The compact (phone) player: a mini bar above the navigation bar that drags up into the full
@@ -77,9 +78,17 @@ fun ExpandedPlayerSheet(
     visible: Boolean,
     expanded: Boolean,
     onSettle: (expanded: Boolean, velocityPx: Float) -> Unit,
+    /** False while another screen above the sheet takes the back gesture. */
+    backEnabled: Boolean = true,
     content: @Composable () -> Unit,
 ) {
     val sheetVisible by remember(state) { derivedStateOf { state.progress > 0f } }
+    // Back closes the open sheet; the gesture previews it (M3 predictive back).
+    val back = rememberPredictiveBack(enabled = visible && expanded && backEnabled) { onSettle(false, 0f) }
+    // While active the preview follows the finger; a cancelled gesture returns to 0 the same way.
+    LaunchedEffect(back.active, back.progress) {
+        if (back.active) state.previewBack(back.progress)
+    }
     HideKeyboardWhen(visible && (sheetVisible || expanded))
     if (visible && (sheetVisible || expanded)) {
         Box(

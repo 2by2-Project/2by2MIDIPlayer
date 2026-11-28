@@ -97,6 +97,15 @@ class PlayerSheetState internal constructor(private val scope: CoroutineScope) {
         return expand to velocity
     }
 
+    /**
+     * Back gesture preview (M3 predictive back): the open sheet follows the gesture down part of the
+     * way. Committing animates on from here with [animateTo]; cancelling springs back the same way.
+     */
+    fun previewBack(gestureProgress: Float) {
+        animationJob?.cancel()
+        progress = 1f - BACK_PREVIEW_TRAVEL * gestureProgress.coerceIn(0f, 1f)
+    }
+
     fun animateTo(expanded: Boolean, velocityPx: Float = 0f) {
         animationJob?.cancel()
         targetExpanded = expanded
@@ -117,6 +126,9 @@ class PlayerSheetState internal constructor(private val scope: CoroutineScope) {
         }
     }
 }
+
+/** Part of the sheet's travel a full back gesture previews before the user lets go. */
+private const val BACK_PREVIEW_TRAVEL = 0.35f
 
 @Composable
 fun rememberPlayerSheetState(): PlayerSheetState {

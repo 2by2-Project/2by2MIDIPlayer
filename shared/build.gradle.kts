@@ -46,6 +46,13 @@ kotlin {
         commonTest.dependencies {
             implementation(kotlin("test"))
         }
+        // Predictive back: Android's activity callback, Compose's UIKit edge-swipe dispatcher on iOS.
+        androidMain.dependencies {
+            implementation(libs.androidx.activity.compose)
+        }
+        iosMain.dependencies {
+            implementation(libs.compose.ui.backhandler)
+        }
         // Reuse the shipped MIDI corpus without copying it into the shared library.
         val desktopTest by getting {
             resources.srcDir("../app/src/main/assets")
