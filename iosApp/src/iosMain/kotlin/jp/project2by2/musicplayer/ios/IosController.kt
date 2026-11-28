@@ -73,6 +73,9 @@ class IosController(
     private var hasLoopMarker = false
     private var nextMessageId = 0L
     private val trackIds = mutableMapOf<String, Long>()
+    // Metadata reads and the cache run one at a time, off the BASS thread.
+    private val metadataContext = Dispatchers.Default.limitedParallelism(1)
+    private val metadataCache = IosMetadataCache(library.support + "/metadata-cache.plist")
     private var foreground = true
     private var fading = false
     private var resumeAfterInterruption = false
@@ -138,6 +141,7 @@ class IosController(
             mutable.update { it.copy(audioReady = true) }
             updateNowPlaying()
         }
+        scope.launch(metadataContext) { metadataCache.load() }
         scope.launch { pollPlayback() }
     }
 
@@ -162,17 +166,33 @@ class IosController(
 
     fun trackId(key: String): Long = trackIds.getOrPut(key) { trackIds.size + 1L }
 
+    /** Reads titles for listed tracks, from the cache when the file is unchanged (Android's Room cache). */
     fun loadMetadata(keys: List<String>) {
         val known = mutable.value.metadata
         val missing = keys.filter { it !in known }.distinct()
         if (missing.isEmpty()) return
-        scope.launch(Dispatchers.Default) {
+        scope.launch(metadataContext) {
+            val batch = mutableMapOf<String, MidiMetadata>()
+            fun flush() {
+                if (batch.isEmpty()) return
+                val found = batch.toMap()
+                batch.clear()
+                mutable.update { it.copy(metadata = it.metadata + found) }
+            }
             for (key in missing) {
                 ensureActive()
                 if (key in mutable.value.metadata) continue
-                val metadata = runCatching { parseMidiMetadata(library.readBytesIfLocal(key) ?: continue) }.getOrNull() ?: continue
-                mutable.update { it.copy(metadata = it.metadata + (key to metadata)) }
+                val path = library.resolve(key) ?: continue
+                val metadata = metadataCache.get(key, path) ?: library.readBytesIfLocal(key)
+                    ?.let { bytes -> runCatching { parseMidiMetadata(bytes) }.getOrNull() }
+                    ?.also { metadataCache.put(key, path, it) }
+                    ?: continue
+                batch[key] = metadata
+                // Publish in groups: one state change per song would recompose a large list repeatedly.
+                if (batch.size >= 25) flush()
             }
+            flush()
+            metadataCache.save()
         }
     }
 

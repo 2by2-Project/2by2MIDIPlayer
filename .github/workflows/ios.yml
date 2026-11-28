@@ -125,6 +125,8 @@ jobs:
           for name in bass bassmidi; do test -f "$app/Frameworks/$name.framework/$name"; done
           test -d "$app/demo"
           test -f "$app/Licenses/THIRD_PARTY_NOTICES.md"
+          # Compose resources (the app logo) are copied by embedAndSignAppleFrameworkForXcode.
+          find "$app/compose-resources" -type f | head -5 | grep -q . || { echo '::error::compose-resources missing from the app bundle'; exit 1; }
           # The executable must be an arm64 device binary.
           lipo -archs "$app/2by2MIDIPlayer" | grep -qw arm64
           /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Info.plist"
